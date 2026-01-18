@@ -1,0 +1,49 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.seleniumhq.selenium:selenium-java:4.16.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'io.github.bonigarcia:webdrivermanager:5.6.2'
+    implementation 'com.squareup:javapoet:1.13.0'
+}
+
+application {
+    mainClass = 'dev.vfyjxf.taffy.gentest.TestGenerator'
+}
+
+tasks.named('run') {
+    workingDir = rootProject.projectDir.parentFile
+}
+// Task to regenerate WPT tests
+tasks.register('genWpt', JavaExec) {
+    group = 'generate'
+    description = 'Generate WPT tests from CSS test suite'
+    mainClass = 'dev.vfyjxf.taffy.gentest.WptTestGenerator'
+    classpath = sourceSets.main.runtimeClasspath
+    workingDir = rootProject.projectDir.parentFile
+    
+    def wptRoot = rootProject.projectDir.parentFile.absolutePath
+    def cssRoot = rootProject.projectDir.parentFile.absolutePath
+    def outRoot = new File(rootProject.projectDir, 'src/test/java').absolutePath
+    
+    args = [
+        '--wptRoot', wptRoot,
+        '--cssRoot', cssRoot,
+        '--outRoot', outRoot,
+        '--discover',
+        '--suites', 'css/css-grid,css/css-flexbox'
+    ]
+}

@@ -1,0 +1,71 @@
+plugins {
+    id 'java'
+    id 'me.champeau.jmh' version '0.7.2'
+    id 'com.gradleup.shadow' version '9.2.0'
+}
+
+group = 'dev.vfyjxf'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+    withSourcesJar()
+}
+
+dependencies {
+//    implementation 'org.jetbrains:annotations:25.0.0'
+    implementation("it.unimi.dsi:fastutil:8.5.12")
+
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Gson for JSON parsing in tests
+    testImplementation 'com.google.code.gson:gson:2.10.1'
+
+    // JMH for benchmarking
+    jmh 'org.openjdk.jmh:jmh-core:1.37'
+    jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+}
+
+shadowJar {
+    minimize()
+
+    relocate 'it.unimi.dsi.fastutil', 'dev.vfyjxf.taffy.shadow.fastutil'
+}
+
+jmh {
+    warmupIterations = 2
+    iterations = 5
+    fork = 1
+    // Include all benchmark classes using full regex pattern
+    includes = ['.*Benchmark.*']
+
+    // Keep default runs reasonably fast.
+    // Extended benchmarks are opt-in via the `jmhExtended` task below.
+    excludes = ['.*ExtendedBenchmark.*']
+
+    // JMH options
+    jmhVersion = '1.37'
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results.json")
+
+    // Increase stack size for deep recursion benchmarks (depth=1000)
+    jvmArgs = ['-Xss16m']
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 17
+}
