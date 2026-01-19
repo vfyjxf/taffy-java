@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'me.champeau.jmh' version '0.7.2'
     id 'com.gradleup.shadow' version '9.2.0'
+    id 'maven-publish'
 }
 
 group = 'dev.vfyjxf'
@@ -16,6 +17,14 @@ java {
         languageVersion = JavaLanguageVersion.of(17)
     }
     withSourcesJar()
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
+    }
 }
 
 dependencies {
