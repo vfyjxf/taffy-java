@@ -12,4 +12,4 @@ It passes the full Taffy test suite (ported to Java).
 ## Credits
 
 - Original [Taffy](https://github.com/DioxusLabs/taffy) library by DioxusLabs
-- Python bindings [Stretchable](https://github.com/petermcevoy/stretchable) for reference
+- Python bindings [Stretchable](https://github.com/mortencombat/stretchable) for reference
