@@ -71,3 +71,19 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 17
 }
+
+
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = project.group
+            artifactId = 'taffy'
+            version = project.version
+            from components.java
+        }
+    }
+    repositories {
+        mavenLocal()
+    }
+}
