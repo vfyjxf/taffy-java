@@ -402,4 +402,148 @@ public class LayoutUpdateTrackingTest {
             assertTrue(tree.needsVisit(root));
         }
     }
+
+    @Nested
+    @DisplayName("LayoutChangeListener")
+    class LayoutChangeListenerTests {
+
+        @Test
+        @DisplayName("listener is called for each node during layout")
+        void listenerCalledForEachNode() {
+            TaffyTree tree = new TaffyTree();
+
+            NodeId leaf = tree.newLeaf(new TaffyStyle());
+            NodeId child = tree.newWithChildren(new TaffyStyle(), leaf);
+            NodeId root = tree.newWithChildren(new TaffyStyle(), child);
+
+            Set<NodeId> changedNodes = new HashSet<>();
+            Map<NodeId, Layout> layouts = new HashMap<>();
+
+            tree.setLayoutChangeListener((node, layout) -> {
+                changedNodes.add(node);
+                layouts.put(node, layout);
+            });
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // All nodes should have been reported
+            assertEquals(3, changedNodes.size());
+            assertTrue(changedNodes.contains(root));
+            assertTrue(changedNodes.contains(child));
+            assertTrue(changedNodes.contains(leaf));
+
+            // Layouts should be non-null
+            assertNotNull(layouts.get(root));
+            assertNotNull(layouts.get(child));
+            assertNotNull(layouts.get(leaf));
+        }
+
+        @Test
+        @DisplayName("listener collects dirty set for incremental updates")
+        void listenerCollectsDirtySet() {
+            TaffyTree tree = new TaffyTree();
+            
+            TaffyStyle flexStyle = new TaffyStyle();
+            flexStyle.size = TaffySize.of(TaffyDimension.length(100), TaffyDimension.length(100));
+
+            NodeId leaf1 = tree.newLeaf(flexStyle);
+            NodeId leaf2 = tree.newLeaf(flexStyle);
+            NodeId root = tree.newWithChildren(new TaffyStyle(), leaf1, leaf2);
+
+            Set<NodeId> dirtySet = new HashSet<>();
+            tree.setLayoutChangeListener((node, layout) -> dirtySet.add(node));
+
+            // Initial layout
+            tree.computeLayout(root, TaffySize.of(AvailableSpace.definite(200), AvailableSpace.definite(200)));
+            assertEquals(3, dirtySet.size());
+            dirtySet.clear();
+
+            // Recompute with same parameters - still reports all nodes
+            // (Taffy doesn't track if layout actually changed numerically)
+            tree.computeLayout(root, TaffySize.of(AvailableSpace.definite(200), AvailableSpace.definite(200)));
+            // The dirty set captures all nodes that were laid out
+            assertTrue(dirtySet.size() > 0);
+        }
+
+        @Test
+        @DisplayName("listener can be removed")
+        void listenerCanBeRemoved() {
+            TaffyTree tree = new TaffyTree();
+
+            NodeId root = tree.newLeaf(new TaffyStyle());
+
+            Set<NodeId> changedNodes = new HashSet<>();
+            tree.setLayoutChangeListener((node, layout) -> changedNodes.add(node));
+
+            tree.computeLayout(root, TaffySize.maxContent());
+            assertEquals(1, changedNodes.size());
+            changedNodes.clear();
+
+            // Remove listener
+            tree.setLayoutChangeListener(null);
+            assertNull(tree.getLayoutChangeListener());
+
+            tree.computeLayout(root, TaffySize.maxContent());
+            assertTrue(changedNodes.isEmpty()); // Listener not called
+        }
+
+        @Test
+        @DisplayName("listener receives layout with correct values")
+        void listenerReceivesCorrectLayoutValues() {
+            TaffyTree tree = new TaffyTree();
+
+            TaffyStyle style = new TaffyStyle();
+            style.size = TaffySize.of(TaffyDimension.length(50), TaffyDimension.length(30));
+
+            NodeId root = tree.newLeaf(style);
+
+            Layout[] capturedLayout = new Layout[1];
+            tree.setLayoutChangeListener((node, layout) -> {
+                if (node.equals(root)) {
+                    capturedLayout[0] = layout;
+                }
+            });
+
+            tree.computeLayout(root, TaffySize.of(AvailableSpace.definite(100), AvailableSpace.definite(100)));
+
+            assertNotNull(capturedLayout[0]);
+            assertEquals(50, capturedLayout[0].size().width, 0.001f);
+            assertEquals(30, capturedLayout[0].size().height, 0.001f);
+        }
+
+        @Test
+        @DisplayName("dirty set can track custom root subtree")
+        void customRootTracking() {
+            TaffyTree tree = new TaffyTree();
+
+            // Create two independent subtrees under one root
+            NodeId subRoot1 = tree.newWithChildren(new TaffyStyle(),
+                tree.newLeaf(new TaffyStyle()),
+                tree.newLeaf(new TaffyStyle())
+            );
+            NodeId subRoot2 = tree.newWithChildren(new TaffyStyle(),
+                tree.newLeaf(new TaffyStyle())
+            );
+            NodeId root = tree.newWithChildren(new TaffyStyle(), subRoot1, subRoot2);
+
+            // Collect the subtree of subRoot1
+            Set<NodeId> subRoot1Nodes = new HashSet<>(collectSubtree(tree, subRoot1));
+
+            // Track changes only within subRoot1 subtree
+            Set<NodeId> dirtyInSubtree = new HashSet<>();
+            tree.setLayoutChangeListener((node, layout) -> {
+                if (subRoot1Nodes.contains(node)) {
+                    dirtyInSubtree.add(node);
+                }
+            });
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Should only have nodes from subRoot1's subtree (subRoot1 + 2 leaves = 3)
+            assertEquals(3, dirtyInSubtree.size());
+            assertTrue(dirtyInSubtree.contains(subRoot1));
+            assertFalse(dirtyInSubtree.contains(subRoot2));
+            assertFalse(dirtyInSubtree.contains(root));
+        }
+    }
 }
