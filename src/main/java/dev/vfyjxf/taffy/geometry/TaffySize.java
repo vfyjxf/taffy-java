@@ -212,7 +212,7 @@ public final class TaffySize<T> {
     }
 
     /**
-     * Resolve a Size<Dimension> against a context FloatSize
+     * Resolve a Size against a context FloatSize
      * Returns FloatSize where null means unresolvable
      */
     public FloatSize maybeResolve(FloatSize context) {

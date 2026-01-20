@@ -61,7 +61,7 @@ public class FloatRect {
     }
 
     /**
-     * Creates a Rect<Dimension> with all edges set to a fixed length
+     * Creates a Rect with all edges set to a fixed length
      */
     public static TaffyRect<TaffyDimension> fromLength(float value) {
         return new TaffyRect<>(
@@ -73,7 +73,7 @@ public class FloatRect {
     }
 
     /**
-     * Creates a Rect<Dimension> with all edges set to a percentage
+     * Creates a Rect with all edges set to a percentage
      */
     public static TaffyRect<TaffyDimension> fromPercent(float value) {
         return new TaffyRect<>(

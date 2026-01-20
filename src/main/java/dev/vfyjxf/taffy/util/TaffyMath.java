@@ -90,7 +90,7 @@ public final class TaffyMath {
 
     /**
      * Maybe add - returns null if first value is null, otherwise adds the values.
-     * Follows Rust's Option<f32>.maybe_add(Option<f32>) semantics:
+     * Follows Rust. maybe_add(Option) semantics:
      * - (Some(l), Some(r)) => Some(l + r)
      * - (Some(l), None) => Some(l)
      * - (None, Some(r)) => None
@@ -130,7 +130,7 @@ public final class TaffyMath {
     /**
      * Maybe max - returns the max of two optional values.
      * Returns NaN if first value is NaN (preserving the "undefined" semantic).
-     * Follows Rust's Option<f32>.maybe_max(Option<f32>) semantics:
+     * Follows Rust's Option.maybe_max(Option) semantics:
      * - (Some(l), Some(r)) => Some(max(l, r))
      * - (Some(l), None) => Some(l)
      * - (None, Some(r)) => None
@@ -145,7 +145,7 @@ public final class TaffyMath {
     /**
      * Maybe min - returns the min of two optional values.
      * Returns NaN if first value is NaN (preserving the "undefined" semantic).
-     * Follows Rust's Option<f32>.maybe_min(Option<f32>) semantics:
+     * Follows Rust's Option.maybe_min(Option) semantics:
      * - (Some(l), Some(r)) => Some(min(l, r))
      * - (Some(l), None) => Some(l)
      * - (None, Some(r)) => None

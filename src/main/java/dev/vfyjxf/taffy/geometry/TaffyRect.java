@@ -68,7 +68,7 @@ public final class TaffyRect<T> {
     }
 
     /**
-     * Creates a Rect<Dimension> with all edges set to a fixed length
+     * Creates a Rect with all edges set to a fixed length
      */
     public static TaffyRect<TaffyDimension> fromLength(float value) {
         return new TaffyRect<>(
@@ -80,7 +80,7 @@ public final class TaffyRect<T> {
     }
 
     /**
-     * Creates a Rect<Dimension> with all edges set to a percentage
+     * Creates a Rect with all edges set to a percentage
      */
     public static TaffyRect<TaffyDimension> fromPercent(float value) {
         return new TaffyRect<>(
@@ -257,8 +257,8 @@ public final class TaffyRect<T> {
     }
 
     /**
-     * Resolve a Rect<Dimension> against a context Size<Float>
-     * Returns Rect<Float> with resolved values (0 for unresolvable)
+     * Resolve a Rect against a context Size
+     * Returns Rect with resolved values (0 for unresolvable)
      */
     public TaffyRect<Float> resolveOrZero(TaffySize<Float> context) {
         @SuppressWarnings("unchecked")
@@ -276,8 +276,8 @@ public final class TaffyRect<T> {
     }
 
     /**
-     * Resolve a Rect<Dimension> against a context FloatSize (NaN means unresolvable)
-     * Returns Rect<Float> with resolved values (0 for unresolvable)
+     * Resolve a Rect against a context FloatSize (NaN means unresolvable)
+     * Returns Rect with resolved values (0 for unresolvable)
      */
     public TaffyRect<Float> resolveOrZero(FloatSize context) {
         @SuppressWarnings("unchecked")
@@ -291,8 +291,8 @@ public final class TaffyRect<T> {
     }
 
     /**
-     * Resolve a Rect<Dimension> against a single optional context value (used for all edges)
-     * Returns Rect<Float> with resolved values (0 for unresolvable)
+     * Resolve a Rect against a single optional context value (used for all edges)
+     * Returns Rect with resolved values (0 for unresolvable)
      */
     public TaffyRect<Float> resolveOrZero(float context) {
         @SuppressWarnings("unchecked")
