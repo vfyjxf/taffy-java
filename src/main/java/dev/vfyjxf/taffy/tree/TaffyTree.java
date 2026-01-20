@@ -40,6 +40,9 @@ public class TaffyTree {
 
     /** Whether to round layout values */
     private boolean useRounding = true;
+    
+    /** Optional listener for layout change notifications */
+    private LayoutChangeListener layoutChangeListener = null;
 
     /**
      * Creates a new TaffyTree with default capacity.
@@ -79,6 +82,31 @@ public class TaffyTree {
      */
     public boolean roundingEnabled() {
         return useRounding;
+    }
+    
+    /**
+     * Sets a listener to be notified when node layouts change during computation.
+     * 
+     * <p>This allows users to:
+     * <ul>
+     *   <li>Collect a dirty set of changed nodes for efficient incremental updates</li>
+     *   <li>Define custom "root node" concepts and track changes within subtrees</li>
+     *   <li>Implement custom layout change handling logic</li>
+     * </ul>
+     * 
+     * @param listener the listener, or null to remove the current listener
+     * @see LayoutChangeListener
+     */
+    public void setLayoutChangeListener(LayoutChangeListener listener) {
+        this.layoutChangeListener = listener;
+    }
+    
+    /**
+     * Gets the current layout change listener.
+     * @return the current listener, or null if none is set
+     */
+    public LayoutChangeListener getLayoutChangeListener() {
+        return layoutChangeListener;
     }
 
     // === Node Creation ===
@@ -545,12 +573,18 @@ public class TaffyTree {
 
     /**
      * Marks a node as having a new layout and propagates dirty flag up to ancestors.
+     * Also notifies the layout change listener if one is set.
      */
-    private void markNodeLayoutUpdated(NodeId node) {
+    private void markNodeLayoutUpdated(NodeId node, Layout layout) {
         NodeData data = nodes.get(node.getId());
         if (data == null) return;
         
         data.markNewLayout();
+        
+        // Notify the layout change listener
+        if (layoutChangeListener != null) {
+            layoutChangeListener.onLayoutChanged(node, layout);
+        }
         
         // Propagate dirty descendant flag up to ancestors
         NodeId parent = parents.get(node.getId());
@@ -575,7 +609,7 @@ public class TaffyTree {
             data.setFinalLayout(layout);
             // When rounding is enabled, mark after setting final layout
             if (useRounding) {
-                markNodeLayoutUpdated(node);
+                markNodeLayoutUpdated(node, layout);
             }
         }
     }
@@ -589,7 +623,7 @@ public class TaffyTree {
             data.setUnroundedLayout(layout);
             // When rounding is disabled, mark after setting unrounded layout
             if (!useRounding) {
-                markNodeLayoutUpdated(node);
+                markNodeLayoutUpdated(node, layout);
             }
         }
     }
