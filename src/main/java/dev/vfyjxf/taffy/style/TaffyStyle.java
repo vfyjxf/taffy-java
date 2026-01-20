@@ -116,8 +116,8 @@ public final class TaffyStyle {
     /**
      * Yoga-style flex shorthand. When set (not NaN), this overrides flexGrow/flexShrink/flexBasis:
      * <ul>
-     *   <li>flex >= 0: flexGrow = flex, flexShrink = 1, flexBasis = 0</li>
-     *   <li>flex < 0: flexGrow = 0, flexShrink = -flex, flexBasis = 0</li>
+     *   <li>{@code flex >= 0}: flexGrow = flex, flexShrink = 1, flexBasis = 0</li>
+     *   <li>{@code flex < 0}: flexGrow = 0, flexShrink = -flex, flexBasis = 0</li>
      * </ul>
      * When NaN (default), the individual flexGrow/flexShrink/flexBasis values are used.
      */
@@ -262,9 +262,9 @@ public final class TaffyStyle {
     /**
      * Yoga-style flex setter. Sets the flex shorthand value which overrides individual flex properties.
      * <ul>
-     *   <li>value >= 0: flexGrow = value, flexShrink = 1, flexBasis = 0</li>
-     *   <li>value < 0: flexGrow = 0, flexShrink = -value, flexBasis = 0</li>
-     *   <li>NaN: use individual flexGrow/flexShrink/flexBasis values</li>
+     *   <li>{@code value >= 0}: flexGrow = value, flexShrink = 1, flexBasis = 0</li>
+     *   <li>{@code value < 0}: flexGrow = 0, flexShrink = -value, flexBasis = 0</li>
+     *   <li>{@code NaN}: use individual flexGrow/flexShrink/flexBasis values</li>
      * </ul>
      * @param value the flex value, or NaN to disable the shorthand
      */
