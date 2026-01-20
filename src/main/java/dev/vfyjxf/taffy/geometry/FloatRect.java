@@ -1,6 +1,6 @@
 package dev.vfyjxf.taffy.geometry;
 
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.FlexDirection;
 
 import java.util.Objects;
@@ -63,24 +63,24 @@ public class FloatRect {
     /**
      * Creates a Rect<Dimension> with all edges set to a fixed length
      */
-    public static Rect<Dimension> fromLength(float value) {
-        return new Rect<>(
-            Dimension.length(value),
-            Dimension.length(value),
-            Dimension.length(value),
-            Dimension.length(value)
+    public static TaffyRect<TaffyDimension> fromLength(float value) {
+        return new TaffyRect<>(
+            TaffyDimension.length(value),
+            TaffyDimension.length(value),
+            TaffyDimension.length(value),
+            TaffyDimension.length(value)
         );
     }
 
     /**
      * Creates a Rect<Dimension> with all edges set to a percentage
      */
-    public static Rect<Dimension> fromPercent(float value) {
-        return new Rect<>(
-            Dimension.percent(value),
-            Dimension.percent(value),
-            Dimension.percent(value),
-            Dimension.percent(value)
+    public static TaffyRect<TaffyDimension> fromPercent(float value) {
+        return new TaffyRect<>(
+            TaffyDimension.percent(value),
+            TaffyDimension.percent(value),
+            TaffyDimension.percent(value),
+            TaffyDimension.percent(value)
         );
     }
 

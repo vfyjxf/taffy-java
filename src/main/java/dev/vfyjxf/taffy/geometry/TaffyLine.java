@@ -7,11 +7,11 @@ import java.util.function.Function;
  * A line with start and end values, used for representing spans or pairs of values.
  * @param <T> The type of the line values
  */
-public final class Line<T> {
+public final class TaffyLine<T> {
     public T start;
     public T end;
 
-    public Line(T start, T end) {
+    public TaffyLine(T start, T end) {
         this.start = start;
         this.end = end;
     }
@@ -19,25 +19,25 @@ public final class Line<T> {
     /**
      * Creates a Line with both values set to the same value
      */
-    public static <T> Line<T> all(T value) {
-        return new Line<>(value, value);
+    public static <T> TaffyLine<T> all(T value) {
+        return new TaffyLine<>(value, value);
     }
 
     /**
      * Line with both values set to false
      */
-    public static final Line<Boolean> FALSE = new Line<>(false, false);
+    public static final TaffyLine<Boolean> FALSE = new TaffyLine<>(false, false);
 
     /**
      * Line with both values set to true
      */
-    public static final Line<Boolean> TRUE = new Line<>(true, true);
+    public static final TaffyLine<Boolean> TRUE = new TaffyLine<>(true, true);
 
     /**
      * Map each value using the provided function
      */
-    public <R> Line<R> map(Function<T, R> mapper) {
-        return new Line<>(mapper.apply(start), mapper.apply(end));
+    public <R> TaffyLine<R> map(Function<T, R> mapper) {
+        return new TaffyLine<>(mapper.apply(start), mapper.apply(end));
     }
 
     /**
@@ -51,7 +51,7 @@ public final class Line<T> {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Line<?> line = (Line<?>) o;
+        TaffyLine<?> line = (TaffyLine<?>) o;
         return Objects.equals(start, line.start) && Objects.equals(end, line.end);
     }
 
@@ -68,7 +68,7 @@ public final class Line<T> {
     /**
      * Copy this Line
      */
-    public Line<T> copy() {
-        return new Line<>(start, end);
+    public TaffyLine<T> copy() {
+        return new TaffyLine<>(start, end);
     }
 }

@@ -3,11 +3,11 @@ package dev.vfyjxf.taffy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.GridAutoFlow;
 import dev.vfyjxf.taffy.style.GridPlacement;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.GridTestAdapter;
 import dev.vfyjxf.taffy.tree.TrackCounts;
 
@@ -33,11 +33,11 @@ public class GridPlacementTest {
         return GridPlacement.span(n);
     }
 
-    private static Style child(GridPlacement colStart, GridPlacement colEnd, GridPlacement rowStart, GridPlacement rowEnd) {
-        Style s = new Style();
-        s.display = Display.GRID;
-        s.gridColumn = new Line<>(colStart, colEnd);
-        s.gridRow = new Line<>(rowStart, rowEnd);
+    private static TaffyStyle child(GridPlacement colStart, GridPlacement colEnd, GridPlacement rowStart, GridPlacement rowEnd) {
+        TaffyStyle s = new TaffyStyle();
+        s.display = TaffyDisplay.GRID;
+        s.gridColumn = new TaffyLine<>(colStart, colEnd);
+        s.gridRow = new TaffyLine<>(rowStart, rowEnd);
         return s;
     }
 
@@ -65,7 +65,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(line(1), auto(), line(1), auto()),
             child(line(-4), auto(), line(-3), auto()),
             child(line(-3), auto(), line(-4), auto()),
@@ -89,7 +89,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(line(-1), line(-1), line(-1), line(-1)),
             child(line(-1), span(2), line(-1), span(2)),
             child(line(-4), line(-4), line(-4), line(-4)),
@@ -113,7 +113,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = new ArrayList<>();
+        List<TaffyStyle> children = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
             children.add(child(auto(), auto(), auto(), auto()));
         }
@@ -139,7 +139,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.COLUMN;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = new ArrayList<>();
+        List<TaffyStyle> children = new ArrayList<>();
         for (int i = 0; i < 8; i++) {
             children.add(child(auto(), auto(), auto(), auto()));
         }
@@ -165,7 +165,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(span(5), auto(), auto(), auto())
         );
 
@@ -182,7 +182,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(span(2), auto(), line(1), auto()),
             child(auto(), auto(), line(2), auto()),
             child(auto(), auto(), line(1), auto()),
@@ -206,7 +206,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(auto(), auto(), line(2), auto()),
             child(line(-4), auto(), line(2), auto()),
             child(auto(), auto(), line(1), auto())
@@ -228,7 +228,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW_DENSE;
         int explicitCols = 4;
         int explicitRows = 4;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(line(2), auto(), line(1), auto()),
             child(span(2), auto(), auto(), auto()),
             child(auto(), auto(), auto(), auto())
@@ -250,7 +250,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW;
         int explicitCols = 4;
         int explicitRows = 4;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(auto(), span(3), auto(), auto()),
             child(auto(), span(3), auto(), auto()),
             child(auto(), span(1), auto(), auto())
@@ -272,7 +272,7 @@ public class GridPlacementTest {
         GridAutoFlow flow = GridAutoFlow.ROW_DENSE;
         int explicitCols = 2;
         int explicitRows = 2;
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(line(-5), auto(), line(1), auto()),
             child(auto(), auto(), line(2), auto()),
             child(auto(), auto(), auto(), auto())

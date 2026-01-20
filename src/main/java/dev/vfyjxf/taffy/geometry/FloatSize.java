@@ -83,15 +83,15 @@ public class FloatSize {
     /**
      * Creates a Size with both dimensions set to MAX_CONTENT
      */
-    public static Size<AvailableSpace> maxContent() {
-        return new Size<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT);
+    public static TaffySize<AvailableSpace> maxContent() {
+        return new TaffySize<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT);
     }
 
     /**
      * Creates a Size with both dimensions set to MIN_CONTENT
      */
-    public static Size<AvailableSpace> minContent() {
-        return new Size<>(AvailableSpace.MIN_CONTENT, AvailableSpace.MIN_CONTENT);
+    public static TaffySize<AvailableSpace> minContent() {
+        return new TaffySize<>(AvailableSpace.MIN_CONTENT, AvailableSpace.MIN_CONTENT);
     }
 
     public static final FloatSize ZERO = zero();

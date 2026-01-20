@@ -4,17 +4,18 @@ import dev.vfyjxf.taffy.geometry.FloatPoint;
 import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.FloatSupplier;
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.geometry.Point;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.geometry.TaffyPoint;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDirection;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.GridAutoFlow;
 import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.GridRepetition;
@@ -23,9 +24,11 @@ import dev.vfyjxf.taffy.style.JustifyContent;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
-import dev.vfyjxf.taffy.style.Position;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyPosition;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
+import dev.vfyjxf.taffy.tree.grid.NamedLineResolver;
+import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
@@ -73,19 +76,23 @@ public class GridComputer {
         FloatSize size;
         FloatSize minSize;
         FloatSize maxSize;
-        Size<Dimension> rawSize;      // Original unresolved size (for re-resolving with new grid area)
-        Size<Dimension> rawMinSize;   // Original unresolved min-size
-        Size<Dimension> rawMaxSize;   // Original unresolved max-size
+        TaffySize<TaffyDimension> rawSize;      // Original unresolved size (for re-resolving with new grid area)
+        TaffySize<TaffyDimension> rawMinSize;   // Original unresolved min-size
+        TaffySize<TaffyDimension> rawMaxSize;   // Original unresolved max-size
         BoxSizing boxSizing;          // Box sizing mode for padding/border adjustment
-        Position position;
-        Rect<LengthPercentageAuto> inset;
-        Rect<LengthPercentageAuto> rawMargin;  // Original margin style (for special percentage resolution)
+        TaffyPosition position;
+        TaffyRect<LengthPercentageAuto> inset;
+        TaffyRect<LengthPercentageAuto> rawMargin;  // Original margin style (for special percentage resolution)
         FloatRect margin;
         FloatRect padding;
         FloatRect border;
-        Point<Overflow> overflow;
+        TaffyPoint<Overflow> overflow;
         float scrollbarWidth;
         Float aspectRatio;
+
+        // Is this a "compressible replaced element"? (CSS Sizing / Grid min-size-auto behavior)
+        // https://drafts.csswg.org/css-sizing-3/#min-content-zero
+        boolean isCompressibleReplaced;
 
         // Grid placement (OriginZero coordinates, null means auto)
         Integer columnStart;
@@ -146,26 +153,6 @@ public class GridComputer {
         }
 
         /**
-         * Clear the width caches for contribution values.
-         */
-        void clearWidthCaches() {
-            availableSpaceCache = null;
-            minContentContributionWidth = null;
-            maxContentContributionWidth = null;
-            minimumContributionWidth = null;
-        }
-
-        /**
-         * Clear the height caches for contribution values.
-         */
-        void clearHeightCaches() {
-            availableSpaceCache = null;
-            minContentContributionHeight = null;
-            maxContentContributionHeight = null;
-            minimumContributionHeight = null;
-        }
-
-        /**
          * Get min content contribution for width, using cache if available.
          */
         float getMinContentContributionWidthCached(
@@ -177,21 +164,6 @@ public class GridComputer {
             }
             float contribution = computeMinContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
             minContentContributionWidth = contribution;
-            return contribution;
-        }
-
-        /**
-         * Get min content contribution for height, using cache if available.
-         */
-        float getMinContentContributionHeightCached(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
-            if (minContentContributionHeight != null) {
-                return minContentContributionHeight;
-            }
-            float contribution = computeMinContentContributionHeight(layoutComputer, availableSpace, innerNodeSize);
-            minContentContributionHeight = contribution;
             return contribution;
         }
 
@@ -260,52 +232,12 @@ public class GridComputer {
                 nodeId,
                 knownDimensions,
                 innerNodeSize,
-                new Size<>(widthAvail, heightAvail),
+                new TaffySize<>(widthAvail, heightAvail),
                 SizingMode.INHERENT_SIZE,
-                Line.FALSE
+                TaffyLine.FALSE
             );
 
             return measuredSize.width + marginAxisSums.width;
-        }
-
-        /**
-         * Compute min content contribution for height axis.
-         * <p>
-         * This method returns the contribution INCLUDING margin, matching the
-         * original behavior expected by callers in track sizing.
-         */
-        private float computeMinContentContributionHeight(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
-            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(innerNodeSize.width);
-
-            // If explicit height is set, use it
-            if (!Float.isNaN(size.height)) {
-                return size.height + marginAxisSums.height;
-            }
-
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
-
-            // Build available space for measurement - match Rust's available_space.map() logic
-            // Both axes: Some(size) -> Definite(size), None -> MinContent
-            AvailableSpace widthAvail = !Float.isNaN(availableSpace.width)
-                                        ? AvailableSpace.definite(availableSpace.width)
-                                        : AvailableSpace.minContent();
-            AvailableSpace heightAvail = !Float.isNaN(availableSpace.height)
-                                         ? AvailableSpace.definite(availableSpace.height)
-                                         : AvailableSpace.minContent();
-
-            FloatSize measuredSize = layoutComputer.measureChildSize(
-                nodeId,
-                knownDimensions,
-                innerNodeSize,
-                new Size<>(widthAvail, heightAvail),
-                SizingMode.INHERENT_SIZE,
-                Line.FALSE
-            );
-
-            return measuredSize.height + marginAxisSums.height;
         }
 
         /**
@@ -340,9 +272,9 @@ public class GridComputer {
                 nodeId,
                 knownDimensions,
                 innerNodeSize,
-                new Size<>(widthAvail, heightAvail),
+                new TaffySize<>(widthAvail, heightAvail),
                 SizingMode.INHERENT_SIZE,
-                Line.FALSE
+                TaffyLine.FALSE
             );
 
             return measuredSize.width + marginAxisSums.width;
@@ -380,9 +312,9 @@ public class GridComputer {
                 nodeId,
                 knownDimensions,
                 innerNodeSize,
-                new Size<>(widthAvail, heightAvail),
+                new TaffySize<>(widthAvail, heightAvail),
                 SizingMode.INHERENT_SIZE,
-                Line.FALSE
+                TaffyLine.FALSE
             );
 
             return measuredSize.height + marginAxisSums.height;
@@ -455,14 +387,47 @@ public class GridComputer {
 
     }
 
+    private static float capCompressibleReplacedMinimumContributionWidth(GridItem item, float currentWithMargin, float marginWidth) {
+        if (item == null || !item.isCompressibleReplaced) return currentWithMargin;
+
+        // Border+padding minimum (outer size can't be smaller than this)
+        float paddingBorderWidth = (item.padding != null ? item.padding.left + item.padding.right : 0f)
+                                   + (item.border != null ? item.border.left + item.border.right : 0f);
+
+        float preferred = resolveReplacedCapValueWidth(item.rawSize, item.boxSizing, paddingBorderWidth);
+        float max = resolveReplacedCapValueWidth(item.rawMaxSize, item.boxSizing, paddingBorderWidth);
+
+        float capped = currentWithMargin;
+        if (!Float.isNaN(preferred)) capped = Math.min(capped, preferred + marginWidth);
+        if (!Float.isNaN(max)) capped = Math.min(capped, max + marginWidth);
+
+        // Keep consistent with min padding/border invariants
+        float minPossible = paddingBorderWidth + marginWidth;
+        if (capped < minPossible) capped = minPossible;
+        return capped;
+    }
+
+    private static float resolveReplacedCapValueWidth(TaffySize<TaffyDimension> rawSize, BoxSizing boxSizing, float paddingBorderWidth) {
+        if (rawSize == null || rawSize.width == null) return NaN;
+        // Resolve against 0 so that indefinite percentages are treated as definite 0 for capping purposes.
+        float v = rawSize.width.maybeResolve(0f);
+        if (Float.isNaN(v)) return NaN;
+        // If size applies to content-box, convert to border-box by adding padding+border.
+        if (boxSizing == BoxSizing.CONTENT_BOX) {
+            v += paddingBorderWidth;
+        }
+        // Ensure not smaller than padding+border.
+        return Math.max(v, paddingBorderWidth);
+    }
+
     /**
      * Computes grid layout for a node.
      */
-    public LayoutOutput compute(NodeId node, LayoutInput inputs, Style style) {
+    public LayoutOutput compute(NodeId node, LayoutInput inputs, TaffyStyle style) {
         TaffyTree tree = layoutComputer.getTree();
         FloatSize knownDimensions = inputs.knownDimensions();
         FloatSize parentSize = inputs.parentSize();
-        Size<AvailableSpace> availableSpace = inputs.availableSpace();
+        TaffySize<AvailableSpace> availableSpace = inputs.availableSpace();
         RunMode runMode = inputs.runMode();
 
         Float aspectRatio = style.getAspectRatio();
@@ -508,7 +473,7 @@ public class GridComputer {
         // Scrollbar gutters are reserved when the `overflow` property is set to `Overflow::Scroll`.
         // However, the axes are switched (transposed) because a node that scrolls vertically needs
         // *horizontal* space to be reserved for a scrollbar
-        Point<Overflow> overflow = style.getOverflow();
+        TaffyPoint<Overflow> overflow = style.getOverflow();
         float scrollbarWidth = style.getScrollbarWidth();
         float scrollbarGutterX = overflow.y == Overflow.SCROLL ? scrollbarWidth : 0f;  // vertical scroll needs horizontal space
         float scrollbarGutterY = overflow.x == Overflow.SCROLL ? scrollbarWidth : 0f;  // horizontal scroll needs vertical space
@@ -542,10 +507,10 @@ public class GridComputer {
 
         // First, compute constrained available space (before subtracting content box inset)
         // This clamps the available space by min/max size constraints
-        Size<AvailableSpace> constrainedAvailableSpace;
+        TaffySize<AvailableSpace> constrainedAvailableSpace;
         if (!Float.isNaN(styledBasedKnownDimensions.width) && !Float.isNaN(styledBasedKnownDimensions.height)) {
             // Both dimensions known - use them directly
-            constrainedAvailableSpace = new Size<>(
+            constrainedAvailableSpace = new TaffySize<>(
                 AvailableSpace.definite(styledBasedKnownDimensions.width),
                 AvailableSpace.definite(styledBasedKnownDimensions.height)
             );
@@ -557,11 +522,11 @@ public class GridComputer {
             AvailableSpace constrainedHeight = !Float.isNaN(styledBasedKnownDimensions.height)
                                                ? AvailableSpace.definite(styledBasedKnownDimensions.height)
                                                : clampAvailableSpace(availableSpace.height, minSize.height, maxSize.height, paddingBorderSize.height);
-            constrainedAvailableSpace = new Size<>(constrainedWidth, constrainedHeight);
+            constrainedAvailableSpace = new TaffySize<>(constrainedWidth, constrainedHeight);
         }
 
         // Then compute available grid space by subtracting content box inset
-        Size<AvailableSpace> availableGridSpace = new Size<>(
+        TaffySize<AvailableSpace> availableGridSpace = new TaffySize<>(
             constrainedAvailableSpace.width.mapDefiniteValue(v -> v - contentBoxInsetWidth),
             constrainedAvailableSpace.height.mapDefiniteValue(v -> v - contentBoxInsetHeight)
         );
@@ -783,10 +748,10 @@ public class GridComputer {
                         item.nodeId,
                         itemKnownDims,
                         finalNodeInnerSize,
-                        new Size<>(AvailableSpace.minContent(),
+                        new TaffySize<>(AvailableSpace.minContent(),
                             !Float.isNaN(itemHeight) ? AvailableSpace.definite(itemHeight) : AvailableSpace.minContent()),
                         SizingMode.INHERENT_SIZE,
-                        Line.FALSE
+                        TaffyLine.FALSE
                     );
                     newMinContentContribution = measuredSize.width + marginAxisSums.width;
                 }
@@ -868,10 +833,10 @@ public class GridComputer {
                             item.nodeId,
                             itemKnownDims,
                             finalNodeInnerSize,
-                            new Size<>(!Float.isNaN(itemWidth) ? AvailableSpace.definite(itemWidth) : AvailableSpace.minContent(),
+                            new TaffySize<>(!Float.isNaN(itemWidth) ? AvailableSpace.definite(itemWidth) : AvailableSpace.minContent(),
                                 AvailableSpace.minContent()),
                             SizingMode.INHERENT_SIZE,
-                            Line.FALSE
+                            TaffyLine.FALSE
                         );
                         newMinContentContribution = measuredSize.height + marginAxisSums.height;
                     }
@@ -937,8 +902,11 @@ public class GridComputer {
             FloatList colOffsets = calculateTrackOffsets(columnSizes, gap.width, padding.left + border.left);
             FloatList rowOffsets = calculateTrackOffsets(rowSizes, gap.height, padding.top + border.top);
 
+            // Get direction for RTL support (resolve INHERIT)
+            boolean isRtlEmpty = layoutComputer.resolveDirection(node) == TaffyDirection.RTL;
+
             // Layout absolutely positioned children even if no regular items
-            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, colOffsets, rowOffsets);
+            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, colOffsets, rowOffsets, isRtlEmpty);
 
             // Layout hidden children (display: none)
             List<NodeId> children = tree.getChildren(node);
@@ -950,14 +918,15 @@ public class GridComputer {
                         child,
                         FloatSize.none(),
                         FloatSize.none(),
-                        Size.maxContent(),
+                        TaffySize.maxContent(),
                         SizingMode.INHERENT_SIZE,
-                        Line.FALSE
+                        TaffyLine.FALSE
                     );
                 }
             }
 
-            return LayoutOutput.fromOuterSize(containerSize);
+            FloatSize contentSize = computeContentSizeFromChildren(node);
+            return LayoutOutput.fromSizesAndBaselines(containerSize, contentSize, new FloatPoint(NaN, NaN));
         }
 
         // Calculate track offsets for absolute positioned children
@@ -965,8 +934,12 @@ public class GridComputer {
         FloatList columnOffsets = calculateTrackOffsets(columnSizes, gap.width, padding.left + border.left);
         FloatList rowOffsets = calculateTrackOffsets(rowSizes, gap.height, padding.top + border.top);
 
+        // Get direction for RTL/LTR support (resolve INHERIT)
+        TaffyDirection direction = layoutComputer.resolveDirection(node);
+        boolean isRtl = direction == TaffyDirection.RTL;
+
         // Place items and calculate final positions
-        placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize, style, colCounts, rowCounts);
+        placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize, style, colCounts, rowCounts, isRtl);
 
         float containerWidth = !Float.isNaN(styledBasedKnownDimensions.width)
                                ? styledBasedKnownDimensions.width
@@ -993,7 +966,7 @@ public class GridComputer {
         performFinalLayout(items);
 
         // Layout absolutely positioned children
-        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnOffsets, rowOffsets);
+        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnOffsets, rowOffsets, isRtl);
 
         // Layout hidden children (display: none)
         List<NodeId> children = tree.getChildren(node);
@@ -1005,9 +978,9 @@ public class GridComputer {
                     child,
                     FloatSize.none(),
                     FloatSize.none(),
-                    Size.maxContent(),
+                    TaffySize.maxContent(),
                     SizingMode.INHERENT_SIZE,
-                    Line.FALSE
+                    TaffyLine.FALSE
                 );
             }
         }
@@ -1015,11 +988,37 @@ public class GridComputer {
         // Calculate container baseline
         float containerBaseline = calculateContainerBaseline(items);
 
+        FloatSize contentSize = computeContentSizeFromChildren(node);
+
         return LayoutOutput.fromSizesAndBaselines(
             containerSize,
-            FloatSize.zero(),
+            contentSize,
             new FloatPoint(NaN, containerBaseline)
         );
+    }
+
+    private FloatSize computeContentSizeFromChildren(NodeId node) {
+        TaffyTree tree = layoutComputer.getTree();
+        FloatSize contentSize = FloatSize.zero();
+
+        for (NodeId childId : tree.getChildren(node)) {
+            TaffyStyle childStyle = tree.getStyle(childId);
+            if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
+
+            Layout childLayout = tree.getUnroundedLayout(childId);
+            if (childLayout == null) continue;
+
+            FloatSize childContentSize = childLayout.contentSize() != null ? childLayout.contentSize() : childLayout.size();
+            FloatSize contribution = ContentSizeUtil.computeContentSizeContribution(
+                childLayout.location(),
+                childLayout.size(),
+                childContentSize,
+                childStyle.getOverflow()
+            );
+            contentSize = ContentSizeUtil.max(contentSize, contribution);
+        }
+
+        return contentSize;
     }
 
     /**
@@ -1105,7 +1104,7 @@ public class GridComputer {
         return offsets;
     }
 
-    private List<GridItem> generateGridItems(NodeId node, Style containerStyle, FloatSize nodeInnerSize) {
+    private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize) {
         TaffyTree tree = layoutComputer.getTree();
         List<GridItem> items = new ArrayList<>();
 
@@ -1115,9 +1114,14 @@ public class GridComputer {
         int explicitColCount = (templateCols != null) ? templateCols.size() : 0;
         int explicitRowCount = (templateRows != null) ? templateRows.size() : 0;
 
+        // Create NamedLineResolver for resolving named grid lines
+        NamedLineResolver namedLineResolver = new NamedLineResolver(containerStyle);
+        namedLineResolver.setExplicitColumnCount(explicitColCount);
+        namedLineResolver.setExplicitRowCount(explicitRowCount);
+
         int order = 0;
         for (NodeId childId : tree.getChildren(node)) {
-            Style childStyle = tree.getStyle(childId);
+            TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
                 continue;
@@ -1168,6 +1172,7 @@ public class GridComputer {
             item.inset = childStyle.getInset();
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
+            item.isCompressibleReplaced = childStyle.getItemIsReplaced();
 
             // Alignment for track sizing: use child's preference, or parent's default, or STRETCH
             // This merged value is used during track sizing (computeItemKnownDimensions).
@@ -1180,20 +1185,26 @@ public class GridComputer {
             item.alignSelf = childStyle.getAlignSelf() != null ? childStyle.getAlignSelf() : resolvedAlignItems;
             item.justifySelf = childStyle.justifySelf != null ? childStyle.justifySelf : resolvedJustifyItems;
 
-            // Grid placement - properly handle LINE, SPAN, and AUTO
+            // Grid placement - properly handle LINE, SPAN, NAMED_LINE, NAMED_SPAN, and AUTO
             GridPlacement colStart = childStyle.getGridColumnStart();
             GridPlacement colEnd = childStyle.getGridColumnEnd();
             GridPlacement rowStart = childStyle.getGridRowStart();
             GridPlacement rowEnd = childStyle.getGridRowEnd();
 
+            // Resolve named lines to numeric lines first
+            TaffyLine<GridPlacement> resolvedCol = namedLineResolver.resolveColumnNames(
+                new TaffyLine<>(colStart, colEnd));
+            TaffyLine<GridPlacement> resolvedRow = namedLineResolver.resolveRowNames(
+                new TaffyLine<>(rowStart, rowEnd));
+
             // Parse column placement with explicit track count for negative line resolution
-            GridPlacementResult colPlacement = parseGridPlacement(colStart, colEnd, explicitColCount);
+            GridPlacementResult colPlacement = parseGridPlacement(resolvedCol.start, resolvedCol.end, explicitColCount);
             item.columnStart = colPlacement.startIndex;
             item.columnEnd = colPlacement.endIndex;
             item.columnSpan = colPlacement.span;
 
             // Parse row placement with explicit track count for negative line resolution
-            GridPlacementResult rowPlacement = parseGridPlacement(rowStart, rowEnd, explicitRowCount);
+            GridPlacementResult rowPlacement = parseGridPlacement(resolvedRow.start, resolvedRow.end, explicitRowCount);
             item.rowStart = rowPlacement.startIndex;
             item.rowEnd = rowPlacement.endIndex;
             item.rowSpan = rowPlacement.span;
@@ -1201,7 +1212,7 @@ public class GridComputer {
             item.computedSize = new FloatSize(0f, 0f);
             item.location = new FloatPoint(0f, 0f);
 
-            if (item.position != Position.ABSOLUTE) {
+            if (item.position != TaffyPosition.ABSOLUTE) {
                 items.add(item);
             }
         }
@@ -1542,7 +1553,7 @@ public class GridComputer {
      * @param gap           The gap between tracks
      * @param colCounts     Track counts information
      */
-    private void collapseEmptyAutoFitColumns(FloatList columnSizes, Style style, List<GridItem> items,
+    private void collapseEmptyAutoFitColumns(FloatList columnSizes, TaffyStyle style, List<GridItem> items,
                                              FloatSize nodeInnerSize, float gap, TrackCounts colCounts) {
         if (style.gridTemplateColumnsWithRepeat == null) {
             return;
@@ -1556,7 +1567,7 @@ public class GridComputer {
         // Build a set of columns that contain items
         boolean[] columnOccupied = new boolean[columnSizes.size()];
         for (GridItem item : items) {
-            if (item.position == Position.ABSOLUTE) {
+            if (item.position == TaffyPosition.ABSOLUTE) {
                 continue;
             }
             int colStart = getItemColumnWithCounts(item, 0, columnSizes.size(), colCounts);
@@ -1582,7 +1593,7 @@ public class GridComputer {
     /**
      * Get the expanded grid template columns, handling auto-fill/auto-fit if present.
      */
-    private List<TrackSizingFunction> getExpandedTemplateColumns(Style style, float containerWidth, float gap) {
+    private List<TrackSizingFunction> getExpandedTemplateColumns(TaffyStyle style, float containerWidth, float gap) {
         if (style.gridTemplateColumnsWithRepeat != null) {
             return expandAutoRepetition(style.gridTemplateColumnsWithRepeat, containerWidth, gap);
         }
@@ -1592,7 +1603,7 @@ public class GridComputer {
     /**
      * Get the expanded grid template rows, handling auto-fill/auto-fit if present.
      */
-    private List<TrackSizingFunction> getExpandedTemplateRows(Style style, float containerHeight, float gap) {
+    private List<TrackSizingFunction> getExpandedTemplateRows(TaffyStyle style, float containerHeight, float gap) {
         if (style.gridTemplateRowsWithRepeat != null) {
             return expandAutoRepetition(style.gridTemplateRowsWithRepeat, containerHeight, gap);
         }
@@ -2095,10 +2106,10 @@ public class GridComputer {
     }
 
     private FloatList calculateColumnSizes(
-        Style style,
+        TaffyStyle style,
         FloatSize nodeInnerSize,
-        Size<AvailableSpace> availableGridSpace,
-        Size<AvailableSpace> originalAvailableSpace,
+        TaffySize<AvailableSpace> availableGridSpace,
+        TaffySize<AvailableSpace> originalAvailableSpace,
         FloatSize gap,
         int numColumns,
         int numRows,
@@ -2110,10 +2121,10 @@ public class GridComputer {
     }
 
     private FloatList calculateColumnSizesWithRowSizes(
-        Style style,
+        TaffyStyle style,
         FloatSize nodeInnerSize,
-        Size<AvailableSpace> availableGridSpace,
-        Size<AvailableSpace> originalAvailableSpace,
+        TaffySize<AvailableSpace> availableGridSpace,
+        TaffySize<AvailableSpace> originalAvailableSpace,
         FloatSize gap,
         int numColumns,
         int numRows,
@@ -2550,6 +2561,11 @@ public class GridComputer {
                                 // min-content contribution should respect min-size constraint
                                 itemMinWidth = Math.max(measuredMinWidth, itemMinWidthConstraint);
                             }
+
+                            // Compressible replaced element capping (Rust: is_compressible_replaced)
+                            // If preferred/max sizes are definite (including % resolved against 0), cap the content-based minimum.
+                            itemMinWidth = capCompressibleReplacedMinimumContributionWidth(item, itemMinWidth, marginAxisSums.width);
+
                             minContentSize = Math.max(minContentSize, itemMinWidth);
                         }
                     }
@@ -2770,6 +2786,9 @@ public class GridComputer {
 
                 // For scroll containers, minimum contribution is 0 (unless min-size is set)
                 float minimumContribution = isScrollContainer ? 0f : itemMinContent;
+
+                // Compressible replaced element capping (Rust: is_compressible_replaced)
+                minimumContribution = capCompressibleReplacedMinimumContributionWidth(item, minimumContribution, marginAxisSums.width);
 
                 // Identify track types
                 IntList intrinsicTracks = new IntArrayList();  // All intrinsic min tracks (auto, min-content, max-content)
@@ -3430,9 +3449,9 @@ public class GridComputer {
                     item.nodeId,
                     new FloatSize(NaN, NaN),
                     innerNodeSize,
-                    new Size<>(AvailableSpace.minContent(), AvailableSpace.minContent()),
+                    new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.minContent()),
                     SizingMode.INHERENT_SIZE,
-                    new Line<>(false, false)
+                    new TaffyLine<>(false, false)
                 );
 
                 float baselineValue = output.firstBaselines() != null ? output.firstBaselines().y : NaN;
@@ -3461,9 +3480,9 @@ public class GridComputer {
     }
 
     private FloatList calculateRowSizes(
-        Style style,
+        TaffyStyle style,
         FloatSize nodeInnerSize,
-        Size<AvailableSpace> availableGridSpace,
+        TaffySize<AvailableSpace> availableGridSpace,
         FloatSize gap,
         int numRows,
         List<GridItem> items,
@@ -3887,9 +3906,10 @@ public class GridComputer {
         FloatSize gap,
         FloatRect contentBoxInset,
         FloatSize nodeInnerSize,
-        Style containerStyle,
+        TaffyStyle containerStyle,
         TrackCounts colCounts,
-        TrackCounts rowCounts) {
+        TrackCounts rowCounts,
+        boolean isRtl) {
 
         int numColumns = columnSizes.size();
         int numRows = rowSizes.size();
@@ -3933,6 +3953,23 @@ public class GridComputer {
         float contentOffsetX = calculateContentAlignmentOffset(containerStyle.getJustifyContent(), freeSpaceWidth, nonCollapsedColumns);
         float contentOffsetY = calculateContentAlignmentOffset(containerStyle.getAlignContent(), freeSpaceHeight, nonCollapsedRows);
 
+        // In RTL, 'start' and 'end' for justify-content are flipped along the inline axis.
+        // For RTL, we need to adjust contentOffsetX:
+        // - START/FLEX_START: items start from right edge, contentOffsetX = 0 (no initial offset from right)
+        // - END/FLEX_END: items end at left edge, contentOffsetX = freeSpaceWidth (offset from right)
+        // Note: The RTL coordinate transformation in the trackX calculation handles the mirroring.
+        if (isRtl) {
+            JustifyContent justifyContent = containerStyle.getJustifyContent();
+            if (justifyContent == null || justifyContent == JustifyContent.START || justifyContent == JustifyContent.FLEX_START) {
+                // For RTL START: items align to inline-start (right edge), no offset
+                contentOffsetX = 0;
+            } else if (justifyContent == JustifyContent.END || justifyContent == JustifyContent.FLEX_END) {
+                // For RTL END: items align to inline-end (left edge), offset by free space
+                contentOffsetX = freeSpaceWidth;
+            }
+            // CENTER, SPACE_BETWEEN, SPACE_AROUND, SPACE_EVENLY remain symmetric
+        }
+
         // Calculate gap adjustments for space-between, space-around, space-evenly (use non-collapsed track counts)
         float adjustedGapX = calculateAdjustedGap(containerStyle.getJustifyContent(), freeSpaceWidth, nonCollapsedColumns, gap.width);
         float adjustedGapY = calculateAdjustedGap(containerStyle.getAlignContent(), freeSpaceHeight, nonCollapsedRows, gap.height);
@@ -3953,25 +3990,70 @@ public class GridComputer {
             if (colSpan < 1) colSpan = 1;
             if (rowSpan < 1) rowSpan = 1;
 
-            // Get track position with content alignment offset
-            // Only add gap after non-collapsed tracks
-            float trackX = contentBoxInset.left + contentOffsetX;
-            boolean prevColNonCollapsed = false;
-            for (int c = 0; c < col; c++) {
-                float colSize = columnSizes.getFloat(c);
-                boolean isNonCollapsed = colSize > 0;
-                // Add gap before this track if both previous and current are non-collapsed
-                if (isNonCollapsed && prevColNonCollapsed) {
-                    trackX += adjustedGapX;
-                }
-                trackX += colSize;
-                if (isNonCollapsed) {
-                    prevColNonCollapsed = true;
+            // Track size (available space for item) - sum of spanned tracks plus gaps between them
+            // Only add gaps between non-collapsed tracks
+            float trackWidth = 0;
+            boolean firstNonCollapsedInSpan = true;
+            for (int c = 0; c < colSpan; c++) {
+                if (col + c < numColumns) {
+                    float colSize = columnSizes.getFloat(col + c);
+                    if (colSize > 0) {
+                        if (!firstNonCollapsedInSpan) {
+                            trackWidth += adjustedGapX;
+                        }
+                        trackWidth += colSize;
+                        firstNonCollapsedInSpan = false;
+                    }
                 }
             }
-            // Add initial offset if the item's column is non-collapsed and there were previous non-collapsed columns
-            if (col < numColumns && columnSizes.getFloat(col) > 0 && prevColNonCollapsed) {
-                trackX += adjustedGapX;
+
+            // Get track position with content alignment offset
+            // Only add gap after non-collapsed tracks
+            // For RTL, column indices are logical (counting from inline-start), so we mirror the x-coordinate.
+            float trackX;
+            if (isRtl) {
+                // Offset of this track area from inline-start (which is the right edge in RTL)
+                float startOffset = 0;
+                boolean prevColNonCollapsed = false;
+                for (int c = 0; c < col; c++) {
+                    float colSize = columnSizes.getFloat(c);
+                    boolean isNonCollapsed = colSize > 0;
+                    if (isNonCollapsed && prevColNonCollapsed) {
+                        startOffset += adjustedGapX;
+                    }
+                    startOffset += colSize;
+                    if (isNonCollapsed) {
+                        prevColNonCollapsed = true;
+                    }
+                }
+                if (col < numColumns && columnSizes.getFloat(col) > 0 && prevColNonCollapsed) {
+                    startOffset += adjustedGapX;
+                }
+
+                // Mirror into left-origin coordinates
+                // For RTL, contentOffsetX represents offset from inline-end (left edge),
+                // so we subtract it from the right side calculation
+                trackX = contentBoxInset.left + (innerWidth - contentOffsetX - startOffset - trackWidth);
+            } else {
+                // LTR: Calculate from left edge (original logic)
+                trackX = contentBoxInset.left + contentOffsetX;
+                boolean prevColNonCollapsed = false;
+                for (int c = 0; c < col; c++) {
+                    float colSize = columnSizes.getFloat(c);
+                    boolean isNonCollapsed = colSize > 0;
+                    // Add gap before this track if both previous and current are non-collapsed
+                    if (isNonCollapsed && prevColNonCollapsed) {
+                        trackX += adjustedGapX;
+                    }
+                    trackX += colSize;
+                    if (isNonCollapsed) {
+                        prevColNonCollapsed = true;
+                    }
+                }
+                // Add initial offset if the item's column is non-collapsed and there were previous non-collapsed columns
+                if (col < numColumns && columnSizes.getFloat(col) > 0 && prevColNonCollapsed) {
+                    trackX += adjustedGapX;
+                }
             }
 
             float trackY = contentBoxInset.top + contentOffsetY;
@@ -3991,23 +4073,6 @@ public class GridComputer {
                 trackY += adjustedGapY;
             }
 
-            // Track size (available space for item) - sum of spanned tracks plus gaps between them
-            // Only add gaps between non-collapsed tracks
-            float trackWidth = 0;
-            boolean firstNonCollapsedInSpan = true;
-            for (int c = 0; c < colSpan; c++) {
-                if (col + c < numColumns) {
-                    float colSize = columnSizes.getFloat(col + c);
-                    if (colSize > 0) {
-                        if (!firstNonCollapsedInSpan) {
-                            trackWidth += adjustedGapX;
-                        }
-                        trackWidth += colSize;
-                        firstNonCollapsedInSpan = false;
-                    }
-                }
-            }
-
             float trackHeight = 0;
             firstNonCollapsedInSpan = true;
             for (int r = 0; r < rowSpan; r++) {
@@ -4025,8 +4090,8 @@ public class GridComputer {
 
             // Re-resolve margin with track width (percentage margins are relative to grid area width)
             TaffyTree tree = layoutComputer.getTree();
-            Style childStyle = tree.getStyle(item.nodeId);
-            Rect<LengthPercentageAuto> marginStyle = childStyle.getMargin();
+            TaffyStyle childStyle = tree.getStyle(item.nodeId);
+            TaffyRect<LengthPercentageAuto> marginStyle = childStyle.getMargin();
             FloatRect margin = Resolve.resolveRectLpaOrZero(marginStyle, trackWidth);
 
             // Check if margins are auto (affects stretch behavior)
@@ -4089,9 +4154,9 @@ public class GridComputer {
                     item.nodeId,
                     new FloatSize(NaN, NaN),
                     nodeInnerSize,
-                    new Size<>(AvailableSpace.definite(availableWidth), AvailableSpace.definite(availableHeight)),
+                    new TaffySize<>(AvailableSpace.definite(availableWidth), AvailableSpace.definite(availableHeight)),
                     SizingMode.INHERENT_SIZE,
-                    new Line<>(false, false)
+                    new TaffyLine<>(false, false)
                 );
                 width = output.size().width;
             }
@@ -4118,9 +4183,9 @@ public class GridComputer {
                     item.nodeId,
                     new FloatSize(width, NaN),
                     nodeInnerSize,
-                    new Size<>(AvailableSpace.definite(width), AvailableSpace.definite(availableHeight)),
+                    new TaffySize<>(AvailableSpace.definite(width), AvailableSpace.definite(availableHeight)),
                     SizingMode.INHERENT_SIZE,
-                    new Line<>(false, false)
+                    new TaffyLine<>(false, false)
                 );
                 height = output.size().height;
             }
@@ -4154,20 +4219,47 @@ public class GridComputer {
 
             // Adjust x based on justify (horizontal alignment) - only if no auto margins
             if (!hasHorizontalAutoMargin) {
-                switch (alignX) {
-                    case CENTER:
-                        x += freeSpaceX / 2;
-                        break;
-                    case END:
-                    case FLEX_END:
-                        x += freeSpaceX;
-                        break;
-                    case START:
-                    case FLEX_START:
-                    case STRETCH:
-                    default:
-                        // x stays at start
-                        break;
+                // In RTL, START/END are swapped: START = right (inline-start), END = left (inline-end)
+                // Since trackX is already the left edge of the track in screen coordinates,
+                // we need to adjust the alignment behavior for RTL:
+                // - START/FLEX_START in RTL: item aligns to right edge of track = x += freeSpaceX
+                // - END/FLEX_END in RTL: item aligns to left edge of track = x += 0
+                // - CENTER: x += freeSpaceX / 2 (symmetric)
+                if (isRtl) {
+                    switch (alignX) {
+                        case CENTER:
+                            x += freeSpaceX / 2;
+                            break;
+                        case START:
+                        case FLEX_START:
+                            // In RTL, START is the right edge of the track
+                            x += freeSpaceX;
+                            break;
+                        case END:
+                        case FLEX_END:
+                        case STRETCH:
+                        default:
+                            // In RTL, END is the left edge of the track (where trackX points)
+                            // x stays at start (trackX + marginLeft)
+                            break;
+                    }
+                } else {
+                    // LTR: original behavior
+                    switch (alignX) {
+                        case CENTER:
+                            x += freeSpaceX / 2;
+                            break;
+                        case END:
+                        case FLEX_END:
+                            x += freeSpaceX;
+                            break;
+                        case START:
+                        case FLEX_START:
+                        case STRETCH:
+                        default:
+                            // x stays at start
+                            break;
+                    }
                 }
             }
 
@@ -4198,7 +4290,7 @@ public class GridComputer {
 
             // Apply relative position inset offset
             // For position: relative, inset values offset the item from its natural position
-            if (item.position == Position.RELATIVE && item.inset != null) {
+            if (item.position == TaffyPosition.RELATIVE && item.inset != null) {
                 // Horizontal inset: use left, or -right if left is not set
                 float insetLeft = item.inset.left.maybeResolve(trackWidth);
                 float insetRight = item.inset.right.maybeResolve(trackWidth);
@@ -4231,9 +4323,9 @@ public class GridComputer {
                 item.nodeId,
                 new FloatSize(width, height),  // known dimensions
                 new FloatSize(trackWidth, trackHeight),  // parent inner size
-                new Size<>(AvailableSpace.definite(width), AvailableSpace.definite(height)),
+                new TaffySize<>(AvailableSpace.definite(width), AvailableSpace.definite(height)),
                 SizingMode.INHERENT_SIZE,
-                new Line<>(false, false)
+                new TaffyLine<>(false, false)
             );
         }
     }
@@ -4271,17 +4363,18 @@ public class GridComputer {
         TrackCounts colCounts,
         TrackCounts rowCounts,
         FloatList columnOffsets,
-        FloatList rowOffsets) {
+        FloatList rowOffsets,
+        boolean isRtl) {
         TaffyTree tree = layoutComputer.getTree();
 
         for (NodeId childId : tree.getChildren(node)) {
-            Style childStyle = tree.getStyle(childId);
-            if (childStyle.getPosition() != Position.ABSOLUTE) continue;
+            TaffyStyle childStyle = tree.getStyle(childId);
+            if (childStyle.getPosition() != TaffyPosition.ABSOLUTE) continue;
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
 
             // Resolve grid placement for absolute positioned items
-            Line<GridPlacement> gridCol = childStyle.gridColumn;
-            Line<GridPlacement> gridRow = childStyle.gridRow;
+            TaffyLine<GridPlacement> gridCol = childStyle.gridColumn;
+            TaffyLine<GridPlacement> gridRow = childStyle.gridRow;
 
             // Calculate grid area based on grid placement
             FloatRect gridArea = resolveAbsoluteGridArea(
@@ -4295,7 +4388,7 @@ public class GridComputer {
             float areaWidth = gridArea.right - gridArea.left;
             float areaHeight = gridArea.bottom - gridArea.top;
 
-            Rect<LengthPercentageAuto> insetStyle = childStyle.getInset();
+            TaffyRect<LengthPercentageAuto> insetStyle = childStyle.getInset();
             float left = insetStyle.left.maybeResolve(areaWidth);
             float right = insetStyle.right.maybeResolve(areaWidth);
             float top = insetStyle.top.maybeResolve(areaHeight);
@@ -4365,9 +4458,9 @@ public class GridComputer {
                 childId,
                 knownDimensions,
                 new FloatSize(areaWidth, areaHeight),
-                new Size<>(AvailableSpace.definite(areaWidth), AvailableSpace.definite(areaHeight)),
+                new TaffySize<>(AvailableSpace.definite(areaWidth), AvailableSpace.definite(areaHeight)),
                 SizingMode.INHERENT_SIZE,
-                new Line<>(false, false)
+                new TaffyLine<>(false, false)
             );
 
             FloatSize finalSize = maybeClamp(
@@ -4382,15 +4475,28 @@ public class GridComputer {
             AlignItems justifySelf = childStyle.justifySelf;
             AlignItems alignSelf = childStyle.getAlignSelf();
 
+            // For RTL, we need to flip the grid area horizontally within the container
+            // grid-column: 1 in RTL means the rightmost column
+            FloatRect effectiveGridArea = gridArea;
+            if (isRtl) {
+                // In RTL, flip the left/right of the grid area
+                // gridArea.left becomes containerSize.width - gridArea.right
+                // gridArea.right becomes containerSize.width - gridArea.left
+                float newLeft = containerSize.width - gridArea.right;
+                float newRight = containerSize.width - gridArea.left;
+                effectiveGridArea = new FloatRect(newLeft, newRight, gridArea.top, gridArea.bottom);
+            }
+            float effectiveAreaWidth = effectiveGridArea.right - effectiveGridArea.left;
+
             // Compute offset in horizontal axis
             float xInArea;
             if (!Float.isNaN(left)) {
                 xInArea = left + margin.left;
             } else if (!Float.isNaN(right)) {
-                xInArea = areaWidth - right - finalSize.width - margin.right;
+                xInArea = effectiveAreaWidth - right - finalSize.width - margin.right;
             } else {
                 // Use alignment-based offset
-                float freeSpaceX = areaWidth - finalSize.width - margin.left - margin.right;
+                float freeSpaceX = effectiveAreaWidth - finalSize.width - margin.left - margin.right;
                 if (justifySelf == AlignItems.END || justifySelf == AlignItems.FLEX_END) {
                     xInArea = freeSpaceX + margin.left;
                 } else if (justifySelf == AlignItems.CENTER) {
@@ -4421,10 +4527,10 @@ public class GridComputer {
             }
 
             // Convert to container coordinates
-            float x = gridArea.left + xInArea;
+            float x = effectiveGridArea.left + xInArea;
             float y = gridArea.top + yInArea;
 
-            Point<Overflow> overflow = childStyle.getOverflow();
+            TaffyPoint<Overflow> overflow = childStyle.getOverflow();
             FloatSize scrollbarSize = new FloatSize(
                 overflow.y == Overflow.SCROLL ? childStyle.getScrollbarWidth() : 0f,
                 overflow.x == Overflow.SCROLL ? childStyle.getScrollbarWidth() : 0f
@@ -4451,8 +4557,8 @@ public class GridComputer {
      * the item is positioned against the grid container's padding edge.
      */
     private FloatRect resolveAbsoluteGridArea(
-        Line<GridPlacement> gridCol,
-        Line<GridPlacement> gridRow,
+        TaffyLine<GridPlacement> gridCol,
+        TaffyLine<GridPlacement> gridRow,
         TrackCounts colCounts,
         TrackCounts rowCounts,
         FloatList columnOffsets,
@@ -4724,9 +4830,9 @@ public class GridComputer {
                         item.nodeId,
                         new FloatSize(NaN, NaN),
                         nodeInnerSize,
-                        new Size<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
+                        new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
                         SizingMode.INHERENT_SIZE,
-                        new Line<>(false, false)
+                        new TaffyLine<>(false, false)
                     );
                     itemMinWidth = minOutput.size().width + marginAxisSums.width;
                 }
@@ -4741,31 +4847,6 @@ public class GridComputer {
     }
 
     // Helper methods
-
-    /**
-     * Get the matrix index for an item's column.
-     * Returns the 0-based index into the track array (including implicit tracks).
-     * Note: This method assumes columnStart is in OriginZero coordinates.
-     * For items with null columnStart, returns a fallback based on item index.
-     */
-    private int getItemColumn(GridItem item, int index, int numColumns) {
-        if (item.columnStart != null) {
-            // columnStart is in OriginZero coordinates
-            // We need to convert to matrix index, but without TrackCounts here
-            // This is a fallback - callers should use TrackCounts when available
-            return Math.max(0, Math.min(item.columnStart, numColumns - 1));
-        }
-        return index % numColumns;
-    }
-
-    private int getItemRow(GridItem item, int index, int numColumns) {
-        if (item.rowStart != null) {
-            // rowStart is in OriginZero coordinates
-            // This is a fallback - callers should use TrackCounts when available
-            return Math.max(0, item.rowStart);
-        }
-        return index / numColumns;
-    }
 
     /**
      * Get the matrix index for an item's column, using TrackCounts for coordinate conversion.
@@ -4785,36 +4866,6 @@ public class GridComputer {
             return rowCounts.ozLineToNextTrack(item.rowStart);
         }
         return index / numColumns;
-    }
-
-    private float getItemWidth(GridItem item, int index, FloatList columnSizes, float columnGap) {
-        int col = getItemColumn(item, index, columnSizes.size());
-        // Sum widths of all columns spanned by this item
-        float totalWidth = 0f;
-        int endCol = Math.min(col + item.columnSpan, columnSizes.size());
-        for (int c = col; c < endCol; c++) {
-            totalWidth += columnSizes.getFloat(c);
-        }
-        // Add gaps between spanned columns
-        int numGaps = Math.max(0, endCol - col - 1);
-        totalWidth += numGaps * columnGap;
-        return totalWidth - item.margin.left - item.margin.right;
-    }
-
-    private float getItemWidthWithCounts(GridItem item, int index, FloatList columnSizes, TrackCounts colCounts, float columnGap, float innerNodeWidth) {
-        int col = getItemColumnWithCounts(item, index, columnSizes.size(), colCounts);
-        // Sum widths of all columns spanned by this item
-        float totalWidth = 0f;
-        int endCol = Math.min(col + item.columnSpan, columnSizes.size());
-        for (int c = col; c < endCol; c++) {
-            totalWidth += columnSizes.getFloat(c);
-        }
-        // Add gaps between spanned columns
-        int numGaps = Math.max(0, endCol - col - 1);
-        totalWidth += numGaps * columnGap;
-        // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
-        FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(innerNodeWidth);
-        return totalWidth - marginAxisSums.width;
     }
 
     private float resolveTrackSize(TrackSizingFunction track, float availableSize) {
@@ -4986,7 +5037,10 @@ public class GridComputer {
                 }
                 yield 0;
             }
-            default -> 0;
+            // STRETCH, START, FLEX_START, SPACE_BETWEEN: offset is 0 (content starts at the beginning)
+            // Per CSS Grid spec: stretch distributes space to tracks, not to gutters
+            // SPACE_BETWEEN also has offset 0 (first item at start, last at end)
+            case STRETCH, START, FLEX_START, SPACE_BETWEEN -> 0;
         };
     }
 
@@ -5025,7 +5079,8 @@ public class GridComputer {
             case SPACE_BETWEEN -> originalGap + freeSpace / (numTracks - 1);
             case SPACE_AROUND -> originalGap + freeSpace / numTracks;
             case SPACE_EVENLY -> originalGap + freeSpace / (numTracks + 1);
-            default -> originalGap;
+            // STRETCH, START, END, etc: no gap adjustment (space is distributed to tracks, not gutters)
+            case STRETCH, START, END, FLEX_START, FLEX_END, CENTER -> originalGap;
         };
     }
 
@@ -5050,16 +5105,6 @@ public class GridComputer {
         }
         // For auto, min-content, max-content, fr - return null
         return NaN;
-    }
-
-    /**
-     * Estimate the height available for an item based on the row tracks it spans.
-     * Uses definite values from row track sizing functions when available.
-     * Returns NaN if any spanned track has an intrinsic (non-definite) sizing function.
-     */
-    private float estimateItemRowHeight(GridItem item, List<TrackSizingFunction> templateRows,
-                                        List<TrackSizingFunction> autoRows, int numRows, float parentHeight, FloatSize gap) {
-        return estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows, parentHeight, gap, null);
     }
 
     /**
@@ -5304,23 +5349,23 @@ public class GridComputer {
     static DebugPlacementResult debugRunPlacementForTest(
         int explicitColumnCount,
         int explicitRowCount,
-        List<Style> childStyles,
+        List<TaffyStyle> childStyles,
         GridAutoFlow flow) {
         GridComputer gc = new GridComputer(null);
 
         // Minimal container style needed by count/placement logic
-        Style containerStyle = new Style();
-        containerStyle.display = Display.GRID;
+        TaffyStyle containerStyle = new TaffyStyle();
+        containerStyle.display = TaffyDisplay.GRID;
         containerStyle.gridAutoFlow = (flow != null) ? flow : GridAutoFlow.ROW;
 
         // Build internal items from the provided child styles
         List<GridItem> items = new ArrayList<>();
         for (int i = 0; i < childStyles.size(); i++) {
-            Style child = childStyles.get(i);
+            TaffyStyle child = childStyles.get(i);
 
             GridItem item = new GridItem();
             item.order = i;
-            item.position = Position.RELATIVE;
+            item.position = TaffyPosition.RELATIVE;
 
             GridPlacementResult colPlacement = gc.parseGridPlacement(
                 child.getGridColumnStart(),

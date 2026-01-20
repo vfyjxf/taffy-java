@@ -1,15 +1,14 @@
 package dev.vfyjxf.taffy;
 
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -31,20 +30,20 @@ public class RelayoutTest {
     void relayout() {
         TaffyTree tree = new TaffyTree();
         
-        Style node1Style = new Style();
-        node1Style.size = new Size<>(Dimension.length(8.0f), Dimension.length(80.0f));
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.size = new TaffySize<>(TaffyDimension.length(8.0f), TaffyDimension.length(80.0f));
         NodeId node1 = tree.newLeaf(node1Style);
         
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.alignSelf = AlignItems.CENTER;
-        node0Style.size = new Size<>(Dimension.AUTO, Dimension.AUTO);
+        node0Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
         NodeId node0 = tree.newWithChildren(node0Style, node1);
         
-        Style rootStyle = new Style();
-        rootStyle.size = new Size<>(Dimension.percent(1.0f), Dimension.percent(1.0f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.percent(1.0f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(100.0f),
             AvailableSpace.definite(100.0f)
         ));
@@ -58,7 +57,7 @@ public class RelayoutTest {
         
         // Re-compute layout multiple times and verify stability
         for (int i = 1; i < 10; i++) {
-            tree.computeLayout(root, new Size<>(
+            tree.computeLayout(root, new TaffySize<>(
                 AvailableSpace.definite(100.0f),
                 AvailableSpace.definite(100.0f)
             ));
@@ -77,19 +76,19 @@ public class RelayoutTest {
     void toggleRootDisplayNone() {
         TaffyTree tree = new TaffyTree();
         
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
-        hiddenStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
-        Style flexStyle = new Style();
-        flexStyle.display = Display.FLEX;
-        flexStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle flexStyle = new TaffyStyle();
+        flexStyle.display = TaffyDisplay.FLEX;
+        flexStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
         // Setup
         NodeId node = tree.newLeaf(hiddenStyle);
         
         // Layout 1 (None)
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         Layout layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -98,7 +97,7 @@ public class RelayoutTest {
         
         // Layout 2 (Flex)
         tree.setStyle(node, flexStyle);
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -107,7 +106,7 @@ public class RelayoutTest {
         
         // Layout 3 (None)
         tree.setStyle(node, hiddenStyle);
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -120,30 +119,30 @@ public class RelayoutTest {
     void toggleRootDisplayNoneWithChildren() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(800.0f), Dimension.length(100.0f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(800.0f), TaffyDimension.length(100.0f));
         NodeId child = tree.newLeaf(childStyle);
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(800.0f), Dimension.length(100.0f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(800.0f), TaffyDimension.length(100.0f));
         NodeId parent = tree.newWithChildren(parentStyle, child);
         
-        Style rootStyle = new Style();
+        TaffyStyle rootStyle = new TaffyStyle();
         NodeId root = tree.newWithChildren(rootStyle, parent);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         assertEquals(800.0f, tree.getLayout(child).size().width, EPSILON);
         assertEquals(100.0f, tree.getLayout(child).size().height, EPSILON);
         
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
         tree.setStyle(root, hiddenStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         assertEquals(0.0f, tree.getLayout(child).size().width, EPSILON);
         assertEquals(0.0f, tree.getLayout(child).size().height, EPSILON);
         
-        tree.setStyle(root, new Style());
-        tree.computeLayout(root, Size.maxContent());
+        tree.setStyle(root, new TaffyStyle());
+        tree.computeLayout(root, TaffySize.maxContent());
         assertEquals(800.0f, tree.getLayout(parent).size().width, EPSILON);
         assertEquals(100.0f, tree.getLayout(parent).size().height, EPSILON);
         assertEquals(800.0f, tree.getLayout(child).size().width, EPSILON);
@@ -155,13 +154,13 @@ public class RelayoutTest {
     void toggleFlexChildDisplayNone() {
         TaffyTree tree = new TaffyTree();
         
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
-        hiddenStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
-        Style flexStyle = new Style();
-        flexStyle.display = Display.FLEX;
-        flexStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle flexStyle = new TaffyStyle();
+        flexStyle.display = TaffyDisplay.FLEX;
+        flexStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
         // Setup
         NodeId node = tree.newLeaf(hiddenStyle);
@@ -170,7 +169,7 @@ public class RelayoutTest {
         System.out.println("=== Layout 1 (None) ===");
         System.out.println("node style display: " + tree.getStyle(node).display);
         // Layout 1 (None)
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         Layout layout = tree.getLayout(node);
         System.out.println("node layout: " + layout.size());
         assertEquals(0.0f, layout.location().x, EPSILON);
@@ -186,7 +185,7 @@ public class RelayoutTest {
         System.out.println("After setStyle - node style display: " + tree.getStyle(node).display);
         System.out.println("After setStyle - isDirty(node): " + tree.isDirty(node));
         System.out.println("After setStyle - isDirty(root): " + tree.isDirty(root));
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(node);
         System.out.println("node layout: " + layout.size());
         assertEquals(0.0f, layout.location().x, EPSILON);
@@ -196,7 +195,7 @@ public class RelayoutTest {
         
         // Layout 3 (None)
         tree.setStyle(node, hiddenStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -209,20 +208,20 @@ public class RelayoutTest {
     void toggleFlexContainerDisplayNone() {
         TaffyTree tree = new TaffyTree();
         
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
-        hiddenStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
-        Style flexStyle = new Style();
-        flexStyle.display = Display.FLEX;
-        flexStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle flexStyle = new TaffyStyle();
+        flexStyle.display = TaffyDisplay.FLEX;
+        flexStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
         // Setup
         NodeId node = tree.newLeaf(hiddenStyle);
         NodeId root = tree.newWithChildren(hiddenStyle, node);
         
         // Layout 1 (None)
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         Layout layout = tree.getLayout(root);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -231,7 +230,7 @@ public class RelayoutTest {
         
         // Layout 2 (Flex)
         tree.setStyle(root, flexStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(root);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -240,7 +239,7 @@ public class RelayoutTest {
         
         // Layout 3 (None)
         tree.setStyle(root, hiddenStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(root);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -253,20 +252,20 @@ public class RelayoutTest {
     void toggleGridChildDisplayNone() {
         TaffyTree tree = new TaffyTree();
         
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
-        hiddenStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
-        Style gridStyle = new Style();
-        gridStyle.display = Display.GRID;
-        gridStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle gridStyle = new TaffyStyle();
+        gridStyle.display = TaffyDisplay.GRID;
+        gridStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
         // Setup
         NodeId node = tree.newLeaf(hiddenStyle);
         NodeId root = tree.newWithChildren(gridStyle, node);
         
         // Layout 1 (None)
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         Layout layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -275,7 +274,7 @@ public class RelayoutTest {
         
         // Layout 2 (Grid)
         tree.setStyle(node, gridStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -284,7 +283,7 @@ public class RelayoutTest {
         
         // Layout 3 (None)
         tree.setStyle(node, hiddenStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(node);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -297,20 +296,20 @@ public class RelayoutTest {
     void toggleGridContainerDisplayNone() {
         TaffyTree tree = new TaffyTree();
         
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
-        hiddenStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
-        Style gridStyle = new Style();
-        gridStyle.display = Display.GRID;
-        gridStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle gridStyle = new TaffyStyle();
+        gridStyle.display = TaffyDisplay.GRID;
+        gridStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         
         // Setup
         NodeId node = tree.newLeaf(hiddenStyle);
         NodeId root = tree.newWithChildren(hiddenStyle, node);
         
         // Layout 1 (None)
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         Layout layout = tree.getLayout(root);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -319,7 +318,7 @@ public class RelayoutTest {
         
         // Layout 2 (Grid)
         tree.setStyle(root, gridStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(root);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -328,7 +327,7 @@ public class RelayoutTest {
         
         // Layout 3 (None)
         tree.setStyle(root, hiddenStyle);
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         layout = tree.getLayout(root);
         assertEquals(0.0f, layout.location().x, EPSILON);
         assertEquals(0.0f, layout.location().y, EPSILON);
@@ -351,18 +350,18 @@ public class RelayoutTest {
         //     </div>
         // </div>
         
-        Style innerStyle = new Style();
-        innerStyle.minSize = new Size<>(Dimension.length(300.0f), Dimension.AUTO);
+        TaffyStyle innerStyle = new TaffyStyle();
+        innerStyle.minSize = new TaffySize<>(TaffyDimension.length(300.0f), TaffyDimension.AUTO);
         NodeId inner = tree.newLeaf(innerStyle);
         
-        Style wrapperStyle = new Style();
-        wrapperStyle.size = new Size<>(Dimension.length(150.0f), Dimension.AUTO);
+        TaffyStyle wrapperStyle = new TaffyStyle();
+        wrapperStyle.size = new TaffySize<>(TaffyDimension.length(150.0f), TaffyDimension.AUTO);
         wrapperStyle.justifyContent = AlignContent.END;
         NodeId wrapper = tree.newWithChildren(wrapperStyle, inner);
         
-        Style outerStyle = new Style();
-        outerStyle.size = new Size<>(Dimension.percent(1.0f), Dimension.AUTO);
-        outerStyle.inset = new Rect<>(
+        TaffyStyle outerStyle = new TaffyStyle();
+        outerStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.AUTO);
+        outerStyle.inset = new TaffyRect<>(
             LengthPercentageAuto.length(1.5f),
             LengthPercentageAuto.AUTO,
             LengthPercentageAuto.AUTO,
@@ -370,13 +369,13 @@ public class RelayoutTest {
         );
         NodeId outer = tree.newWithChildren(outerStyle, wrapper);
         
-        Style rootStyle = new Style();
-        rootStyle.size = new Size<>(Dimension.length(1920.0f), Dimension.length(1080.0f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(1920.0f), TaffyDimension.length(1080.0f));
         NodeId root = tree.newWithChildren(rootStyle, outer);
         
         for (int i = 0; i < 5; i++) {
             tree.markDirty(root);
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             Layout rootLayout = tree.getLayout(root);
             assertEquals(0.0f, rootLayout.location().x, EPSILON);

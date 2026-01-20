@@ -1,7 +1,7 @@
 package dev.vfyjxf.taffy.util;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 
 /**
@@ -19,6 +19,6 @@ public interface MeasureFunc {
      */
     FloatSize measure(
         FloatSize knownDimensions,
-        Size<AvailableSpace> availableSpace
+        TaffySize<AvailableSpace> availableSpace
     );
 }

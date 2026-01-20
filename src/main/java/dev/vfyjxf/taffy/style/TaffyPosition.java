@@ -8,7 +8,7 @@ package dev.vfyjxf.taffy.style;
  * 
  * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/position">MDN - position</a>
  */
-public enum Position {
+public enum TaffyPosition {
     /**
      * The offset is computed relative to the final position given by the layout algorithm.
      * Offsets do not affect the position of any other items; they are effectively a correction

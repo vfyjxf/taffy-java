@@ -1,24 +1,23 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.geometry.Point;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.geometry.TaffyPoint;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
 import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
-import dev.vfyjxf.taffy.style.Position;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyPosition;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
@@ -63,23 +62,23 @@ public class StabilityTest {
         void styleChangeShouldTriggerRelayout() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(200));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(200));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             assertEquals(50, tree.getLayout(child).size().width, EPSILON);
             
             // Change child size
-            Style newChildStyle = new Style();
-            newChildStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+            TaffyStyle newChildStyle = new TaffyStyle();
+            newChildStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
             tree.setStyle(child, newChildStyle);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             assertEquals(100, tree.getLayout(child).size().width, EPSILON);
         }
         
@@ -88,28 +87,28 @@ public class StabilityTest {
         void addingChildShouldUpdateLayout() {
             TaffyTree tree = new TaffyTree();
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW;
-            rootStyle.size = new Size<>(Dimension.length(300), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(100));
             NodeId root = tree.newLeaf(rootStyle);
             
             // Add first child
-            Style child1Style = new Style();
-            child1Style.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle child1Style = new TaffyStyle();
+            child1Style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId child1 = tree.newLeaf(child1Style);
             tree.addChild(root, child1);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             assertEquals(0, tree.getLayout(child1).location().x, EPSILON);
             
             // Add second child
-            Style child2Style = new Style();
-            child2Style.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle child2Style = new TaffyStyle();
+            child2Style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId child2 = tree.newLeaf(child2Style);
             tree.addChild(root, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             assertEquals(0, tree.getLayout(child1).location().x, EPSILON);
             assertEquals(100, tree.getLayout(child2).location().x, EPSILON);
         }
@@ -119,21 +118,21 @@ public class StabilityTest {
         void removingChildShouldUpdateLayout() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.flexGrow = 1.0f;
-            childStyle.size = new Size<>(Dimension.AUTO, Dimension.length(50));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.flexGrow = 1.0f; childStyle.flexShrink = 1.0f; childStyle.flexBasis = TaffyDimension.AUTO;
+            childStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(50));
             
             NodeId child1 = tree.newLeaf(childStyle);
             NodeId child2 = tree.newLeaf(childStyle);
             NodeId child3 = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW;
-            rootStyle.size = new Size<>(Dimension.length(300), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             // Each child should be 100px wide (300 / 3)
             assertEquals(100, tree.getLayout(child1).size().width, EPSILON);
             assertEquals(100, tree.getLayout(child2).size().width, EPSILON);
@@ -141,7 +140,7 @@ public class StabilityTest {
             
             // Remove middle child
             tree.removeChild(root, child2);
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Now each remaining child should be 150px wide (300 / 2)
             assertEquals(150, tree.getLayout(child1).size().width, EPSILON);
@@ -153,26 +152,26 @@ public class StabilityTest {
         void reorderingChildrenShouldUpdateLayout() {
             TaffyTree tree = new TaffyTree();
             
-            Style style1 = new Style();
-            style1.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle style1 = new TaffyStyle();
+            style1.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId child1 = tree.newLeaf(style1);
             
-            Style style2 = new Style();
-            style2.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle style2 = new TaffyStyle();
+            style2.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId child2 = tree.newLeaf(style2);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW;
             NodeId root = tree.newWithChildren(rootStyle, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             assertEquals(0, tree.getLayout(child1).location().x, EPSILON);
             assertEquals(50, tree.getLayout(child2).location().x, EPSILON);
             
             // Reorder: put child2 first
             tree.setChildren(root, child2, child1);
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             assertEquals(0, tree.getLayout(child2).location().x, EPSILON);
             assertEquals(100, tree.getLayout(child1).location().x, EPSILON);
@@ -184,23 +183,23 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Create: root -> container -> item
-            Style itemStyle = new Style();
-            itemStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle itemStyle = new TaffyStyle();
+            itemStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId item = tree.newLeaf(itemStyle);
             
-            Style containerStyle = new Style();
-            containerStyle.display = Display.FLEX;
-            containerStyle.padding = new Rect<>(
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.padding = new TaffyRect<>(
                 LengthPercentage.length(10), LengthPercentage.length(10),
                 LengthPercentage.length(10), LengthPercentage.length(10)
             );
             NodeId container = tree.newWithChildren(containerStyle, item);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             NodeId root = tree.newWithChildren(rootStyle, container);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Container should be 50 + 10 + 10 = 70 wide
             assertEquals(70, tree.getLayout(container).size().width, EPSILON);
@@ -208,10 +207,10 @@ public class StabilityTest {
             assertEquals(10, tree.getLayout(item).location().x, EPSILON);
             
             // Change item size
-            Style newItemStyle = new Style();
-            newItemStyle.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle newItemStyle = new TaffyStyle();
+            newItemStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             tree.setStyle(item, newItemStyle);
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Container should now be 100 + 10 + 10 = 120 wide
             assertEquals(120, tree.getLayout(container).size().width, EPSILON);
@@ -232,20 +231,20 @@ public class StabilityTest {
             // Create a moderately complex tree
             List<NodeId> children = new ArrayList<>();
             for (int i = 0; i < 5; i++) {
-                Style style = new Style();
-                style.flexGrow = (float) (i + 1);
-                style.size = new Size<>(Dimension.AUTO, Dimension.length(30));
+                TaffyStyle style = new TaffyStyle();
+                style.flexGrow = (float) (i + 1); style.flexShrink = 1.0f; style.flexBasis = TaffyDimension.AUTO;
+                style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(30));
                 children.add(tree.newLeaf(style));
             }
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW;
-            rootStyle.size = new Size<>(Dimension.length(500), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(500), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, children.toArray(new NodeId[0]));
             
             // First computation
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             float[] firstWidths = new float[5];
             float[] firstXs = new float[5];
             for (int i = 0; i < 5; i++) {
@@ -254,7 +253,7 @@ public class StabilityTest {
             }
             
             // Re-compute and verify
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             for (int i = 0; i < 5; i++) {
                 assertEquals(firstWidths[i], tree.getLayout(children.get(i)).size().width, EPSILON,
                     "Width mismatch for child " + i);
@@ -268,32 +267,32 @@ public class StabilityTest {
         void modifyThenRevertShouldRestoreOriginalLayout() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.justifyContent = AlignContent.CENTER;
-            rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
             // Original layout
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             float originalX = tree.getLayout(child).location().x;
             float originalWidth = tree.getLayout(child).size().width;
             
             // Modify
-            Style modifiedStyle = new Style();
-            modifiedStyle.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle modifiedStyle = new TaffyStyle();
+            modifiedStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             tree.setStyle(child, modifiedStyle);
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             assertNotEquals(originalWidth, tree.getLayout(child).size().width, EPSILON);
             
             // Revert
             tree.setStyle(child, childStyle);
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             assertEquals(originalX, tree.getLayout(child).location().x, EPSILON);
             assertEquals(originalWidth, tree.getLayout(child).size().width, EPSILON);
@@ -305,24 +304,24 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Use root with explicit size for flex-grow to work
-            Style childStyle = new Style();
-            childStyle.flexGrow = 1.0f;
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.flexGrow = 1.0f; childStyle.flexShrink = 1.0f; childStyle.flexBasis = TaffyDimension.AUTO;
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.percent(1.0f), Dimension.percent(1.0f));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.percent(1.0f));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
             // Compute with 200px width - percentage of 200 = 200
-            tree.computeLayout(root, new Size<>(
+            tree.computeLayout(root, new TaffySize<>(
                 AvailableSpace.definite(200),
                 AvailableSpace.definite(100)
             ));
             float width200 = tree.getLayout(child).size().width;
             
             // Compute with 400px width - percentage of 400 = 400
-            tree.computeLayout(root, new Size<>(
+            tree.computeLayout(root, new TaffySize<>(
                 AvailableSpace.definite(400),
                 AvailableSpace.definite(100)
             ));
@@ -332,7 +331,7 @@ public class StabilityTest {
             assertEquals(400, width400, EPSILON, "Child should use 400px available space");
             
             // Verify switching back works
-            tree.computeLayout(root, new Size<>(
+            tree.computeLayout(root, new TaffySize<>(
                 AvailableSpace.definite(200),
                 AvailableSpace.definite(100)
             ));
@@ -350,19 +349,19 @@ public class StabilityTest {
                 return new FloatSize(50, 30);
             };
             
-            Style leafStyle = new Style();
+            TaffyStyle leafStyle = new TaffyStyle();
             NodeId leaf = tree.newLeafWithMeasure(leafStyle, measure);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             NodeId root = tree.newWithChildren(rootStyle, leaf);
             
             // First layout
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             int firstCount = measureCount.get();
             
             // Second layout with same constraints - should use cache
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             int secondCount = measureCount.get();
             
             // Measure should not be called again if cache is working
@@ -381,9 +380,9 @@ public class StabilityTest {
         @DisplayName("Empty tree should not crash")
         void emptyTreeShouldNotCrash() {
             TaffyTree tree = new TaffyTree();
-            NodeId empty = tree.newLeaf(new Style());
+            NodeId empty = tree.newLeaf(new TaffyStyle());
             
-            assertDoesNotThrow(() -> tree.computeLayout(empty, Size.maxContent()));
+            assertDoesNotThrow(() -> tree.computeLayout(empty, TaffySize.maxContent()));
             
             Layout layout = tree.getLayout(empty);
             assertNotNull(layout);
@@ -396,11 +395,11 @@ public class StabilityTest {
         void singleNodeWithFixedSize() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle style = new TaffyStyle();
+            style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId node = tree.newLeaf(style);
             
-            tree.computeLayout(node, Size.maxContent());
+            tree.computeLayout(node, TaffySize.maxContent());
             
             assertEquals(100, tree.getLayout(node).size().width, EPSILON);
             assertEquals(50, tree.getLayout(node).size().height, EPSILON);
@@ -411,16 +410,16 @@ public class StabilityTest {
         void zeroSizeContainerShouldNotCrash() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(0), Dimension.length(0));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(0), TaffyDimension.length(0));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            assertDoesNotThrow(() -> tree.computeLayout(root, Size.maxContent()));
+            assertDoesNotThrow(() -> tree.computeLayout(root, TaffySize.maxContent()));
         }
         
         @Test
@@ -428,14 +427,14 @@ public class StabilityTest {
         void veryLargeValuesShouldNotOverflow() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.size = new Size<>(
-                Dimension.length(1_000_000f),
-                Dimension.length(1_000_000f)
+            TaffyStyle style = new TaffyStyle();
+            style.size = new TaffySize<>(
+                TaffyDimension.length(1_000_000f),
+                TaffyDimension.length(1_000_000f)
             );
             NodeId node = tree.newLeaf(style);
             
-            tree.computeLayout(node, Size.maxContent());
+            tree.computeLayout(node, TaffySize.maxContent());
             
             assertEquals(1_000_000f, tree.getLayout(node).size().width, 1f);
             assertEquals(1_000_000f, tree.getLayout(node).size().height, 1f);
@@ -446,14 +445,14 @@ public class StabilityTest {
         void verySmallValuesShouldBeHandled() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.size = new Size<>(
-                Dimension.length(0.001f),
-                Dimension.length(0.001f)
+            TaffyStyle style = new TaffyStyle();
+            style.size = new TaffySize<>(
+                TaffyDimension.length(0.001f),
+                TaffyDimension.length(0.001f)
             );
             NodeId node = tree.newLeaf(style);
             
-            tree.computeLayout(node, Size.maxContent());
+            tree.computeLayout(node, TaffySize.maxContent());
             
             // Should be rounded to near-zero
             assertTrue(tree.getLayout(node).size().width < 1f);
@@ -465,21 +464,21 @@ public class StabilityTest {
         void displayNoneShouldHideNodeAndChildren() {
             TaffyTree tree = new TaffyTree();
             
-            Style visibleStyle = new Style();
-            visibleStyle.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle visibleStyle = new TaffyStyle();
+            visibleStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId visibleChild = tree.newLeaf(visibleStyle);
             
-            Style hiddenStyle = new Style();
-            hiddenStyle.display = Display.NONE;
-            hiddenStyle.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle hiddenStyle = new TaffyStyle();
+            hiddenStyle.display = TaffyDisplay.NONE;
+            hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId hiddenChild = tree.newLeaf(hiddenStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW;
             NodeId root = tree.newWithChildren(rootStyle, hiddenChild, visibleChild);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Hidden child should have zero size
             assertEquals(0, tree.getLayout(hiddenChild).size().width, EPSILON);
@@ -494,13 +493,13 @@ public class StabilityTest {
         void negativeMarginsWorkCorrectly() {
             TaffyTree tree = new TaffyTree();
             
-            Style child1Style = new Style();
-            child1Style.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle child1Style = new TaffyStyle();
+            child1Style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId child1 = tree.newLeaf(child1Style);
             
-            Style child2Style = new Style();
-            child2Style.size = new Size<>(Dimension.length(100), Dimension.length(50));
-            child2Style.margin = new Rect<>(
+            TaffyStyle child2Style = new TaffyStyle();
+            child2Style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
+            child2Style.margin = new TaffyRect<>(
                 LengthPercentageAuto.length(-20f),
                 LengthPercentageAuto.ZERO,
                 LengthPercentageAuto.ZERO,
@@ -508,12 +507,12 @@ public class StabilityTest {
             );
             NodeId child2 = tree.newLeaf(child2Style);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW;
             NodeId root = tree.newWithChildren(rootStyle, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // child2 should overlap child1 due to negative margin
             assertEquals(0, tree.getLayout(child1).location().x, EPSILON);
@@ -533,23 +532,23 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // CSS: flex-grow: 1; flex-grow: 2; flex-grow: 3;
-            Style style1 = new Style();
-            style1.flexGrow = 1f;
-            Style style2 = new Style();
-            style2.flexGrow = 2f;
-            Style style3 = new Style();
-            style3.flexGrow = 3f;
+            TaffyStyle style1 = new TaffyStyle();
+            style1.flexGrow = 1f; style1.flexShrink = 1.0f; style1.flexBasis = TaffyDimension.AUTO;
+            TaffyStyle style2 = new TaffyStyle();
+            style2.flexGrow = 2f; style2.flexShrink = 1.0f; style2.flexBasis = TaffyDimension.AUTO;
+            TaffyStyle style3 = new TaffyStyle();
+            style3.flexGrow = 3f; style3.flexShrink = 1.0f; style3.flexBasis = TaffyDimension.AUTO;
             
             NodeId child1 = tree.newLeaf(style1);
             NodeId child2 = tree.newLeaf(style2);
             NodeId child3 = tree.newLeaf(style3);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(600), Dimension.length(100));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(600), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Total grow = 6, so: 1/6 * 600 = 100, 2/6 * 600 = 200, 3/6 * 600 = 300
             assertEquals(100, tree.getLayout(child1).size().width, EPSILON);
@@ -563,23 +562,23 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Each child wants 200px but container is only 300px
-            Style style1 = new Style();
-            style1.flexShrink = 1f;
-            style1.size = new Size<>(Dimension.length(200), Dimension.AUTO);
+            TaffyStyle style1 = new TaffyStyle();
+            style1.flexGrow = 0.0f; style1.flexShrink = 1f; style1.flexBasis = TaffyDimension.AUTO;
+            style1.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.AUTO);
             
-            Style style2 = new Style();
-            style2.flexShrink = 2f;
-            style2.size = new Size<>(Dimension.length(200), Dimension.AUTO);
+            TaffyStyle style2 = new TaffyStyle();
+            style2.flexGrow = 0.0f; style2.flexShrink = 2f; style2.flexBasis = TaffyDimension.AUTO;
+            style2.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.AUTO);
             
             NodeId child1 = tree.newLeaf(style1);
             NodeId child2 = tree.newLeaf(style2);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(300), Dimension.length(100));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Total shrink basis = 1*200 + 2*200 = 600
             // Need to remove 100px
@@ -594,17 +593,17 @@ public class StabilityTest {
         void flexBasisShouldOverrideWidth() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.size = new Size<>(Dimension.length(100), Dimension.AUTO);
-            style.flexBasis = Dimension.length(200);
+            TaffyStyle style = new TaffyStyle();
+            style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.AUTO);
+            style.flexGrow = 0.0f; style.flexShrink = 1.0f; style.flexBasis = TaffyDimension.length(200);
             NodeId child = tree.newLeaf(style);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(400), Dimension.length(100));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(400), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // flex-basis (200) should be used instead of width (100)
             assertEquals(200, tree.getLayout(child).size().width, EPSILON);
@@ -615,20 +614,20 @@ public class StabilityTest {
         void justifyContentSpaceBetween() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             
             NodeId child1 = tree.newLeaf(childStyle);
             NodeId child2 = tree.newLeaf(childStyle);
             NodeId child3 = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.justifyContent = AlignContent.SPACE_BETWEEN;
-            rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // 200 - 150 = 50 free space, 2 gaps
             // Gap = 50 / 2 = 25
@@ -642,17 +641,17 @@ public class StabilityTest {
         void alignItemsCenter() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(50), Dimension.length(30));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(30));
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.alignItems = AlignItems.CENTER;
-            rootStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Centered vertically: (100 - 30) / 2 = 35
             assertEquals(35, tree.getLayout(child).location().y, EPSILON);
@@ -663,21 +662,21 @@ public class StabilityTest {
         void flexWrapShouldCreateMultipleLines() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(60), Dimension.length(30));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(60), TaffyDimension.length(30));
             
             List<NodeId> children = new ArrayList<>();
             for (int i = 0; i < 5; i++) {
                 children.add(tree.newLeaf(childStyle));
             }
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexWrap = FlexWrap.WRAP;
-            rootStyle.size = new Size<>(Dimension.length(150), Dimension.AUTO);
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(150), TaffyDimension.AUTO);
             NodeId root = tree.newWithChildren(rootStyle, children.toArray(new NodeId[0]));
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // 150px can fit 2 items per row (120px < 150px, 180px > 150px)
             // Row 1: items 0, 1 at y=0
@@ -695,18 +694,18 @@ public class StabilityTest {
         void minWidthShouldPreventShrinkingBelow() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.flexShrink = 1f;
-            style.size = new Size<>(Dimension.length(200), Dimension.AUTO);
-            style.minSize = new Size<>(Dimension.length(150), Dimension.AUTO);
+            TaffyStyle style = new TaffyStyle();
+            style.flexGrow = 0.0f; style.flexShrink = 1f; style.flexBasis = TaffyDimension.AUTO;
+            style.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.AUTO);
+            style.minSize = new TaffySize<>(TaffyDimension.length(150), TaffyDimension.AUTO);
             NodeId child = tree.newLeaf(style);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Even though container is 100, min-width prevents shrinking below 150
             assertEquals(150, tree.getLayout(child).size().width, EPSILON);
@@ -717,17 +716,17 @@ public class StabilityTest {
         void maxWidthShouldPreventGrowingAbove() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.flexGrow = 1f;
-            style.maxSize = new Size<>(Dimension.length(150), Dimension.AUTO);
+            TaffyStyle style = new TaffyStyle();
+            style.flexGrow = 1f; style.flexShrink = 1.0f; style.flexBasis = TaffyDimension.AUTO;
+            style.maxSize = new TaffySize<>(TaffyDimension.length(150), TaffyDimension.AUTO);
             NodeId child = tree.newLeaf(style);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(300), Dimension.length(100));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Even with flex-grow, max-width caps at 150
             assertEquals(150, tree.getLayout(child).size().width, EPSILON);
@@ -738,9 +737,9 @@ public class StabilityTest {
         void autoMarginsShouldAbsorbFreeSpace() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
-            childStyle.margin = new Rect<>(
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
+            childStyle.margin = new TaffyRect<>(
                 LengthPercentageAuto.AUTO,
                 LengthPercentageAuto.AUTO,
                 LengthPercentageAuto.ZERO,
@@ -748,12 +747,12 @@ public class StabilityTest {
             );
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Auto margins on left and right should center horizontally
             // (200 - 50) / 2 = 75
@@ -772,14 +771,14 @@ public class StabilityTest {
         void explicitGridTracks() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
+            TaffyStyle childStyle = new TaffyStyle();
             NodeId child1 = tree.newLeaf(childStyle);
             NodeId child2 = tree.newLeaf(childStyle);
             NodeId child3 = tree.newLeaf(childStyle);
             NodeId child4 = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.GRID;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.GRID;
             rootStyle.gridTemplateColumns = new ArrayList<>(Arrays.asList(
                 TrackSizingFunction.fixed(LengthPercentage.length(100)),
                 TrackSizingFunction.fixed(LengthPercentage.length(100))
@@ -790,7 +789,7 @@ public class StabilityTest {
             ));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3, child4);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // 2x2 grid: 100x50 each cell
             assertEquals(0, tree.getLayout(child1).location().x, EPSILON);
@@ -808,22 +807,22 @@ public class StabilityTest {
         void frUnitsShouldDistributeProportionally() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
+            TaffyStyle childStyle = new TaffyStyle();
             NodeId child1 = tree.newLeaf(childStyle);
             NodeId child2 = tree.newLeaf(childStyle);
             NodeId child3 = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.GRID;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.GRID;
             rootStyle.gridTemplateColumns = new ArrayList<>(Arrays.asList(
                 TrackSizingFunction.fr(1),
                 TrackSizingFunction.fr(2),
                 TrackSizingFunction.fr(3)
             ));
-            rootStyle.size = new Size<>(Dimension.length(600), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(600), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // 1fr:2fr:3fr = 100:200:300 in 600px
             assertEquals(100, tree.getLayout(child1).size().width, EPSILON);
@@ -836,23 +835,23 @@ public class StabilityTest {
         void gridGapShouldAddSpacing() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
+            TaffyStyle childStyle = new TaffyStyle();
             NodeId child1 = tree.newLeaf(childStyle);
             NodeId child2 = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.GRID;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.GRID;
             rootStyle.gridTemplateColumns = new ArrayList<>(Arrays.asList(
                 TrackSizingFunction.fixed(LengthPercentage.length(100)),
                 TrackSizingFunction.fixed(LengthPercentage.length(100))
             ));
-            rootStyle.gap = new Size<>(
+            rootStyle.gap = new TaffySize<>(
                 LengthPercentage.length(20), // column gap
                 LengthPercentage.length(10)  // row gap
             );
             NodeId root = tree.newWithChildren(rootStyle, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             assertEquals(0, tree.getLayout(child1).location().x, EPSILON);
             assertEquals(120, tree.getLayout(child2).location().x, EPSILON); // 100 + 20 gap
@@ -864,19 +863,19 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Item spanning 2 columns
-            Style spanningStyle = new Style();
-            spanningStyle.gridColumn = new Line<>(
+            TaffyStyle spanningStyle = new TaffyStyle();
+            spanningStyle.gridColumn = new TaffyLine<>(
                 GridPlacement.line(1),
                 GridPlacement.span(2)
             );
             NodeId spanning = tree.newLeaf(spanningStyle);
             
             // Regular items
-            NodeId child1 = tree.newLeaf(new Style());
-            NodeId child2 = tree.newLeaf(new Style());
+            NodeId child1 = tree.newLeaf(new TaffyStyle());
+            NodeId child2 = tree.newLeaf(new TaffyStyle());
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.GRID;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.GRID;
             rootStyle.gridTemplateColumns = new ArrayList<>(Arrays.asList(
                 TrackSizingFunction.fixed(LengthPercentage.length(100)),
                 TrackSizingFunction.fixed(LengthPercentage.length(100))
@@ -887,7 +886,7 @@ public class StabilityTest {
             ));
             NodeId root = tree.newWithChildren(rootStyle, spanning, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Spanning item should be 200px wide (2 columns)
             assertEquals(200, tree.getLayout(spanning).size().width, EPSILON);
@@ -905,15 +904,15 @@ public class StabilityTest {
         void deepNestingShouldNotCauseStackOverflow() {
             TaffyTree tree = new TaffyTree();
             
-            Style leafStyle = new Style();
-            leafStyle.size = new Size<>(Dimension.length(10), Dimension.length(10));
+            TaffyStyle leafStyle = new TaffyStyle();
+            leafStyle.size = new TaffySize<>(TaffyDimension.length(10), TaffyDimension.length(10));
             NodeId current = tree.newLeaf(leafStyle);
             
             // Create 200 levels of nesting
             for (int i = 0; i < 200; i++) {
-                Style wrapperStyle = new Style();
-                wrapperStyle.display = Display.FLEX;
-                wrapperStyle.padding = new Rect<>(
+                TaffyStyle wrapperStyle = new TaffyStyle();
+                wrapperStyle.display = TaffyDisplay.FLEX;
+                wrapperStyle.padding = new TaffyRect<>(
                     LengthPercentage.length(1), LengthPercentage.length(1),
                     LengthPercentage.length(1), LengthPercentage.length(1)
                 );
@@ -921,7 +920,7 @@ public class StabilityTest {
             }
             
             final NodeId root = current;
-            assertDoesNotThrow(() -> tree.computeLayout(root, Size.maxContent()));
+            assertDoesNotThrow(() -> tree.computeLayout(root, TaffySize.maxContent()));
             
             // Root should be 10 + 200*2 = 410 wide (each level adds 2px padding)
             assertEquals(410, tree.getLayout(root).size().width, 1f);
@@ -933,14 +932,14 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Grid items
-            Style gridItemStyle = new Style();
-            gridItemStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle gridItemStyle = new TaffyStyle();
+            gridItemStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId gridItem1 = tree.newLeaf(gridItemStyle);
             NodeId gridItem2 = tree.newLeaf(gridItemStyle);
             
             // Grid container inside flex
-            Style gridStyle = new Style();
-            gridStyle.display = Display.GRID;
+            TaffyStyle gridStyle = new TaffyStyle();
+            gridStyle.display = TaffyDisplay.GRID;
             gridStyle.gridTemplateColumns = new ArrayList<>(Arrays.asList(
                 TrackSizingFunction.fixed(LengthPercentage.length(50)),
                 TrackSizingFunction.fixed(LengthPercentage.length(50))
@@ -948,17 +947,17 @@ public class StabilityTest {
             NodeId grid = tree.newWithChildren(gridStyle, gridItem1, gridItem2);
             
             // Another flex item
-            Style flexItemStyle = new Style();
-            flexItemStyle.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle flexItemStyle = new TaffyStyle();
+            flexItemStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId flexItem = tree.newLeaf(flexItemStyle);
             
             // Flex root
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.COLUMN;
             NodeId root = tree.newWithChildren(rootStyle, grid, flexItem);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Grid should be 100x50 (2 columns of 50)
             assertEquals(100, tree.getLayout(grid).size().width, EPSILON);
@@ -973,14 +972,14 @@ public class StabilityTest {
         void responsiveLayoutWithPercentageSizes() {
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.percent(0.5f), Dimension.percent(0.5f));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.percent(0.5f), TaffyDimension.percent(0.5f));
             NodeId child = tree.newLeaf(childStyle);
             
             // Root must have explicit size for percentage calculations to work
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.percent(1.0f), Dimension.percent(1.0f));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.percent(1.0f));
             NodeId root = tree.newWithChildren(rootStyle, child);
             
             // Test at different sizes
@@ -992,7 +991,7 @@ public class StabilityTest {
             
             for (float[] tc : testCases) {
                 float rootW = tc[0], rootH = tc[1], expectedW = tc[2], expectedH = tc[3];
-                tree.computeLayout(root, new Size<>(
+                tree.computeLayout(root, new TaffySize<>(
                     AvailableSpace.definite(rootW),
                     AvailableSpace.definite(rootH)
                 ));
@@ -1010,18 +1009,18 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Content larger than container
-            Style contentStyle = new Style();
-            contentStyle.size = new Size<>(Dimension.length(500), Dimension.length(500));
+            TaffyStyle contentStyle = new TaffyStyle();
+            contentStyle.size = new TaffySize<>(TaffyDimension.length(500), TaffyDimension.length(500));
             NodeId content = tree.newLeaf(contentStyle);
             
             // Scrollable container with SCROLL overflow
-            Style containerStyle = new Style();
-            containerStyle.display = Display.FLEX;
-            containerStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
-            containerStyle.size = new Size<>(Dimension.length(200), Dimension.length(200));
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(200));
             NodeId container = tree.newWithChildren(containerStyle, content);
             
-            tree.computeLayout(container, Size.maxContent());
+            tree.computeLayout(container, TaffySize.maxContent());
             
             // Container should maintain its explicit size
             assertEquals(200, tree.getLayout(container).size().width, EPSILON);
@@ -1041,15 +1040,15 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Normal flex item
-            Style normalStyle = new Style();
-            normalStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle normalStyle = new TaffyStyle();
+            normalStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId normal = tree.newLeaf(normalStyle);
             
             // Absolutely positioned item
-            Style absoluteStyle = new Style();
-            absoluteStyle.position = Position.ABSOLUTE;
-            absoluteStyle.size = new Size<>(Dimension.length(30), Dimension.length(30));
-            absoluteStyle.inset = new Rect<>(
+            TaffyStyle absoluteStyle = new TaffyStyle();
+            absoluteStyle.position = TaffyPosition.ABSOLUTE;
+            absoluteStyle.size = new TaffySize<>(TaffyDimension.length(30), TaffyDimension.length(30));
+            absoluteStyle.inset = new TaffyRect<>(
                 LengthPercentageAuto.length(10),
                 LengthPercentageAuto.AUTO,
                 LengthPercentageAuto.length(10),
@@ -1057,12 +1056,12 @@ public class StabilityTest {
             );
             NodeId absolute = tree.newLeaf(absoluteStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
-            rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(200));
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(200));
             NodeId root = tree.newWithChildren(rootStyle, normal, absolute);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Normal item at origin
             assertEquals(0, tree.getLayout(normal).location().x, EPSILON);
@@ -1082,34 +1081,34 @@ public class StabilityTest {
             
             // Create 5 form rows with label + input
             for (int i = 0; i < 5; i++) {
-                Style labelStyle = new Style();
-                labelStyle.size = new Size<>(Dimension.length(100), Dimension.length(20));
+                TaffyStyle labelStyle = new TaffyStyle();
+                labelStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(20));
                 NodeId label = tree.newLeaf(labelStyle);
                 
-                Style inputStyle = new Style();
-                inputStyle.flexGrow = 1;
-                inputStyle.size = new Size<>(Dimension.AUTO, Dimension.length(30));
+                TaffyStyle inputStyle = new TaffyStyle();
+                inputStyle.flexGrow = 1; inputStyle.flexShrink = 1.0f; inputStyle.flexBasis = TaffyDimension.AUTO;
+                inputStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(30));
                 NodeId input = tree.newLeaf(inputStyle);
                 
-                Style rowStyle = new Style();
-                rowStyle.display = Display.FLEX;
+                TaffyStyle rowStyle = new TaffyStyle();
+                rowStyle.display = TaffyDisplay.FLEX;
                 rowStyle.flexDirection = FlexDirection.ROW;
                 rowStyle.alignItems = AlignItems.CENTER;
-                rowStyle.gap = new Size<>(LengthPercentage.length(10), LengthPercentage.ZERO);
-                rowStyle.margin = new Rect<>(
+                rowStyle.gap = new TaffySize<>(LengthPercentage.length(10), LengthPercentage.ZERO);
+                rowStyle.margin = new TaffyRect<>(
                     LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
                     LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10)
                 );
                 rows.add(tree.newWithChildren(rowStyle, label, input));
             }
             
-            Style formStyle = new Style();
-            formStyle.display = Display.FLEX;
+            TaffyStyle formStyle = new TaffyStyle();
+            formStyle.display = TaffyDisplay.FLEX;
             formStyle.flexDirection = FlexDirection.COLUMN;
-            formStyle.size = new Size<>(Dimension.length(400), Dimension.AUTO);
+            formStyle.size = new TaffySize<>(TaffyDimension.length(400), TaffyDimension.AUTO);
             NodeId form = tree.newWithChildren(formStyle, rows.toArray(new NodeId[0]));
             
-            tree.computeLayout(form, Size.maxContent());
+            tree.computeLayout(form, TaffySize.maxContent());
             
             // Verify layout
             float expectedY = 0;
@@ -1135,10 +1134,10 @@ public class StabilityTest {
             Random random = new Random(System.currentTimeMillis());
             
             // Create initial tree
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexWrap = FlexWrap.WRAP;
-            rootStyle.size = new Size<>(Dimension.length(500), Dimension.length(500));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(500), TaffyDimension.length(500));
             NodeId root = tree.newLeaf(rootStyle);
             
             List<NodeId> nodes = new ArrayList<>();
@@ -1150,10 +1149,10 @@ public class StabilityTest {
                 
                 switch (op) {
                     case 0: // Add node
-                        Style style = new Style();
-                        style.size = new Size<>(
-                            Dimension.length(10 + random.nextInt(90)),
-                            Dimension.length(10 + random.nextInt(90))
+                        TaffyStyle style = new TaffyStyle();
+                        style.size = new TaffySize<>(
+                            TaffyDimension.length(10 + random.nextInt(90)),
+                            TaffyDimension.length(10 + random.nextInt(90))
                         );
                         NodeId newNode = tree.newLeaf(style);
                         NodeId parent = nodes.get(random.nextInt(nodes.size()));
@@ -1164,15 +1163,14 @@ public class StabilityTest {
                     case 1: // Modify style
                         if (nodes.size() > 1) {
                             NodeId target = nodes.get(random.nextInt(nodes.size()));
-                            Style newStyle = new Style();
-                            newStyle.flexGrow = random.nextFloat();
-                            newStyle.flexShrink = random.nextFloat();
+                            TaffyStyle newStyle = new TaffyStyle();
+                            newStyle.flexGrow = random.nextFloat(); newStyle.flexShrink = random.nextFloat(); newStyle.flexBasis = TaffyDimension.AUTO;
                             tree.setStyle(target, newStyle);
                         }
                         break;
                         
                     case 2: // Compute layout
-                        assertDoesNotThrow(() -> tree.computeLayout(root, Size.maxContent()));
+                        assertDoesNotThrow(() -> tree.computeLayout(root, TaffySize.maxContent()));
                         break;
                         
                     case 3: // Remove node (if not root)
@@ -1193,7 +1191,7 @@ public class StabilityTest {
             }
             
             // Final layout should work
-            assertDoesNotThrow(() -> tree.computeLayout(root, Size.maxContent()));
+            assertDoesNotThrow(() -> tree.computeLayout(root, TaffySize.maxContent()));
         }
         
         @ParameterizedTest
@@ -1204,18 +1202,18 @@ public class StabilityTest {
             
             List<NodeId> children = new ArrayList<>();
             for (int i = 0; i < count; i++) {
-                Style style = new Style();
-                style.size = new Size<>(Dimension.length(10), Dimension.length(10));
+                TaffyStyle style = new TaffyStyle();
+                style.size = new TaffySize<>(TaffyDimension.length(10), TaffyDimension.length(10));
                 children.add(tree.newLeaf(style));
             }
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexWrap = FlexWrap.WRAP;
-            rootStyle.size = new Size<>(Dimension.length(100), Dimension.AUTO);
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.AUTO);
             NodeId root = tree.newWithChildren(rootStyle, children.toArray(new NodeId[0]));
             
-            assertDoesNotThrow(() -> tree.computeLayout(root, Size.maxContent()));
+            assertDoesNotThrow(() -> tree.computeLayout(root, TaffySize.maxContent()));
             
             // Verify children are laid out
             for (NodeId child : children) {
@@ -1238,16 +1236,16 @@ public class StabilityTest {
             // Per CSS spec, percentage heights with indefinite parent should resolve to auto
             TaffyTree tree = new TaffyTree();
             
-            Style childStyle = new Style();
-            childStyle.size = new Size<>(Dimension.length(100), Dimension.percent(0.5f));
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.percent(0.5f));
             NodeId child = tree.newLeaf(childStyle);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             // No height specified - indefinite
             NodeId root = tree.newWithChildren(rootStyle, child);
             
-            tree.computeLayout(root, new Size<>(
+            tree.computeLayout(root, new TaffySize<>(
                 AvailableSpace.definite(200),
                 AvailableSpace.maxContent()
             ));
@@ -1263,29 +1261,29 @@ public class StabilityTest {
             TaffyTree tree = new TaffyTree();
             
             // Child 1: 50px height with 20px bottom margin
-            Style style1 = new Style();
-            style1.size = new Size<>(Dimension.length(50), Dimension.length(50));
-            style1.margin = new Rect<>(
+            TaffyStyle style1 = new TaffyStyle();
+            style1.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
+            style1.margin = new TaffyRect<>(
                 LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
                 LengthPercentageAuto.ZERO, LengthPercentageAuto.length(20) // bottom margin
             );
             NodeId child1 = tree.newLeaf(style1);
             
             // Child 2: 50px height with 20px top margin
-            Style style2 = new Style();
-            style2.size = new Size<>(Dimension.length(50), Dimension.length(50));
-            style2.margin = new Rect<>(
+            TaffyStyle style2 = new TaffyStyle();
+            style2.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
+            style2.margin = new TaffyRect<>(
                 LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
                 LengthPercentageAuto.length(20), LengthPercentageAuto.ZERO // top margin
             );
             NodeId child2 = tree.newLeaf(style2);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.COLUMN;
             NodeId root = tree.newWithChildren(rootStyle, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // In CSS flexbox, adjacent margins don't collapse.
             // child1 at y=0, height=50, bottom-margin=20
@@ -1302,16 +1300,16 @@ public class StabilityTest {
         void aspectRatioShouldBeMaintained() {
             TaffyTree tree = new TaffyTree();
             
-            Style style = new Style();
-            style.size = new Size<>(Dimension.length(100), Dimension.AUTO);
+            TaffyStyle style = new TaffyStyle();
+            style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.AUTO);
             style.aspectRatio = 2.0f; // width:height = 2:1
             NodeId node = tree.newLeaf(style);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             NodeId root = tree.newWithChildren(rootStyle, node);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // Height should be 50 (width/aspectRatio = 100/2)
             assertEquals(100, tree.getLayout(node).size().width, EPSILON);
@@ -1323,21 +1321,21 @@ public class StabilityTest {
         void rtlDirectionShouldReverseFlexItems() {
             TaffyTree tree = new TaffyTree();
             
-            Style style1 = new Style();
-            style1.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle style1 = new TaffyStyle();
+            style1.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             NodeId child1 = tree.newLeaf(style1);
             
-            Style style2 = new Style();
-            style2.size = new Size<>(Dimension.length(100), Dimension.length(50));
+            TaffyStyle style2 = new TaffyStyle();
+            style2.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
             NodeId child2 = tree.newLeaf(style2);
             
-            Style rootStyle = new Style();
-            rootStyle.display = Display.FLEX;
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
             rootStyle.flexDirection = FlexDirection.ROW_REVERSE;
-            rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
             NodeId root = tree.newWithChildren(rootStyle, child1, child2);
             
-            tree.computeLayout(root, Size.maxContent());
+            tree.computeLayout(root, TaffySize.maxContent());
             
             // In row-reverse, items go from right to left
             // child1 (50px) should be at x = 200 - 50 = 150

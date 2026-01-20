@@ -1,7 +1,10 @@
 package dev.vfyjxf.taffy.style;
 
 /**
- * Defines how content is distributed along the main axis in flexbox.
+ * Defines how content is distributed along the main axis in flexbox and grid.
+ * <p>
+ * Note: STRETCH has special meaning in CSS Grid - it expands auto tracks to fill free space.
+ * In flexbox, STRETCH is equivalent to FLEX_START for justify-content.
  */
 public enum JustifyContent {
     /** Items are packed at the start */
@@ -19,5 +22,12 @@ public enum JustifyContent {
     /** Items are packed at the start */
     START,
     /** Items are packed at the end */
-    END;
+    END,
+    /**
+     * Auto tracks are stretched to fill free space.
+     * <p>
+     * In CSS Grid: auto tracks expand to share remaining space equally.
+     * In Flexbox: equivalent to FLEX_START (no effect on main axis distribution).
+     */
+    STRETCH;
 }

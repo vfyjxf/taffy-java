@@ -3,15 +3,16 @@ package dev.vfyjxf.taffy.tree;
 import dev.vfyjxf.taffy.geometry.FloatPoint;
 import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.geometry.Point;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.geometry.TaffyPoint;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxSizing;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDirection;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.Overflow;
-import dev.vfyjxf.taffy.style.Position;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyPosition;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.util.MeasureFunc;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
@@ -34,13 +35,13 @@ public class LayoutComputer {
     /**
      * Computes layout starting from the root node.
      */
-    public void computeLayout(NodeId root, Size<AvailableSpace> availableSpace) {
+    public void computeLayout(NodeId root, TaffySize<AvailableSpace> availableSpace) {
         FloatSize knownDimensions = new FloatSize(Float.NaN, Float.NaN);
 
-        Style style = tree.getStyle(root);
+        TaffyStyle style = tree.getStyle(root);
 
         // For block nodes, compute known dimensions based on style and available space
-        if (style.getDisplay() == Display.BLOCK) {
+        if (style.getDisplay() == TaffyDisplay.BLOCK) {
             FloatSize parentSize = availableSpaceToOptionSize(availableSpace);
 
             Float aspectRatio = style.getAspectRatio();
@@ -100,7 +101,7 @@ public class LayoutComputer {
             availableSpaceToOptionSize(availableSpace),
             availableSpace,
             SizingMode.INHERENT_SIZE,
-            new Line<>(false, false)
+            new TaffyLine<>(false, false)
         );
 
         // Get style properties for final layout
@@ -136,9 +137,9 @@ public class LayoutComputer {
         NodeId node,
         FloatSize knownDimensions,
         FloatSize parentSize,
-        Size<AvailableSpace> availableSpace,
+        TaffySize<AvailableSpace> availableSpace,
         SizingMode sizingMode,
-        Line<Boolean> verticalMarginsAreCollapsible) {
+        TaffyLine<Boolean> verticalMarginsAreCollapsible) {
 
         LayoutInput inputs = new LayoutInput(
             RunMode.PERFORM_LAYOUT,
@@ -163,9 +164,9 @@ public class LayoutComputer {
         NodeId node,
         FloatSize knownDimensions,
         FloatSize parentSize,
-        Size<AvailableSpace> availableSpace,
+        TaffySize<AvailableSpace> availableSpace,
         SizingMode sizingMode,
-        Line<Boolean> verticalMarginsAreCollapsible) {
+        TaffyLine<Boolean> verticalMarginsAreCollapsible) {
 
         LayoutInput inputs = new LayoutInput(
             RunMode.COMPUTE_SIZE,
@@ -220,12 +221,12 @@ public class LayoutComputer {
      * Computes layout without using cache.
      */
     private LayoutOutput computeLayoutUncached(NodeId node, LayoutInput inputs) {
-        Style style = tree.getStyle(node);
-        Display display = style.getDisplay();
+        TaffyStyle style = tree.getStyle(node);
+        TaffyDisplay display = style.getDisplay();
         int childCount = tree.childCount(node);
 
         // Dispatch based on display mode and whether node has children
-        if (display == Display.NONE) {
+        if (display == TaffyDisplay.NONE) {
             return computeHiddenLayout(node);
         }
 
@@ -261,10 +262,10 @@ public class LayoutComputer {
     /**
      * Computes layout for a leaf node (node without children or with measure function).
      */
-    private LayoutOutput computeLeafLayout(NodeId node, LayoutInput inputs, Style style) {
+    private LayoutOutput computeLeafLayout(NodeId node, LayoutInput inputs, TaffyStyle style) {
         FloatSize knownDimensions = inputs.knownDimensions();
         FloatSize parentSize = inputs.parentSize();
-        Size<AvailableSpace> availableSpace = inputs.availableSpace();
+        TaffySize<AvailableSpace> availableSpace = inputs.availableSpace();
 
         // Resolve style sizes
         Float aspectRatio = style.getAspectRatio();
@@ -281,7 +282,7 @@ public class LayoutComputer {
         // Scrollbar gutters are reserved when overflow is scroll
         // Axes are transposed: vertical scroll needs horizontal space for scrollbar
         float scrollbarWidth = style.getScrollbarWidth();
-        Point<Overflow> overflow = style.getOverflow();
+        TaffyPoint<Overflow> overflow = style.getOverflow();
         float scrollbarGutterX = overflow.y == Overflow.SCROLL ? scrollbarWidth : 0f;
         float scrollbarGutterY = overflow.x == Overflow.SCROLL ? scrollbarWidth : 0f;
 
@@ -356,7 +357,7 @@ public class LayoutComputer {
             !style.isBlock() ||
             overflow.x.isScrollContainer() ||
             overflow.y.isScrollContainer() ||
-            style.getPosition() == Position.ABSOLUTE ||
+            style.getPosition() == TaffyPosition.ABSOLUTE ||
             style.getAspectRatio() != null ||
             padding.top > 0 ||
             padding.bottom > 0 ||
@@ -419,7 +420,7 @@ public class LayoutComputer {
         float marginHorizontal = margin.left + margin.right;
         float marginVertical = margin.top + margin.bottom;
 
-        Size<AvailableSpace> contentAvailableSpace = new Size<>(
+        TaffySize<AvailableSpace> contentAvailableSpace = new TaffySize<>(
             computeLeafAvailableSpace(
                 availableSpace.width,
                 knownDimensions.width,
@@ -508,7 +509,7 @@ public class LayoutComputer {
     /**
      * Computes layout for a block container.
      */
-    private LayoutOutput computeBlockLayout(NodeId node, LayoutInput inputs, Style style) {
+    private LayoutOutput computeBlockLayout(NodeId node, LayoutInput inputs, TaffyStyle style) {
         // Simplified block layout - full implementation in BlockComputer
         return new BlockComputer(this).compute(node, inputs, style);
     }
@@ -516,7 +517,7 @@ public class LayoutComputer {
     /**
      * Computes layout for a flexbox container.
      */
-    private LayoutOutput computeFlexboxLayout(NodeId node, LayoutInput inputs, Style style) {
+    private LayoutOutput computeFlexboxLayout(NodeId node, LayoutInput inputs, TaffyStyle style) {
         // Simplified flexbox layout - full implementation in FlexboxComputer
         return new FlexboxComputer(this).compute(node, inputs, style);
     }
@@ -524,7 +525,7 @@ public class LayoutComputer {
     /**
      * Computes layout for a grid container.
      */
-    private LayoutOutput computeGridLayout(NodeId node, LayoutInput inputs, Style style) {
+    private LayoutOutput computeGridLayout(NodeId node, LayoutInput inputs, TaffyStyle style) {
         // Simplified grid layout - full implementation in GridComputer
         return new GridComputer(this).compute(node, inputs, style);
     }
@@ -535,7 +536,7 @@ public class LayoutComputer {
         return tree;
     }
 
-    private FloatSize availableSpaceToOptionSize(Size<AvailableSpace> availableSpace) {
+    private FloatSize availableSpaceToOptionSize(TaffySize<AvailableSpace> availableSpace) {
         // For FloatSize we use NaN to represent "None". AvailableSpace.intoOption() already
         // returns NaN for MIN_CONTENT/MAX_CONTENT.
         return new FloatSize(
@@ -628,5 +629,36 @@ public class LayoutComputer {
         }
         
         return result;
+    }
+    
+    /**
+     * Resolves the direction for a node, handling INHERIT by looking up the parent chain.
+     * If direction is INHERIT, it walks up the parent chain to find a non-INHERIT direction.
+     * If no parent has a concrete direction, defaults to LTR.
+     * 
+     * @param node The node to resolve direction for
+     * @return The resolved direction (LTR or RTL, never INHERIT)
+     */
+    public TaffyDirection resolveDirection(NodeId node) {
+        TaffyStyle style = tree.getStyle(node);
+        TaffyDirection direction = style.getDirection();
+        
+        if (!direction.isInherit()) {
+            return direction;
+        }
+        
+        // Walk up the parent chain to find a non-INHERIT direction
+        NodeId parent = tree.getParent(node);
+        while (parent != null) {
+            TaffyStyle parentStyle = tree.getStyle(parent);
+            TaffyDirection parentDirection = parentStyle.getDirection();
+            if (!parentDirection.isInherit()) {
+                return parentDirection;
+            }
+            parent = tree.getParent(parent);
+        }
+        
+        // No parent with concrete direction found, use default
+        return TaffyDirection.DEFAULT;
     }
 }

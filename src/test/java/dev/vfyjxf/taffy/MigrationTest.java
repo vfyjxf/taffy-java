@@ -1,17 +1,16 @@
 package dev.vfyjxf.taffy;
 
 import com.google.gson.Gson;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
@@ -41,22 +40,22 @@ public class MigrationTest {
     @DisplayName("Flexbox: row with fixed sizes")
     void testFlexboxRowFixedSizes() {
         // Equivalent to taffy fixture: flex/flex_row_fixed_size
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
 
-        Style child1Style = new Style();
-        child1Style.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
-        Style child2Style = new Style();
-        child2Style.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle child2Style = new TaffyStyle();
+        child2Style.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(child1Style);
         NodeId child2 = tree.newLeaf(child2Style);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(100f)
         ));
@@ -83,22 +82,22 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox: column with fixed sizes")
     void testFlexboxColumnFixedSizes() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.COLUMN;
-        rootStyle.size = new Size<>(Dimension.length(100), Dimension.length(200));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(200));
 
-        Style child1Style = new Style();
-        child1Style.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
-        Style child2Style = new Style();
-        child2Style.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle child2Style = new TaffyStyle();
+        child2Style.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(child1Style);
         NodeId child2 = tree.newLeaf(child2Style);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(100f),
             AvailableSpace.definite(200f)
         ));
@@ -123,29 +122,29 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox: flex-grow equal distribution")
     void testFlexGrowEqual() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(300), Dimension.length(100));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(100));
 
-        Style childStyle1 = new Style();
-        childStyle1.flexGrow = 1.0f;
-        childStyle1.size = new Size<>(Dimension.AUTO, Dimension.percent(1.0f));
+        TaffyStyle childStyle1 = new TaffyStyle();
+        childStyle1.flexGrow = 1.0f; childStyle1.flexShrink = 1.0f; childStyle1.flexBasis = TaffyDimension.AUTO;
+        childStyle1.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.percent(1.0f));
 
-        Style childStyle2 = new Style();
-        childStyle2.flexGrow = 1.0f;
-        childStyle2.size = new Size<>(Dimension.AUTO, Dimension.percent(1.0f));
+        TaffyStyle childStyle2 = new TaffyStyle();
+        childStyle2.flexGrow = 1.0f; childStyle2.flexShrink = 1.0f; childStyle2.flexBasis = TaffyDimension.AUTO;
+        childStyle2.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.percent(1.0f));
 
-        Style childStyle3 = new Style();
-        childStyle3.flexGrow = 1.0f;
-        childStyle3.size = new Size<>(Dimension.AUTO, Dimension.percent(1.0f));
+        TaffyStyle childStyle3 = new TaffyStyle();
+        childStyle3.flexGrow = 1.0f; childStyle3.flexShrink = 1.0f; childStyle3.flexBasis = TaffyDimension.AUTO;
+        childStyle3.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.percent(1.0f));
 
         NodeId child1 = tree.newLeaf(childStyle1);
         NodeId child2 = tree.newLeaf(childStyle2);
         NodeId child3 = tree.newLeaf(childStyle3);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(300f),
             AvailableSpace.definite(100f)
         ));
@@ -167,26 +166,26 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox: flex-grow weighted distribution")
     void testFlexGrowWeighted() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(400), Dimension.length(100));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(400), TaffyDimension.length(100));
 
-        Style childStyle1 = new Style();
-        childStyle1.flexGrow = 1.0f;
+        TaffyStyle childStyle1 = new TaffyStyle();
+        childStyle1.flexGrow = 1.0f; childStyle1.flexShrink = 1.0f; childStyle1.flexBasis = TaffyDimension.AUTO;
 
-        Style childStyle2 = new Style();
-        childStyle2.flexGrow = 2.0f;
+        TaffyStyle childStyle2 = new TaffyStyle();
+        childStyle2.flexGrow = 2.0f; childStyle2.flexShrink = 1.0f; childStyle2.flexBasis = TaffyDimension.AUTO;
 
-        Style childStyle3 = new Style();
-        childStyle3.flexGrow = 1.0f;
+        TaffyStyle childStyle3 = new TaffyStyle();
+        childStyle3.flexGrow = 1.0f; childStyle3.flexShrink = 1.0f; childStyle3.flexBasis = TaffyDimension.AUTO;
 
         NodeId child1 = tree.newLeaf(childStyle1);
         NodeId child2 = tree.newLeaf(childStyle2);
         NodeId child3 = tree.newLeaf(childStyle3);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(400f),
             AvailableSpace.definite(100f)
         ));
@@ -208,24 +207,24 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox: flex-shrink")
     void testFlexShrink() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
 
-        Style childStyle1 = new Style();
-        childStyle1.flexShrink = 1.0f;
-        childStyle1.size = new Size<>(Dimension.length(150), Dimension.AUTO);
+        TaffyStyle childStyle1 = new TaffyStyle();
+        childStyle1.flexGrow = 0.0f; childStyle1.flexShrink = 1.0f; childStyle1.flexBasis = TaffyDimension.AUTO;
+        childStyle1.size = new TaffySize<>(TaffyDimension.length(150), TaffyDimension.AUTO);
 
-        Style childStyle2 = new Style();
-        childStyle2.flexShrink = 1.0f;
-        childStyle2.size = new Size<>(Dimension.length(150), Dimension.AUTO);
+        TaffyStyle childStyle2 = new TaffyStyle();
+        childStyle2.flexGrow = 0.0f; childStyle2.flexShrink = 1.0f; childStyle2.flexBasis = TaffyDimension.AUTO;
+        childStyle2.size = new TaffySize<>(TaffyDimension.length(150), TaffyDimension.AUTO);
 
         NodeId child1 = tree.newLeaf(childStyle1);
         NodeId child2 = tree.newLeaf(childStyle2);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(100f)
         ));
@@ -242,21 +241,21 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox: gap")
     void testFlexboxGap() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.gap = new Size<>(LengthPercentage.length(10f), LengthPercentage.length(0f));
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+        rootStyle.gap = new TaffySize<>(LengthPercentage.length(10f), LengthPercentage.length(0f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
 
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(childStyle);
         NodeId child2 = tree.newLeaf(childStyle);
         NodeId child3 = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(100f)
         ));
@@ -274,19 +273,19 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox: padding")
     void testFlexboxPadding() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.padding = Rect.all(LengthPercentage.length(20f));
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+        rootStyle.padding = TaffyRect.all(LengthPercentage.length(20f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
 
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child1);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(100f)
         ));
@@ -303,23 +302,23 @@ public class MigrationTest {
     @Test
     @DisplayName("Block: basic stacking")
     void testBlockBasicStacking() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.BLOCK;
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(300));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.BLOCK;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(300));
 
-        Style childStyle1 = new Style();
-        childStyle1.display = Display.BLOCK;
-        childStyle1.size = new Size<>(Dimension.length(100), Dimension.length(50));
+        TaffyStyle childStyle1 = new TaffyStyle();
+        childStyle1.display = TaffyDisplay.BLOCK;
+        childStyle1.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(50));
 
-        Style childStyle2 = new Style();
-        childStyle2.display = Display.BLOCK;
-        childStyle2.size = new Size<>(Dimension.length(150), Dimension.length(75));
+        TaffyStyle childStyle2 = new TaffyStyle();
+        childStyle2.display = TaffyDisplay.BLOCK;
+        childStyle2.size = new TaffySize<>(TaffyDimension.length(150), TaffyDimension.length(75));
 
         NodeId child1 = tree.newLeaf(childStyle1);
         NodeId child2 = tree.newLeaf(childStyle2);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(300f)
         ));
@@ -340,18 +339,18 @@ public class MigrationTest {
     @Test
     @DisplayName("Block: auto width stretches to parent")
     void testBlockAutoWidth() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.BLOCK;
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(200));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.BLOCK;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(200));
 
-        Style childStyle = new Style();
-        childStyle.display = Display.BLOCK;
-        childStyle.size = new Size<>(Dimension.AUTO, Dimension.length(50));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.display = TaffyDisplay.BLOCK;
+        childStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(50));
 
         NodeId child = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(200f)
         ));
@@ -364,15 +363,15 @@ public class MigrationTest {
     @Test
     @DisplayName("Grid: simple 2x2")
     void testGridSimple2x2() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.GRID;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.GRID;
         rootStyle.gridTemplateColumns.add(TrackSizingFunction.fr(1f));
         rootStyle.gridTemplateColumns.add(TrackSizingFunction.fr(1f));
         rootStyle.gridTemplateRows.add(TrackSizingFunction.fr(1f));
         rootStyle.gridTemplateRows.add(TrackSizingFunction.fr(1f));
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(200));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(200));
 
-        Style cellStyle = new Style();
+        TaffyStyle cellStyle = new TaffyStyle();
 
         NodeId cell1 = tree.newLeaf(cellStyle);
         NodeId cell2 = tree.newLeaf(cellStyle);
@@ -380,7 +379,7 @@ public class MigrationTest {
         NodeId cell4 = tree.newLeaf(cellStyle);
         NodeId root = tree.newWithChildren(rootStyle, cell1, cell2, cell3, cell4);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(200f)
         ));
@@ -412,31 +411,31 @@ public class MigrationTest {
     @Test
     @DisplayName("Nested: flexbox inside flexbox")
     void testNestedFlexbox() {
-        Style outerStyle = new Style();
-        outerStyle.display = Display.FLEX;
+        TaffyStyle outerStyle = new TaffyStyle();
+        outerStyle.display = TaffyDisplay.FLEX;
         outerStyle.flexDirection = FlexDirection.COLUMN;
-        outerStyle.size = new Size<>(Dimension.length(300), Dimension.length(300));
+        outerStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(300));
 
-        Style innerStyle = new Style();
-        innerStyle.display = Display.FLEX;
+        TaffyStyle innerStyle = new TaffyStyle();
+        innerStyle.display = TaffyDisplay.FLEX;
         innerStyle.flexDirection = FlexDirection.ROW;
-        innerStyle.flexGrow = 1.0f;
-        innerStyle.size = new Size<>(Dimension.percent(1.0f), Dimension.AUTO);
+        innerStyle.flexGrow = 1.0f; innerStyle.flexShrink = 1.0f; innerStyle.flexBasis = TaffyDimension.AUTO;
+        innerStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.AUTO);
 
-        Style leafStyle = new Style();
-        leafStyle.flexGrow = 1.0f;
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.flexGrow = 1.0f; leafStyle.flexShrink = 1.0f; leafStyle.flexBasis = TaffyDimension.AUTO;
 
         NodeId leaf1 = tree.newLeaf(leafStyle);
         NodeId leaf2 = tree.newLeaf(leafStyle);
         NodeId inner = tree.newWithChildren(innerStyle, leaf1, leaf2);
 
-        Style leaf3Style = new Style();
-        leaf3Style.size = new Size<>(Dimension.AUTO, Dimension.length(50));
+        TaffyStyle leaf3Style = new TaffyStyle();
+        leaf3Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(50));
 
         NodeId leaf3 = tree.newLeaf(leaf3Style);
         NodeId outer = tree.newWithChildren(outerStyle, inner, leaf3);
 
-        tree.computeLayout(outer, new Size<>(
+        tree.computeLayout(outer, new TaffySize<>(
             AvailableSpace.definite(300f),
             AvailableSpace.definite(300f)
         ));
@@ -461,18 +460,18 @@ public class MigrationTest {
     @Test
     @DisplayName("Percent dimensions")
     void testPercentDimensions() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(400), Dimension.length(200));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(400), TaffyDimension.length(200));
 
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.percent(0.5f), Dimension.percent(0.5f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.percent(0.5f), TaffyDimension.percent(0.5f));
 
         NodeId child = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(400f),
             AvailableSpace.definite(200f)
         ));
@@ -485,20 +484,20 @@ public class MigrationTest {
     @Test
     @DisplayName("Min/Max constraints")
     void testMinMaxConstraints() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(500), Dimension.length(100));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(500), TaffyDimension.length(100));
 
-        Style childStyle = new Style();
-        childStyle.flexGrow = 1.0f;
-        childStyle.minSize = new Size<>(Dimension.length(100), Dimension.AUTO);
-        childStyle.maxSize = new Size<>(Dimension.length(200), Dimension.AUTO);
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.flexGrow = 1.0f; childStyle.flexShrink = 1.0f; childStyle.flexBasis = TaffyDimension.AUTO;
+        childStyle.minSize = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.AUTO);
+        childStyle.maxSize = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.AUTO);
 
         NodeId child = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(500f),
             AvailableSpace.definite(100f)
         ));
@@ -511,19 +510,19 @@ public class MigrationTest {
     @Test
     @DisplayName("Border affects content area")
     void testBorderAffectsContent() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.border = Rect.all(LengthPercentage.length(10f));
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(100));
+        rootStyle.border = TaffyRect.all(LengthPercentage.length(10f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(100));
 
-        Style childStyle = new Style();
-        childStyle.flexGrow = 1.0f;
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.flexGrow = 1.0f; childStyle.flexShrink = 1.0f; childStyle.flexBasis = TaffyDimension.AUTO;
 
         NodeId child = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(100f)
         ));
@@ -538,12 +537,12 @@ public class MigrationTest {
     @Test
     @DisplayName("Aspect ratio")
     void testAspectRatio() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.length(200));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.length(200));
 
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(100), Dimension.AUTO);
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.AUTO);
         childStyle.aspectRatio = 2.0f; // width:height = 2:1
         // align-self: start prevents stretch from overriding aspect-ratio
         childStyle.alignSelf = AlignItems.START;
@@ -551,7 +550,7 @@ public class MigrationTest {
         NodeId child = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(200f)
         ));
@@ -564,21 +563,21 @@ public class MigrationTest {
     @Test
     @DisplayName("Flexbox wrap")
     void testFlexboxWrap() {
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
         rootStyle.flexWrap = FlexWrap.WRAP;
-        rootStyle.size = new Size<>(Dimension.length(200), Dimension.AUTO);
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.AUTO);
 
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(80), Dimension.length(50));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(80), TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(childStyle);
         NodeId child2 = tree.newLeaf(childStyle);
         NodeId child3 = tree.newLeaf(childStyle);
         NodeId root = tree.newWithChildren(rootStyle, child1, child2, child3);
 
-        tree.computeLayout(root, new Size<>(
+        tree.computeLayout(root, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.maxContent()
         ));

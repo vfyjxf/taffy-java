@@ -1,12 +1,11 @@
 package dev.vfyjxf.taffy.benchmark;
 
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import org.openjdk.jmh.annotations.*;
@@ -49,7 +48,7 @@ public class FlexboxExtendedBenchmark {
 
     @Benchmark
     public void wideTreeLarge(WideTreeLargeState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.maxContent());
+        state.tree.computeLayout(state.root, TaffySize.maxContent());
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -73,7 +72,7 @@ public class FlexboxExtendedBenchmark {
 
     @Benchmark
     public void deepTreeRandomSizeLarge(DeepRandomLargeState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.maxContent());
+        state.tree.computeLayout(state.root, TaffySize.maxContent());
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -93,7 +92,7 @@ public class FlexboxExtendedBenchmark {
 
     @Benchmark
     public void superDeep1000(SuperDeep1000State state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.maxContent());
+        state.tree.computeLayout(state.root, TaffySize.maxContent());
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -101,7 +100,7 @@ public class FlexboxExtendedBenchmark {
 
     private static NodeId buildDeepHierarchyRandom(TaffyTree tree, int maxNodes, int branchFactor, Random rng) {
         NodeId[] children = buildDeepTreeRandom(tree, maxNodes, branchFactor, rng);
-        Style rootStyle = new Style();
+        TaffyStyle rootStyle = new TaffyStyle();
         return tree.newWithChildren(rootStyle, children);
     }
 
@@ -137,15 +136,15 @@ public class FlexboxExtendedBenchmark {
             created += count + 1;
         }
 
-        Style rootStyle = new Style();
+        TaffyStyle rootStyle = new TaffyStyle();
         return tree.newWithChildren(rootStyle, children.toArray(new NodeId[0]));
     }
 
     private static NodeId buildSuperDeepHierarchy(TaffyTree tree, int depth, int nodesPerLevel) {
-        Style style = new Style();
+        TaffyStyle style = new TaffyStyle();
         style.flexDirection = FlexDirection.ROW;
         style.flexGrow = 1.0f;
-        style.margin = Rect.all(LengthPercentageAuto.length(10f));
+        style.margin = TaffyRect.all(LengthPercentageAuto.length(10f));
 
         NodeId[] children = new NodeId[0];
         for (int d = 0; d < depth; d++) {
@@ -158,24 +157,24 @@ public class FlexboxExtendedBenchmark {
             }
         }
 
-        Style rootStyle = new Style();
+        TaffyStyle rootStyle = new TaffyStyle();
         return tree.newWithChildren(rootStyle, children);
     }
 
-    private static Style randomStyle(Random rng) {
-        Style style = new Style();
-        style.size = new Size<>(randomDimension(rng), randomDimension(rng));
+    private static TaffyStyle randomStyle(Random rng) {
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(randomDimension(rng), randomDimension(rng));
         return style;
     }
 
-    private static Dimension randomDimension(Random rng) {
+    private static TaffyDimension randomDimension(Random rng) {
         float rand = rng.nextFloat();
         if (rand < 0.2f) {
-            return Dimension.AUTO;
+            return TaffyDimension.AUTO;
         } else if (rand < 0.8f) {
-            return Dimension.length(rng.nextFloat() * 500f);
+            return TaffyDimension.length(rng.nextFloat() * 500f);
         } else {
-            return Dimension.percent(rng.nextFloat());
+            return TaffyDimension.percent(rng.nextFloat());
         }
     }
 }

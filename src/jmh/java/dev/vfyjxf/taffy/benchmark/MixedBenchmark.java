@@ -1,13 +1,12 @@
 package dev.vfyjxf.taffy.benchmark;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -71,7 +70,7 @@ public class MixedBenchmark {
     @Benchmark
     public void mixedFlexGrid(MixedState state, Blackhole bh) {
         // Rust uses Size::MAX_CONTENT
-        state.tree.computeLayoutWithMeasure(state.root, Size.maxContent(), null);
+        state.tree.computeLayoutWithMeasure(state.root, TaffySize.maxContent(), null);
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -87,7 +86,7 @@ public class MixedBenchmark {
     ) {
         if (depth == 0) {
             // Rust: new_leaf_with_context(Style::default(), context)
-            return taffy.newLeafWithMeasure(new Style(), measureFunc);
+            return taffy.newLeafWithMeasure(new TaffyStyle(), measureFunc);
         }
 
         List<NodeId> children = new ArrayList<>(width);
@@ -95,7 +94,7 @@ public class MixedBenchmark {
             children.add(buildMixedTree(taffy, depth - 1, width, rng, !isGrid, measureFunc));
         }
 
-        Style style;
+        TaffyStyle style;
         if (isGrid) {
             int trackCount = (int) Math.ceil(Math.sqrt(width));
             style = randomNxNGridStyle(rng, trackCount);
@@ -127,9 +126,9 @@ public class MixedBenchmark {
         }
     }
 
-    private static Style randomNxNGridStyle(Random rng, int trackCount) {
-        Style style = new Style();
-        style.display = Display.GRID;
+    private static TaffyStyle randomNxNGridStyle(Random rng, int trackCount) {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
 
         List<TrackSizingFunction> cols = new ArrayList<>(trackCount);
         List<TrackSizingFunction> rows = new ArrayList<>(trackCount);
@@ -143,9 +142,9 @@ public class MixedBenchmark {
         return style;
     }
 
-    private static Style randomFlexStyle(Random rng) {
-        Style style = new Style();
-        style.display = Display.FLEX;
+    private static TaffyStyle randomFlexStyle(Random rng) {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.FLEX;
         style.flexDirection = rng.nextBoolean() ? FlexDirection.ROW : FlexDirection.COLUMN;
         style.flexWrap = rng.nextBoolean() ? FlexWrap.WRAP : FlexWrap.NO_WRAP;
         return style;
@@ -182,7 +181,7 @@ public class MixedBenchmark {
         }
 
         @Override
-        public FloatSize measure(FloatSize knownDimensions, Size<AvailableSpace> availableSpace) {
+        public FloatSize measure(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpace) {
             // If both dimensions are known, return them directly.
             if (!Float.isNaN(knownDimensions.width) && !Float.isNaN(knownDimensions.height)) {
                 return new FloatSize(knownDimensions.width, knownDimensions.height);

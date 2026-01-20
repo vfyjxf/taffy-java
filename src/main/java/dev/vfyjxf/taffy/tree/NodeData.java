@@ -1,6 +1,6 @@
 package dev.vfyjxf.taffy.tree;
 
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 
 /**
  * Internal data structure for storing node data.
@@ -8,7 +8,7 @@ import dev.vfyjxf.taffy.style.Style;
 public class NodeData {
     
     /** The layout strategy used by this node */
-    private Style style;
+    private TaffyStyle style;
     
     /** The always unrounded results of the layout computation */
     private Layout unroundedLayout;
@@ -26,26 +26,26 @@ public class NodeData {
     private long acknowledgedLayoutVersion;
     
     /** The cached results of layout computation */
-    private final Cache cache;
+    private final LayoutCache cache;
     
     /**
      * Creates new NodeData with the given style.
      */
-    public NodeData(Style style) {
-        this.style = style != null ? style : new Style();
+    public NodeData(TaffyStyle style) {
+        this.style = style != null ? style : new TaffyStyle();
         this.unroundedLayout = new Layout();
         this.finalLayout = new Layout();
         this.hasContext = false;
-        this.cache = new Cache();
+        this.cache = new LayoutCache();
         this.layoutVersion = 0L;
         this.acknowledgedLayoutVersion = 0L;
     }
     
-    public Style getStyle() {
+    public TaffyStyle getStyle() {
         return style;
     }
     
-    public void setStyle(Style style) {
+    public void setStyle(TaffyStyle style) {
         this.style = style;
     }
     
@@ -73,7 +73,7 @@ public class NodeData {
         this.hasContext = hasContext;
     }
     
-    public Cache getCache() {
+    public LayoutCache getCache() {
         return cache;
     }
 

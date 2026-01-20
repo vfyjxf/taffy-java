@@ -1,11 +1,11 @@
 package dev.vfyjxf.taffy.tree;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.util.MeasureFunc;
 import dev.vfyjxf.taffy.util.RoundLayout;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -89,7 +89,7 @@ public class TaffyTree {
     /**
      * Creates and adds a new unattached leaf node to the tree.
      */
-    public NodeId newLeaf(Style style) {
+    public NodeId newLeaf(TaffyStyle style) {
         long id = nodeIdCounter.getAndIncrement();
         NodeId nodeId = new NodeId(id);
         
@@ -103,7 +103,7 @@ public class TaffyTree {
     /**
      * Creates and adds a new unattached leaf node with a measure function.
      */
-    public NodeId newLeafWithMeasure(Style style, MeasureFunc measureFunc) {
+    public NodeId newLeafWithMeasure(TaffyStyle style, MeasureFunc measureFunc) {
         long id = nodeIdCounter.getAndIncrement();
         NodeId nodeId = new NodeId(id);
         
@@ -120,7 +120,7 @@ public class TaffyTree {
     /**
      * Creates and adds a new node with children.
      */
-    public NodeId newWithChildren(Style style, NodeId... childNodes) {
+    public NodeId newWithChildren(TaffyStyle style, NodeId... childNodes) {
         long id = nodeIdCounter.getAndIncrement();
         NodeId nodeId = new NodeId(id);
         
@@ -141,7 +141,7 @@ public class TaffyTree {
     /**
      * Creates and adds a new node with children from a list.
      */
-    public NodeId newWithChildren(Style style, List<NodeId> childNodes) {
+    public NodeId newWithChildren(TaffyStyle style, List<NodeId> childNodes) {
         return newWithChildren(style, childNodes.toArray(new NodeId[0]));
     }
 
@@ -422,7 +422,7 @@ public class TaffyTree {
     /**
      * Sets the style of a node.
      */
-    public void setStyle(NodeId node, Style style) {
+    public void setStyle(NodeId node, TaffyStyle style) {
         NodeData data = nodes.get(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
@@ -434,7 +434,7 @@ public class TaffyTree {
     /**
      * Gets the style of a node.
      */
-    public Style getStyle(NodeId node) {
+    public TaffyStyle getStyle(NodeId node) {
         NodeData data = nodes.get(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
@@ -530,7 +530,7 @@ public class TaffyTree {
      * Gets the cache entry for a node.
      */
     public LayoutOutput getCacheEntry(NodeId node, FloatSize knownDimensions,
-                                       Size<AvailableSpace> availableSpace, RunMode runMode) {
+                                      TaffySize<AvailableSpace> availableSpace, RunMode runMode) {
         NodeData data = nodes.get(node.getId());
         if (data == null) return null;
         return data.getCache().get(knownDimensions, availableSpace, runMode);
@@ -540,8 +540,8 @@ public class TaffyTree {
      * Stores a cache entry for a node.
      */
     public void storeCacheEntry(NodeId node, FloatSize knownDimensions,
-                                 Size<AvailableSpace> availableSpace, RunMode runMode,
-                                 LayoutOutput output) {
+                                TaffySize<AvailableSpace> availableSpace, RunMode runMode,
+                                LayoutOutput output) {
         NodeData data = nodes.get(node.getId());
         if (data != null) {
             data.getCache().store(knownDimensions, availableSpace, runMode, output);
@@ -593,14 +593,14 @@ public class TaffyTree {
     /**
      * Computes the layout for the tree starting from the given root node.
      */
-    public void computeLayout(NodeId rootNode, Size<AvailableSpace> availableSpace) {
+    public void computeLayout(NodeId rootNode, TaffySize<AvailableSpace> availableSpace) {
         computeLayoutWithMeasure(rootNode, availableSpace, null);
     }
 
     /**
      * Computes the layout with a custom measure function for all nodes.
      */
-    public void computeLayoutWithMeasure(NodeId rootNode, Size<AvailableSpace> availableSpace,
+    public void computeLayoutWithMeasure(NodeId rootNode, TaffySize<AvailableSpace> availableSpace,
                                           MeasureFunc defaultMeasureFunc) {
         // This will be implemented by the compute module
         // For now, delegate to the LayoutComputer
@@ -667,9 +667,9 @@ public class TaffyTree {
         if (data == null) return "UNKNOWN";
         
         int numChildren = childCount(node);
-        Display display = data.getStyle().getDisplay();
+        TaffyDisplay display = data.getStyle().getDisplay();
         
-        if (display == Display.NONE) return "NONE";
+        if (display == TaffyDisplay.NONE) return "NONE";
         if (numChildren == 0) return "LEAF";
         
         switch (display) {

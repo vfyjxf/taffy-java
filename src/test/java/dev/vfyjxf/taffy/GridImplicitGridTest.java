@@ -3,10 +3,10 @@ package dev.vfyjxf.taffy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.GridPlacement;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.GridTestAdapter;
 import dev.vfyjxf.taffy.tree.TrackCounts;
 
@@ -31,11 +31,11 @@ public class GridImplicitGridTest {
         return GridPlacement.span(n);
     }
 
-    private static Style child(GridPlacement colStart, GridPlacement colEnd, GridPlacement rowStart, GridPlacement rowEnd) {
-        Style s = new Style();
-        s.display = Display.GRID;
-        s.gridColumn = new Line<>(colStart, colEnd);
-        s.gridRow = new Line<>(rowStart, rowEnd);
+    private static TaffyStyle child(GridPlacement colStart, GridPlacement colEnd, GridPlacement rowStart, GridPlacement rowEnd) {
+        TaffyStyle s = new TaffyStyle();
+        s.display = TaffyDisplay.GRID;
+        s.gridColumn = new TaffyLine<>(colStart, colEnd);
+        s.gridRow = new TaffyLine<>(rowStart, rowEnd);
         return s;
     }
 
@@ -49,7 +49,7 @@ public class GridImplicitGridTest {
     @Test
     @DisplayName("child_min_max_line_auto")
     void childMinMaxLineAuto() {
-        Line<GridPlacement> gridLine = new Line<>(line(5), span(6));
+        TaffyLine<GridPlacement> gridLine = new TaffyLine<>(line(5), span(6));
         GridTestAdapter.ChildMinMaxLineSpan result = GridTestAdapter.childMinMaxLineSpan(gridLine, 6);
         assertEquals(4, result.minLine);
         assertEquals(10, result.maxLine);
@@ -59,7 +59,7 @@ public class GridImplicitGridTest {
     @Test
     @DisplayName("child_min_max_line_negative_track")
     void childMinMaxLineNegativeTrack() {
-        Line<GridPlacement> gridLine = new Line<>(line(-5), span(3));
+        TaffyLine<GridPlacement> gridLine = new TaffyLine<>(line(-5), span(3));
         GridTestAdapter.ChildMinMaxLineSpan result = GridTestAdapter.childMinMaxLineSpan(gridLine, 6);
         assertEquals(2, result.minLine);
         assertEquals(5, result.maxLine);
@@ -72,7 +72,7 @@ public class GridImplicitGridTest {
         int explicitColCount = 6;
         int explicitRowCount = 8;
 
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(line(1), span(2), line(2), auto()),
             child(line(-4), auto(), line(-2), auto())
         );
@@ -89,7 +89,7 @@ public class GridImplicitGridTest {
         int explicitColCount = 4;
         int explicitRowCount = 4;
 
-        List<Style> children = List.of(
+        List<TaffyStyle> children = List.of(
             child(line(-6), span(2), line(-8), auto()),
             child(line(4), auto(), line(3), auto())
         );

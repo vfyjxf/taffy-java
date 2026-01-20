@@ -1,10 +1,9 @@
 package dev.vfyjxf.taffy;
 
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -26,22 +25,22 @@ public class RoundingTest {
     void roundingDoesntLeaveGaps() {
         TaffyTree tree = new TaffyTree();
         
-        Size<Dimension> squareSize = new Size<>(Dimension.length(100.3f), Dimension.length(100.3f));
+        TaffySize<TaffyDimension> squareSize = new TaffySize<>(TaffyDimension.length(100.3f), TaffyDimension.length(100.3f));
         
-        Style childAStyle = new Style();
+        TaffyStyle childAStyle = new TaffyStyle();
         childAStyle.size = squareSize;
         NodeId childA = tree.newLeaf(childAStyle);
         
-        Style childBStyle = new Style();
+        TaffyStyle childBStyle = new TaffyStyle();
         childBStyle.size = squareSize;
         NodeId childB = tree.newLeaf(childBStyle);
         
-        Style rootStyle = new Style();
-        rootStyle.size = new Size<>(Dimension.length(963.3333f), Dimension.length(1000.0f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(963.3333f), TaffyDimension.length(1000.0f));
         rootStyle.justifyContent = AlignContent.CENTER;
         NodeId root = tree.newWithChildren(rootStyle, childA, childB);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layoutA = tree.getLayout(childA);
         Layout layoutB = tree.getLayout(childB);

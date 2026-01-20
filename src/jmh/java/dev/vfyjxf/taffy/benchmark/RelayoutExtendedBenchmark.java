@@ -1,13 +1,12 @@
 package dev.vfyjxf.taffy.benchmark;
 
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -47,17 +46,17 @@ public class RelayoutExtendedBenchmark {
                 Object[] built = buildFlexWideTree(10000);
                 tree = (TaffyTree) built[0];
                 root = (NodeId) built[1];
-                tree.computeLayout(root, Size.maxContent());
+                tree.computeLayout(root, TaffySize.maxContent());
             } else if ("grid_wide_100".equals(caseName)) {
                 Object[] built = buildGridFlatHierarchy(100, 100);
                 tree = (TaffyTree) built[0];
                 root = (NodeId) built[1];
-                tree.computeLayout(root, Size.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
+                tree.computeLayout(root, TaffySize.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
             } else if ("grid_wide_316".equals(caseName)) {
                 Object[] built = buildGridFlatHierarchy(316, 316);
                 tree = (TaffyTree) built[0];
                 root = (NodeId) built[1];
-                tree.computeLayout(root, Size.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
+                tree.computeLayout(root, TaffySize.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
             } else {
                 throw new IllegalArgumentException("Unknown caseName: " + caseName);
             }
@@ -67,9 +66,9 @@ public class RelayoutExtendedBenchmark {
     @Benchmark
     public void relayout(RelayoutState state, Blackhole bh) {
         if ("flex_wide_10000".equals(state.caseName)) {
-            state.tree.computeLayout(state.root, Size.maxContent());
+            state.tree.computeLayout(state.root, TaffySize.maxContent());
         } else {
-            state.tree.computeLayout(state.root, Size.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
+            state.tree.computeLayout(state.root, TaffySize.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
         }
         bh.consume(state.tree.getLayout(state.root));
     }
@@ -93,39 +92,39 @@ public class RelayoutExtendedBenchmark {
             created += count + 1;
         }
 
-        Style rootStyle = new Style();
+        TaffyStyle rootStyle = new TaffyStyle();
         NodeId root = tree.newWithChildren(rootStyle, children.toArray(new NodeId[0]));
         return new Object[]{tree, root};
     }
 
-    private static Style randomFlexItemStyle(Random rng) {
-        Style style = new Style();
-        style.size = new Size<>(randomDimension(rng), randomDimension(rng));
+    private static TaffyStyle randomFlexItemStyle(Random rng) {
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(randomDimension(rng), randomDimension(rng));
         return style;
     }
 
-    private static Style randomFlexContainerStyle(Random rng) {
-        Style style = new Style();
-        style.display = Display.FLEX;
+    private static TaffyStyle randomFlexContainerStyle(Random rng) {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.FLEX;
         style.flexDirection = rng.nextBoolean() ? FlexDirection.ROW : FlexDirection.COLUMN;
         style.flexWrap = rng.nextBoolean() ? FlexWrap.WRAP : FlexWrap.NO_WRAP;
         return style;
     }
 
-    private static Dimension randomDimension(Random rng) {
+    private static TaffyDimension randomDimension(Random rng) {
         float rand = rng.nextFloat();
         if (rand < 0.2f) {
-            return Dimension.AUTO;
+            return TaffyDimension.AUTO;
         } else if (rand < 0.8f) {
-            return Dimension.length(rng.nextFloat() * 500f);
+            return TaffyDimension.length(rng.nextFloat() * 500f);
         } else {
-            return Dimension.percent(rng.nextFloat());
+            return TaffyDimension.percent(rng.nextFloat());
         }
     }
 
     private static NodeId buildRandomLeaf(TaffyTree taffy) {
-        Style style = new Style();
-        style.size = new Size<>(Dimension.length(20.0f), Dimension.length(20.0f));
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(20.0f));
         return taffy.newLeaf(style);
     }
 
@@ -152,8 +151,8 @@ public class RelayoutExtendedBenchmark {
         TaffyTree taffy = new TaffyTree();
         Random rng = new Random(SEED);
 
-        Style style = new Style();
-        style.display = Display.GRID;
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
 
         List<TrackSizingFunction> cols = new ArrayList<>(colCount);
         List<TrackSizingFunction> rows = new ArrayList<>(rowCount);

@@ -1,15 +1,14 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -49,7 +48,7 @@ public class TaffyTreeApiTest {
     @DisplayName("test_new_leaf")
     void testNewLeaf() {
         TaffyTree tree = new TaffyTree();
-        NodeId node = tree.newLeaf(new Style());
+        NodeId node = tree.newLeaf(new TaffyStyle());
         
         assertNotNull(node);
         assertEquals(0, tree.childCount(node));
@@ -61,7 +60,7 @@ public class TaffyTreeApiTest {
         TaffyTree tree = new TaffyTree();
         
         MeasureFunc measureFunc = (knownDimensions, availableSpace) -> FloatSize.zero();
-        NodeId node = tree.newLeafWithMeasure(new Style(), measureFunc);
+        NodeId node = tree.newLeafWithMeasure(new TaffyStyle(), measureFunc);
         
         assertNotNull(node);
         assertEquals(0, tree.childCount(node));
@@ -73,9 +72,9 @@ public class TaffyTreeApiTest {
     @DisplayName("test_new_with_children")
     void testNewWithChildren() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
         assertEquals(2, tree.childCount(node));
         List<NodeId> children = tree.getChildren(node);
@@ -87,14 +86,14 @@ public class TaffyTreeApiTest {
     @DisplayName("add_child")
     void addChild() {
         TaffyTree tree = new TaffyTree();
-        NodeId node = tree.newLeaf(new Style());
+        NodeId node = tree.newLeaf(new TaffyStyle());
         assertEquals(0, tree.childCount(node));
 
-        NodeId child0 = tree.newLeaf(new Style());
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
         tree.addChild(node, child0);
         assertEquals(1, tree.childCount(node));
 
-        NodeId child1 = tree.newLeaf(new Style());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
         tree.addChild(node, child1);
         assertEquals(2, tree.childCount(node));
     }
@@ -104,11 +103,11 @@ public class TaffyTreeApiTest {
     void insertChildAtIndex() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId child2 = tree.newLeaf(new Style());
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId child2 = tree.newLeaf(new TaffyStyle());
         
-        NodeId node = tree.newLeaf(new Style());
+        NodeId node = tree.newLeaf(new TaffyStyle());
         assertEquals(0, tree.childCount(node));
 
         tree.insertChildAtIndex(node, 0, child0);
@@ -132,16 +131,16 @@ public class TaffyTreeApiTest {
     void setChildren() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
         assertEquals(2, tree.childCount(node));
         assertEquals(child0, tree.getChildren(node).get(0));
         assertEquals(child1, tree.getChildren(node).get(1));
 
-        NodeId child2 = tree.newLeaf(new Style());
-        NodeId child3 = tree.newLeaf(new Style());
+        NodeId child2 = tree.newLeaf(new TaffyStyle());
+        NodeId child3 = tree.newLeaf(new TaffyStyle());
         tree.setChildren(node, child2, child3);
 
         assertEquals(2, tree.childCount(node));
@@ -153,9 +152,9 @@ public class TaffyTreeApiTest {
     @DisplayName("remove_child")
     void removeChild() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
         assertEquals(2, tree.childCount(node));
 
@@ -171,9 +170,9 @@ public class TaffyTreeApiTest {
     @DisplayName("remove_child_at_index")
     void removeChildAtIndex() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
         assertEquals(2, tree.childCount(node));
 
@@ -190,10 +189,10 @@ public class TaffyTreeApiTest {
     void replaceChildAtIndex() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
         
-        NodeId node = tree.newWithChildren(new Style(), child0);
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0);
         assertEquals(1, tree.childCount(node));
         assertEquals(child0, tree.getChildren(node).get(0));
 
@@ -206,10 +205,10 @@ public class TaffyTreeApiTest {
     @DisplayName("test_child_at_index")
     void testChildAtIndex() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId child2 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1, child2);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId child2 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1, child2);
 
         assertEquals(child0, tree.getChildAtIndex(node, 0));
         assertEquals(child1, tree.getChildAtIndex(node, 1));
@@ -220,9 +219,9 @@ public class TaffyTreeApiTest {
     @DisplayName("test_child_count")
     void testChildCount() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
         assertEquals(2, tree.childCount(node));
         assertEquals(0, tree.childCount(child0));
@@ -233,9 +232,9 @@ public class TaffyTreeApiTest {
     @DisplayName("test_children")
     void testChildren() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
         List<NodeId> children = tree.getChildren(node);
         assertEquals(2, children.size());
@@ -251,7 +250,7 @@ public class TaffyTreeApiTest {
     @DisplayName("remove_node_should_remove")
     void removeNodeShouldRemove() {
         TaffyTree tree = new TaffyTree();
-        NodeId node = tree.newLeaf(new Style());
+        NodeId node = tree.newLeaf(new TaffyStyle());
         
         tree.remove(node);
         // Node should be removed from tree
@@ -264,9 +263,9 @@ public class TaffyTreeApiTest {
         TaffyTree tree = new TaffyTree();
         
         // Build a linear tree layout: <0> <- <1> <- <2>
-        NodeId node2 = tree.newLeaf(new Style());
-        NodeId node1 = tree.newWithChildren(new Style(), node2);
-        NodeId node0 = tree.newWithChildren(new Style(), node1);
+        NodeId node2 = tree.newLeaf(new TaffyStyle());
+        NodeId node1 = tree.newWithChildren(new TaffyStyle(), node2);
+        NodeId node0 = tree.newWithChildren(new TaffyStyle(), node1);
 
         // Both node0 and node1 should have 1 child node
         assertEquals(1, tree.getChildren(node0).size());
@@ -287,8 +286,8 @@ public class TaffyTreeApiTest {
     void removeLastNode() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId parent = tree.newLeaf(new Style());
-        NodeId child = tree.newLeaf(new Style());
+        NodeId parent = tree.newLeaf(new TaffyStyle());
+        NodeId child = tree.newLeaf(new TaffyStyle());
         tree.addChild(parent, child);
 
         tree.remove(child);
@@ -304,8 +303,8 @@ public class TaffyTreeApiTest {
     void removeChildUpdatesParents() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId parent = tree.newLeaf(new Style());
-        NodeId child = tree.newLeaf(new Style());
+        NodeId parent = tree.newLeaf(new TaffyStyle());
+        NodeId child = tree.newLeaf(new TaffyStyle());
         
         tree.addChild(parent, child);
         tree.remove(parent);
@@ -322,13 +321,13 @@ public class TaffyTreeApiTest {
     void testSetStyle() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId node = tree.newLeaf(new Style());
-        assertEquals(Display.FLEX, tree.getStyle(node).display);
+        NodeId node = tree.newLeaf(new TaffyStyle());
+        assertEquals(TaffyDisplay.FLEX, tree.getStyle(node).display);
 
-        Style newStyle = new Style();
-        newStyle.display = Display.NONE;
+        TaffyStyle newStyle = new TaffyStyle();
+        newStyle.display = TaffyDisplay.NONE;
         tree.setStyle(node, newStyle);
-        assertEquals(Display.NONE, tree.getStyle(node).display);
+        assertEquals(TaffyDisplay.NONE, tree.getStyle(node).display);
     }
 
     @Test
@@ -336,15 +335,15 @@ public class TaffyTreeApiTest {
     void testStyle() {
         TaffyTree tree = new TaffyTree();
         
-        Style style = new Style();
-        style.display = Display.NONE;
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.NONE;
         style.flexDirection = FlexDirection.ROW_REVERSE;
         
         NodeId node = tree.newLeaf(style);
         
-        Style retrievedStyle = tree.getStyle(node);
+        TaffyStyle retrievedStyle = tree.getStyle(node);
         assertNotNull(retrievedStyle);
-        assertEquals(Display.NONE, retrievedStyle.display);
+        assertEquals(TaffyDisplay.NONE, retrievedStyle.display);
         assertEquals(FlexDirection.ROW_REVERSE, retrievedStyle.flexDirection);
     }
 
@@ -354,7 +353,7 @@ public class TaffyTreeApiTest {
     @DisplayName("test_layout")
     void testLayout() {
         TaffyTree tree = new TaffyTree();
-        NodeId node = tree.newLeaf(new Style());
+        NodeId node = tree.newLeaf(new TaffyStyle());
         
         Layout layout = tree.getLayout(node);
         assertNotNull(layout);
@@ -365,29 +364,29 @@ public class TaffyTreeApiTest {
     void hasUnconsumedLayoutTracksLayoutChanges() {
         TaffyTree tree = new TaffyTree();
 
-        Style style = new Style();
-        style.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId node = tree.newLeaf(style);
 
         // Initial state: no computed layout to consume
         assertFalse(tree.hasUnconsumedLayout(node));
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         assertTrue(tree.hasUnconsumedLayout(node));
 
         tree.acknowledgeLayout(node);
         assertFalse(tree.hasUnconsumedLayout(node));
 
         // Recomputing without changes should not flip the flag back to true
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         assertFalse(tree.hasUnconsumedLayout(node));
 
         // Changing style should produce a layout change
-        Style newStyle = new Style();
-        newStyle.size = new Size<>(Dimension.length(200f), Dimension.length(200f));
+        TaffyStyle newStyle = new TaffyStyle();
+        newStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(200f));
         tree.setStyle(node, newStyle);
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         assertTrue(tree.hasUnconsumedLayout(node));
     }
 
@@ -395,11 +394,11 @@ public class TaffyTreeApiTest {
     @DisplayName("test_mark_dirty")
     void testMarkDirty() {
         TaffyTree tree = new TaffyTree();
-        NodeId child0 = tree.newLeaf(new Style());
-        NodeId child1 = tree.newLeaf(new Style());
-        NodeId node = tree.newWithChildren(new Style(), child0, child1);
+        NodeId child0 = tree.newLeaf(new TaffyStyle());
+        NodeId child1 = tree.newLeaf(new TaffyStyle());
+        NodeId node = tree.newWithChildren(new TaffyStyle(), child0, child1);
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         assertFalse(tree.isDirty(child0));
         assertFalse(tree.isDirty(child1));
@@ -410,7 +409,7 @@ public class TaffyTreeApiTest {
         assertFalse(tree.isDirty(child1));
         assertTrue(tree.isDirty(node));
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         tree.markDirty(child0);
         assertTrue(tree.isDirty(child0));
         assertFalse(tree.isDirty(child1));
@@ -422,11 +421,11 @@ public class TaffyTreeApiTest {
     void computeLayoutShouldProduceValidResult() {
         TaffyTree tree = new TaffyTree();
         
-        Style style = new Style();
-        style.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         NodeId node = tree.newLeaf(style);
         
-        tree.computeLayout(node, new Size<>(
+        tree.computeLayout(node, new TaffySize<>(
             AvailableSpace.definite(100f),
             AvailableSpace.definite(100f)
         ));
@@ -440,13 +439,13 @@ public class TaffyTreeApiTest {
     void makeSureLayoutLocationIsTopLeft() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.percent(1f), Dimension.percent(1f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.percent(1f));
         NodeId child = tree.newLeaf(childStyle);
         
-        Style rootStyle = new Style();
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
-        rootStyle.padding = new Rect<>(
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
+        rootStyle.padding = new TaffyRect<>(
             LengthPercentage.length(10f),
             LengthPercentage.length(20f),
             LengthPercentage.length(30f),
@@ -454,7 +453,7 @@ public class TaffyTreeApiTest {
         );
         NodeId root = tree.newWithChildren(rootStyle, child);
 
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
 
         // If Layout::location represents top-left coord, 'node' location
         // must be (due applied 'root' padding): {x: 10, y: 30}.
@@ -467,10 +466,10 @@ public class TaffyTreeApiTest {
     @DisplayName("set_children_reparents")
     void setChildrenReparents() {
         TaffyTree tree = new TaffyTree();
-        NodeId child = tree.newLeaf(new Style());
-        NodeId oldParent = tree.newWithChildren(new Style(), child);
+        NodeId child = tree.newLeaf(new TaffyStyle());
+        NodeId oldParent = tree.newWithChildren(new TaffyStyle(), child);
 
-        NodeId newParent = tree.newLeaf(new Style());
+        NodeId newParent = tree.newLeaf(new TaffyStyle());
         tree.setChildren(newParent, child);
 
         assertTrue(tree.getChildren(oldParent).isEmpty());
@@ -491,8 +490,8 @@ public class TaffyTreeApiTest {
             return new FloatSize(w, h);
         };
         
-        NodeId node = tree.newLeafWithMeasure(new Style(), measureFunc);
-        tree.computeLayout(node, Size.maxContent());
+        NodeId node = tree.newLeafWithMeasure(new TaffyStyle(), measureFunc);
+        tree.computeLayout(node, TaffySize.maxContent());
         assertEquals(200f, tree.getLayout(node).size().width, 0.1f);
 
         // Update measure function
@@ -503,7 +502,7 @@ public class TaffyTreeApiTest {
         };
         
         tree.setMeasureFunc(node, newMeasureFunc);
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         assertEquals(100f, tree.getLayout(node).size().width, 0.1f);
     }
 
@@ -512,8 +511,8 @@ public class TaffyTreeApiTest {
     void setMeasureOfPreviouslyUnmeasuredNode() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId node = tree.newLeaf(new Style());
-        tree.computeLayout(node, Size.maxContent());
+        NodeId node = tree.newLeaf(new TaffyStyle());
+        tree.computeLayout(node, TaffySize.maxContent());
         assertEquals(0f, tree.getLayout(node).size().width, 0.1f);
 
         MeasureFunc measureFunc = (knownDimensions, availableSpace) -> {
@@ -523,7 +522,7 @@ public class TaffyTreeApiTest {
         };
         
         tree.setMeasureFunc(node, measureFunc);
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         assertEquals(100f, tree.getLayout(node).size().width, 0.1f);
     }
 }

@@ -1,6 +1,6 @@
 package dev.vfyjxf.taffy.benchmark;
 
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import org.openjdk.jmh.annotations.*;
@@ -56,7 +56,7 @@ public class TreeCreationBenchmark {
      * Build a random leaf node
      */
     private static NodeId buildRandomLeaf(TaffyTree taffy) {
-        return taffy.newLeaf(new Style());
+        return taffy.newLeaf(new TaffyStyle());
     }
 
     /**
@@ -74,12 +74,12 @@ public class TreeCreationBenchmark {
             for (int i = 0; i < subChildrenCount; i++) {
                 subChildren[i] = buildRandomLeaf(taffy);
             }
-            NodeId node = taffy.newWithChildren(new Style(), subChildren);
+            NodeId node = taffy.newWithChildren(new TaffyStyle(), subChildren);
             children.add(node);
             nodeCount += 1 + subChildrenCount;
         }
 
-        NodeId root = taffy.newWithChildren(new Style(), children.toArray(new NodeId[0]));
+        NodeId root = taffy.newWithChildren(new TaffyStyle(), children.toArray(new NodeId[0]));
         return new Object[]{taffy, root};
     }
 }

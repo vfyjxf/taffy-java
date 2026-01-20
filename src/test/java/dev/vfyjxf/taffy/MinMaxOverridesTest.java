@@ -1,10 +1,9 @@
 package dev.vfyjxf.taffy;
 
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -26,13 +25,13 @@ public class MinMaxOverridesTest {
     void minOverridesMax() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
-        childStyle.minSize = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
-        childStyle.maxSize = new Size<>(Dimension.length(10.0f), Dimension.length(10.0f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
+        childStyle.minSize = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
+        childStyle.maxSize = new TaffySize<>(TaffyDimension.length(10.0f), TaffyDimension.length(10.0f));
         NodeId child = tree.newLeaf(childStyle);
         
-        tree.computeLayout(child, new Size<>(
+        tree.computeLayout(child, new TaffySize<>(
             AvailableSpace.definite(100.0f),
             AvailableSpace.definite(100.0f)
         ));
@@ -48,12 +47,12 @@ public class MinMaxOverridesTest {
     void maxOverridesSize() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
-        childStyle.maxSize = new Size<>(Dimension.length(10.0f), Dimension.length(10.0f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
+        childStyle.maxSize = new TaffySize<>(TaffyDimension.length(10.0f), TaffyDimension.length(10.0f));
         NodeId child = tree.newLeaf(childStyle);
         
-        tree.computeLayout(child, new Size<>(
+        tree.computeLayout(child, new TaffySize<>(
             AvailableSpace.definite(100.0f),
             AvailableSpace.definite(100.0f)
         ));
@@ -69,12 +68,12 @@ public class MinMaxOverridesTest {
     void minOverridesSize() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
-        childStyle.minSize = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
+        childStyle.minSize = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         NodeId child = tree.newLeaf(childStyle);
         
-        tree.computeLayout(child, new Size<>(
+        tree.computeLayout(child, new TaffySize<>(
             AvailableSpace.definite(100.0f),
             AvailableSpace.definite(100.0f)
         ));

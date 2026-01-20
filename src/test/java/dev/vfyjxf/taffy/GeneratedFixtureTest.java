@@ -1,20 +1,19 @@
 package dev.vfyjxf.taffy;
 
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
-import dev.vfyjxf.taffy.geometry.Rect;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
 
@@ -34,23 +33,23 @@ public class GeneratedFixtureTest {
     void flexDirectionRow() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.length(10f), Dimension.AUTO);
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.AUTO);
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style node1Style = new Style();
-        node1Style.size = new Size<>(Dimension.length(10f), Dimension.AUTO);
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.AUTO);
         NodeId node1 = tree.newLeaf(node1Style);
         
-        Style node2Style = new Style();
-        node2Style.size = new Size<>(Dimension.length(10f), Dimension.AUTO);
+        TaffyStyle node2Style = new TaffyStyle();
+        node2Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.AUTO);
         NodeId node2 = tree.newLeaf(node2Style);
         
-        Style rootStyle = new Style();
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1, node2);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         // Root
         Layout rootLayout = tree.getLayout(root);
@@ -86,25 +85,25 @@ public class GeneratedFixtureTest {
     void flexDirectionColumn() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.AUTO, Dimension.length(10f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10f));
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style node1Style = new Style();
-        node1Style.size = new Size<>(Dimension.AUTO, Dimension.length(10f));
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10f));
         NodeId node1 = tree.newLeaf(node1Style);
         
-        Style node2Style = new Style();
-        node2Style.size = new Size<>(Dimension.AUTO, Dimension.length(10f));
+        TaffyStyle node2Style = new TaffyStyle();
+        node2Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10f));
         NodeId node2 = tree.newLeaf(node2Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.COLUMN;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1, node2);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         // Root
         Layout rootLayout = tree.getLayout(root);
@@ -138,16 +137,15 @@ public class GeneratedFixtureTest {
     void flexGrowChild() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.flexGrow = 1.0f;
-        node0Style.flexBasis = Dimension.length(0f);
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.flexGrow = 1.0f; node0Style.flexShrink = 1.0f; node0Style.flexBasis = TaffyDimension.length(0f);
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout rootLayout = tree.getLayout(root);
         assertEquals(100f, rootLayout.size().width, EPSILON);
@@ -165,30 +163,26 @@ public class GeneratedFixtureTest {
     void flexGrowFlexBasisPercentMinMax() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.flexGrow = 1.0f;
-        node0Style.flexShrink = 0.0f;
-        node0Style.flexBasis = Dimension.length(0f);
-        node0Style.size = new Size<>(Dimension.AUTO, Dimension.AUTO);
-        node0Style.minSize = new Size<>(Dimension.percent(0.6f), Dimension.AUTO);
-        node0Style.maxSize = new Size<>(Dimension.percent(0.6f), Dimension.AUTO);
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.flexGrow = 1.0f; node0Style.flexShrink = 0.0f; node0Style.flexBasis = TaffyDimension.length(0f);
+        node0Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
+        node0Style.minSize = new TaffySize<>(TaffyDimension.percent(0.6f), TaffyDimension.AUTO);
+        node0Style.maxSize = new TaffySize<>(TaffyDimension.percent(0.6f), TaffyDimension.AUTO);
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style node1Style = new Style();
-        node1Style.flexGrow = 2.0f;
-        node1Style.flexShrink = 0.0f;
-        node1Style.flexBasis = Dimension.percent(0.5f);
-        node1Style.size = new Size<>(Dimension.AUTO, Dimension.AUTO);
-        node1Style.maxSize = new Size<>(Dimension.percent(0.2f), Dimension.AUTO);
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.flexGrow = 2.0f; node1Style.flexShrink = 0.0f; node1Style.flexBasis = TaffyDimension.percent(0.5f);
+        node1Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
+        node1Style.maxSize = new TaffySize<>(TaffyDimension.percent(0.2f), TaffyDimension.AUTO);
         NodeId node1 = tree.newLeaf(node1Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
-        rootStyle.size = new Size<>(Dimension.length(120f), Dimension.length(50f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(120f), TaffyDimension.length(50f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout rootLayout = tree.getLayout(root);
         assertEquals(120f, rootLayout.size().width, EPSILON);
@@ -208,17 +202,17 @@ public class GeneratedFixtureTest {
     void alignItemsCenter() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.alignItems = AlignItems.CENTER;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout rootLayout = tree.getLayout(root);
         assertEquals(100f, rootLayout.size().width, EPSILON);
@@ -236,17 +230,17 @@ public class GeneratedFixtureTest {
     void alignItemsFlexEnd() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.alignItems = AlignItems.FLEX_END;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout0 = tree.getLayout(node0);
         assertEquals(10f, layout0.size().width, EPSILON);
@@ -260,26 +254,26 @@ public class GeneratedFixtureTest {
     void justifyContentRowCenter() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style node1Style = new Style();
-        node1Style.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         NodeId node1 = tree.newLeaf(node1Style);
         
-        Style node2Style = new Style();
-        node2Style.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle node2Style = new TaffyStyle();
+        node2Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         NodeId node2 = tree.newLeaf(node2Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
         rootStyle.justifyContent = AlignContent.CENTER;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1, node2);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         // Total content width = 30, container = 100, offset = (100-30)/2 = 35
         Layout layout0 = tree.getLayout(node0);
@@ -297,21 +291,21 @@ public class GeneratedFixtureTest {
     void justifyContentRowSpaceBetween() {
         TaffyTree tree = new TaffyTree();
         
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(10f), Dimension.length(10f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(10f));
         
         NodeId node0 = tree.newLeaf(nodeStyle);
         NodeId node1 = tree.newLeaf(nodeStyle);
         NodeId node2 = tree.newLeaf(nodeStyle);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
         rootStyle.justifyContent = AlignContent.SPACE_BETWEEN;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1, node2);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         // Space between: first at 0, last at end, space distributed evenly
         // Total content = 30, space = 70, gaps = 2
@@ -331,22 +325,22 @@ public class GeneratedFixtureTest {
     void wrapRow() {
         TaffyTree tree = new TaffyTree();
         
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(31f), Dimension.length(30f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(31f), TaffyDimension.length(30f));
         
         NodeId node0 = tree.newLeaf(nodeStyle);
         NodeId node1 = tree.newLeaf(nodeStyle);
         NodeId node2 = tree.newLeaf(nodeStyle);
         NodeId node3 = tree.newLeaf(nodeStyle);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.ROW;
         rootStyle.flexWrap = FlexWrap.WRAP;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.AUTO);
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.AUTO);
         NodeId root = tree.newWithChildren(rootStyle, node0, node1, node2, node3);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout rootLayout = tree.getLayout(root);
         assertEquals(100f, rootLayout.size().width, EPSILON);
@@ -376,9 +370,9 @@ public class GeneratedFixtureTest {
     void paddingNoChild() {
         TaffyTree tree = new TaffyTree();
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.padding = Rect.ltrb(
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.padding = TaffyRect.ltrb(
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
@@ -386,7 +380,7 @@ public class GeneratedFixtureTest {
         );
         NodeId root = tree.newLeaf(rootStyle);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout = tree.getLayout(root);
         assertEquals(20f, layout.size().width, EPSILON);  // padding left + right
@@ -398,9 +392,9 @@ public class GeneratedFixtureTest {
     void borderNoChild() {
         TaffyTree tree = new TaffyTree();
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.border = Rect.ltrb(
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.border = TaffyRect.ltrb(
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
@@ -408,7 +402,7 @@ public class GeneratedFixtureTest {
         );
         NodeId root = tree.newLeaf(rootStyle);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout = tree.getLayout(root);
         assertEquals(20f, layout.size().width, EPSILON);
@@ -420,21 +414,21 @@ public class GeneratedFixtureTest {
     void displayNone() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.flexGrow = 1.0f;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.flexGrow = 1.0f; node0Style.flexShrink = 1.0f; node0Style.flexBasis = TaffyDimension.AUTO;
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style node1Style = new Style();
-        node1Style.display = Display.NONE;
-        node1Style.flexGrow = 1.0f;
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.display = TaffyDisplay.NONE;
+        node1Style.flexGrow = 1.0f; node1Style.flexShrink = 1.0f; node1Style.flexBasis = TaffyDimension.AUTO;
         NodeId node1 = tree.newLeaf(node1Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         // Node0 should take up all space since node1 is hidden
         Layout layout0 = tree.getLayout(node0);
@@ -452,22 +446,20 @@ public class GeneratedFixtureTest {
     void gapColumnGapFlexible() {
         TaffyTree tree = new TaffyTree();
         
-        Style nodeStyle = new Style();
-        nodeStyle.flexGrow = 1.0f;
-        nodeStyle.flexShrink = 1.0f;
-        nodeStyle.flexBasis = Dimension.percent(0f);  // Rust uses percent(0f32)
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.flexGrow = 1.0f; nodeStyle.flexShrink = 1.0f; nodeStyle.flexBasis = TaffyDimension.percent(0f);  // Rust uses percent(0f32)
         
         NodeId node0 = tree.newLeaf(nodeStyle);
         NodeId node1 = tree.newLeaf(nodeStyle);
         NodeId node2 = tree.newLeaf(nodeStyle);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.gap = new Size<>(LengthPercentage.length(10f), LengthPercentage.length(20f));
-        rootStyle.size = new Size<>(Dimension.length(80f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.gap = new TaffySize<>(LengthPercentage.length(10f), LengthPercentage.length(20f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(80f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0, node1, node2);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         // Container width=80, gap=10, 3 items => 2 gaps = 20
         // Available for content = 80 - 20 = 60, each child = 60 / 3 = 20
@@ -494,16 +486,16 @@ public class GeneratedFixtureTest {
     void percentageWidthHeight() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.percent(0.3f), Dimension.percent(0.3f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.percent(0.3f), TaffyDimension.percent(0.3f));
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.size = new Size<>(Dimension.length(200f), Dimension.length(400f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(400f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout0 = tree.getLayout(node0);
         assertEquals(60f, layout0.size().width, EPSILON);   // 30% of 200
@@ -515,9 +507,9 @@ public class GeneratedFixtureTest {
     void marginAndFlexRow() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.flexGrow = 1.0f;
-        node0Style.margin = Rect.ltrb(
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.flexGrow = 1.0f; node0Style.flexShrink = 1.0f; node0Style.flexBasis = TaffyDimension.AUTO;
+        node0Style.margin = TaffyRect.ltrb(
             LengthPercentageAuto.length(10f),
             LengthPercentageAuto.length(10f),
             LengthPercentageAuto.length(10f),
@@ -525,12 +517,12 @@ public class GeneratedFixtureTest {
         );
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout0 = tree.getLayout(node0);
         assertEquals(80f, layout0.size().width, EPSILON);  // 100 - 10 - 10
@@ -544,17 +536,17 @@ public class GeneratedFixtureTest {
     void minWidth() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.length(10f), Dimension.AUTO);
-        node0Style.minSize = new Size<>(Dimension.length(60f), Dimension.AUTO);
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.AUTO);
+        node0Style.minSize = new TaffySize<>(TaffyDimension.length(60f), TaffyDimension.AUTO);
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout0 = tree.getLayout(node0);
         assertEquals(60f, layout0.size().width, EPSILON); // min-width enforced
@@ -565,17 +557,17 @@ public class GeneratedFixtureTest {
     void maxWidth() {
         TaffyTree tree = new TaffyTree();
         
-        Style node0Style = new Style();
-        node0Style.size = new Size<>(Dimension.length(200f), Dimension.AUTO);
-        node0Style.maxSize = new Size<>(Dimension.length(60f), Dimension.AUTO);
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        node0Style.maxSize = new TaffySize<>(TaffyDimension.length(60f), TaffyDimension.AUTO);
         NodeId node0 = tree.newLeaf(node0Style);
         
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
-        rootStyle.size = new Size<>(Dimension.length(100f), Dimension.length(100f));
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId root = tree.newWithChildren(rootStyle, node0);
         
-        tree.computeLayout(root, Size.maxContent());
+        tree.computeLayout(root, TaffySize.maxContent());
         
         Layout layout0 = tree.getLayout(node0);
         assertEquals(60f, layout0.size().width, EPSILON); // max-width enforced

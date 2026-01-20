@@ -330,9 +330,9 @@ public final class WptTestGenerator {
             infos.add(ni);
         }
 
-        // Skip tests with too many nodes to avoid Java bytecode method size limit (65KB).
-        // 30 nodes is a safe limit - some tests have very complex style setups.
-        if (infos.size() > 30) {
+        // Skip tests with too many nodes to avoid excessive memory/time.
+        // 500 nodes is a reasonable limit for most tests.
+        if (infos.size() > 500) {
             System.err.println("[skip] too many nodes (" + infos.size() + "): " + fixture.relPath);
             return null;
         }
@@ -355,30 +355,7 @@ public final class WptTestGenerator {
 
         String testName = fixture.name;
         String methodName = toMethodName(testName);
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("    @Test\n");
-        sb.append("    @DisplayName(\"").append(escapeJava(fixture.relPath)).append("\")\n");
-        sb.append("    void ").append(methodName).append("() {\n");
-        sb.append("        TaffyTree tree = new TaffyTree();\n");
-        sb.append("        tree.disableRounding();\n\n");
-
-        // Emit node creation bottom-up.
         int n = infos.size();
-        sb.append("        // Root viewport: ").append(vw).append("x").append(vh).append("\n");
-
-        // Emit Style declarations in index order.
-        for (int i = 0; i < n; i++) {
-            sb.append("        Style s").append(i).append(" = new Style();\n");
-            emitStyleAssignments(sb, "s" + i, styles.styles.get(i), i == 0, vw, vh);
-            sb.append("\n");
-        }
-
-        // Emit NodeId declarations.
-        for (int i = 0; i < n; i++) {
-            sb.append("        NodeId n").append(i).append(";\n");
-        }
-        sb.append("\n");
 
         // Children list per node.
         Map<Integer, List<Integer>> children = new HashMap<>();
@@ -391,120 +368,227 @@ public final class WptTestGenerator {
                 children.get(p).add(i);
             }
         }
-
-        // Create nodes bottom-up so we have children NodeIds first.
         List<Integer> order = topoOrderBottomUp(children);
-        for (int idx : order) {
-            List<Integer> ch = children.get(idx);
-            if (ch.isEmpty()) {
-                sb.append("        n").append(idx).append(" = tree.newLeaf(s").append(idx).append(");\n");
-            } else {
-                sb.append("        n").append(idx).append(" = tree.newWithChildren(s").append(idx).append(", ");
-                for (int j = 0; j < ch.size(); j++) {
-                    if (j > 0) sb.append(", ");
-                    sb.append("n").append(ch.get(j));
-                }
-                sb.append(");\n");
-            }
-        }
 
-        sb.append("\n");
-        sb.append("        tree.computeLayout(n0, Size.maxContent());\n\n");
-
-        // Emit assertions for all nodes with a non-empty id (keeps noise down).
-        // First, find the "test root" - the first non-body node with an id (e.g., #test, #grid, #container).
-        // Elements that are direct children of body in the Taffy tree should be positioned at (0,0)
-        // relative to body because we only include the "interesting" subtree, not sibling elements
-        // like <p> tags that exist in the HTML but not in our generated tree.
+        // Find the "test root" - the first non-body node
         int testRootIndex = -1;
         for (int i = 1; i < n; i++) {
             NodeInfo ni = infos.get(i);
-            if (ni.parentIndex == 0) {  // direct child of body
+            if (ni.parentIndex == 0) {
                 testRootIndex = i;
                 break;
             }
         }
-        
-        for (int i = 0; i < n; i++) {
-            NodeInfo ni = infos.get(i);
-            if (ni.id == null || ni.id.isBlank()) continue;
 
-            // Compute relative position: child position relative to parent's content box
+        // Pre-compute assertion data
+        List<AssertionData> assertions = new ArrayList<>();
+        for (int i = 1; i < n; i++) {
+            NodeInfo ni = infos.get(i);
             float relX = ni.rectX;
             float relY = ni.rectY;
             
             if (ni.parentIndex == 0 && i == testRootIndex) {
-                // This is the "test root" - the main test element directly under body.
-                // In the Taffy tree, body only contains this test element (other siblings like <p> are excluded).
-                // 
-                // Taffy's location represents the position of the child's border box relative to
-                // the parent's margin box. For a direct child of body:
-                //   location = body.padding + body.border + child.margin
-                //
-                // Since body typically has no padding/border, the position equals child.margin.
-                // We cannot use browser's getBoundingClientRect() because it includes offsets from
-                // other siblings (like <p> paragraphs) that are not in our Taffy tree.
-                //
-                // So we directly use the child's margin values as the expected position.
                 NodeInfo body = infos.get(0);
                 float bodyBorderLeft = parsePxValue(body.computed.get("border-left-width"));
                 float bodyBorderTop = parsePxValue(body.computed.get("border-top-width"));
                 float bodyPaddingLeft = parsePxValue(body.computed.get("padding-left"));
                 float bodyPaddingTop = parsePxValue(body.computed.get("padding-top"));
-                
-                // Get the test element's margin
                 float marginLeft = parsePxValue(ni.computed.get("margin-left"));
                 float marginTop = parsePxValue(ni.computed.get("margin-top"));
-                
-                // Expected position = body.padding + body.border + element.margin
                 relX = bodyPaddingLeft + bodyBorderLeft + marginLeft;
                 relY = bodyPaddingTop + bodyBorderTop + marginTop;
             } else if (ni.parentIndex >= 0 && ni.parentIndex < n) {
                 NodeInfo parent = infos.get(ni.parentIndex);
-                // Get parent's border and padding
-                float parentBorderLeft = parsePxValue(parent.computed.get("border-left-width"));
-                float parentBorderTop = parsePxValue(parent.computed.get("border-top-width"));
-                float parentPaddingLeft = parsePxValue(parent.computed.get("padding-left"));
-                float parentPaddingTop = parsePxValue(parent.computed.get("padding-top"));
-                
-                // Browser's getBoundingClientRect() returns positions relative to viewport.
-                // For a child element:
-                //   - parent.rectX = parent's border box left edge relative to viewport
-                //   - ni.rectX = child's border box left edge relative to viewport
-                //
-                // Taffy's Layout.location returns the child's border box position relative to
-                // the parent's margin box (which equals border box for elements without margin).
-                //
-                // Parent's border box starts at: parent.rectX
-                // Parent's padding box starts at: parent.rectX + parent.border.left
-                // Parent's content box starts at: parent.rectX + parent.border.left + parent.padding.left
-                //
-                // For Taffy coordinate (relative to parent's margin box = border box):
-                //   relX = child.borderBox.x - parent.borderBox.x
-                //   relY = child.borderBox.y - parent.borderBox.y
                 relX = ni.rectX - parent.rectX;
                 relY = ni.rectY - parent.rectY;
             }
-
-            sb.append("        // ").append(escapeJava(ni.tag)).append("#").append(escapeJava(ni.id)).append("\n");
-            sb.append("        Layout l").append(i).append(" = tree.getLayout(n").append(i).append(");\n");
-            sb.append("        assertEquals(").append(fmt(ni.rectW)).append("f, l").append(i).append(".size().width, EPSILON, \"width\");\n");
-            sb.append("        assertEquals(").append(fmt(ni.rectH)).append("f, l").append(i).append(".size().height, EPSILON, \"height\");\n");
-            sb.append("        assertEquals(").append(fmt(relX)).append("f, l").append(i).append(".location().x, EPSILON, \"x\");\n");
-            sb.append("        assertEquals(").append(fmt(relY)).append("f, l").append(i).append(".location().y, EPSILON, \"y\");\n\n");
+            
+            String nodeLabel = (ni.id != null && !ni.id.isBlank()) 
+                ? ni.tag + "#" + ni.id 
+                : ni.tag + "[" + i + "]";
+            assertions.add(new AssertionData(i, nodeLabel, ni.rectW, ni.rectH, relX, relY));
         }
 
-        sb.append("    }\n\n");
-
-        // Skip tests that generate too much code (Java bytecode method size limit is 65KB).
-        // A rough estimate: 20KB of source code can easily exceed 65KB bytecode after compilation.
-        String code = sb.toString();
-        if (code.length() > 20_000) {
-            System.err.println("[skip] generated code too long (" + code.length() + " chars): " + fixture.relPath);
-            return null;
+        // For small tests, use simple single-method generation
+        // For larger tests, split into helper methods to avoid 65KB bytecode limit
+        final int BATCH_SIZE = 15; // nodes per helper method
+        boolean needsSplit = n > 25;
+        
+        // Determine which nodes need browser-computed size (leaf nodes with text content)
+        Map<Integer, float[]> browserSizes = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            NodeInfo ni = infos.get(i);
+            StyleSpec style = styles.styles.get(i);
+            List<Integer> ch = children.get(i);
+            if (ch.isEmpty() && style.needsMeasure() && (ni.rectW > 0 || ni.rectH > 0)) {
+                browserSizes.put(i, new float[]{ni.rectW, ni.rectH});
+            }
         }
-        return code;
+        
+        StringBuilder sb = new StringBuilder();
+        
+        if (needsSplit) {
+            // Generate helper methods for styles
+            int styleMethodCount = (n + BATCH_SIZE - 1) / BATCH_SIZE;
+            for (int batch = 0; batch < styleMethodCount; batch++) {
+                int start = batch * BATCH_SIZE;
+                int end = Math.min(start + BATCH_SIZE, n);
+                sb.append("    private void ").append(methodName).append("_styles_").append(batch);
+                sb.append("(TaffyStyle[] styles, int vw, int vh, float[] browserW, float[] browserH) {\n");
+                for (int i = start; i < end; i++) {
+                    sb.append("        styles[").append(i).append("] = new TaffyStyle();\n");
+                    float[] bs = browserSizes.get(i);
+                    if (bs != null) {
+                        sb.append("        // Leaf node with browser-computed size\n");
+                        emitStyleAssignmentsWithBrowserSize(sb, "styles[" + i + "]", styles.styles.get(i), i == 0, i);
+                    } else {
+                        emitStyleAssignments(sb, "styles[" + i + "]", styles.styles.get(i), i == 0, vw, vh);
+                    }
+                    sb.append("\n");
+                }
+                sb.append("    }\n\n");
+            }
+            
+            // Generate helper methods for node creation - now using simple newLeaf since sizes are explicit
+            int nodeMethodCount = (order.size() + BATCH_SIZE - 1) / BATCH_SIZE;
+            for (int batch = 0; batch < nodeMethodCount; batch++) {
+                int start = batch * BATCH_SIZE;
+                int end = Math.min(start + BATCH_SIZE, order.size());
+                sb.append("    private void ").append(methodName).append("_nodes_").append(batch);
+                sb.append("(TaffyTree tree, TaffyStyle[] styles, NodeId[] nodes) {\n");
+                for (int j = start; j < end; j++) {
+                    int idx = order.get(j);
+                    List<Integer> ch = children.get(idx);
+                    if (ch.isEmpty()) {
+                        sb.append("        nodes[").append(idx).append("] = tree.newLeaf(styles[").append(idx).append("]);\n");
+                    } else {
+                        sb.append("        nodes[").append(idx).append("] = tree.newWithChildren(styles[").append(idx).append("], ");
+                        for (int k = 0; k < ch.size(); k++) {
+                            if (k > 0) sb.append(", ");
+                            sb.append("nodes[").append(ch.get(k)).append("]");
+                        }
+                        sb.append(");\n");
+                    }
+                }
+                sb.append("    }\n\n");
+            }
+            
+            // Generate helper methods for assertions
+            int assertMethodCount = (assertions.size() + BATCH_SIZE - 1) / BATCH_SIZE;
+            for (int batch = 0; batch < assertMethodCount; batch++) {
+                int start = batch * BATCH_SIZE;
+                int end = Math.min(start + BATCH_SIZE, assertions.size());
+                sb.append("    private void ").append(methodName).append("_assert_").append(batch);
+                sb.append("(TaffyTree tree, NodeId[] nodes) {\n");
+                for (int j = start; j < end; j++) {
+                    AssertionData a = assertions.get(j);
+                    sb.append("        // ").append(escapeJava(a.label)).append("\n");
+                    sb.append("        Layout l").append(a.index).append(" = tree.getLayout(nodes[").append(a.index).append("]);\n");
+                    sb.append("        assertEquals(").append(fmt(a.width)).append("f, l").append(a.index).append(".size().width, EPSILON, \"width\");\n");
+                    sb.append("        assertEquals(").append(fmt(a.height)).append("f, l").append(a.index).append(".size().height, EPSILON, \"height\");\n");
+                    sb.append("        assertEquals(").append(fmt(a.x)).append("f, l").append(a.index).append(".location().x, EPSILON, \"x\");\n");
+                    sb.append("        assertEquals(").append(fmt(a.y)).append("f, l").append(a.index).append(".location().y, EPSILON, \"y\");\n\n");
+                }
+                sb.append("    }\n\n");
+            }
+            
+            // Generate main test method that calls helpers
+            sb.append("    @Test\n");
+            sb.append("    @DisplayName(\"").append(escapeJava(fixture.relPath)).append("\")\n");
+            sb.append("    void ").append(methodName).append("() {\n");
+            sb.append("        TaffyTree tree = new TaffyTree();\n");
+            sb.append("        tree.disableRounding();\n");
+            sb.append("        int vw = ").append(vw).append(", vh = ").append(vh).append(";\n\n");
+            
+            // Prepare browser-computed size arrays for leaf nodes
+            sb.append("        float[] browserW = new float[").append(n).append("];\n");
+            sb.append("        float[] browserH = new float[").append(n).append("];\n");
+            for (Map.Entry<Integer, float[]> e : browserSizes.entrySet()) {
+                int idx = e.getKey();
+                float[] bs = e.getValue();
+                sb.append("        browserW[").append(idx).append("] = ").append(fmt(bs[0])).append("f; ");
+                sb.append("browserH[").append(idx).append("] = ").append(fmt(bs[1])).append("f;\n");
+            }
+            sb.append("\n");
+            
+            sb.append("        TaffyStyle[] styles = new TaffyStyle[").append(n).append("];\n");
+            for (int batch = 0; batch < styleMethodCount; batch++) {
+                sb.append("        ").append(methodName).append("_styles_").append(batch).append("(styles, vw, vh, browserW, browserH);\n");
+            }
+            sb.append("\n");
+            
+            sb.append("        NodeId[] nodes = new NodeId[").append(n).append("];\n");
+            for (int batch = 0; batch < nodeMethodCount; batch++) {
+                sb.append("        ").append(methodName).append("_nodes_").append(batch).append("(tree, styles, nodes);\n");
+            }
+            sb.append("\n");
+            sb.append("        tree.computeLayout(nodes[0], TaffySize.maxContent());\n\n");
+            for (int batch = 0; batch < assertMethodCount; batch++) {
+                sb.append("        ").append(methodName).append("_assert_").append(batch).append("(tree, nodes);\n");
+            }
+            sb.append("    }\n\n");
+        } else {
+            // Small test - use simple single method
+            sb.append("    @Test\n");
+            sb.append("    @DisplayName(\"").append(escapeJava(fixture.relPath)).append("\")\n");
+            sb.append("    void ").append(methodName).append("() {\n");
+            sb.append("        TaffyTree tree = new TaffyTree();\n");
+            sb.append("        tree.disableRounding();\n\n");
+            sb.append("        // Root viewport: ").append(vw).append("x").append(vh).append("\n");
+
+            // Emit Style declarations in index order.
+            for (int i = 0; i < n; i++) {
+                sb.append("        TaffyStyle s").append(i).append(" = new TaffyStyle();\n");
+                float[] bs = browserSizes.get(i);
+                if (bs != null) {
+                    emitStyleAssignments(sb, "s" + i, styles.styles.get(i), i == 0, vw, vh, bs[0], bs[1]);
+                } else {
+                    emitStyleAssignments(sb, "s" + i, styles.styles.get(i), i == 0, vw, vh);
+                }
+                sb.append("\n");
+            }
+
+            // Emit NodeId declarations.
+            for (int i = 0; i < n; i++) {
+                sb.append("        NodeId n").append(i).append(";\n");
+            }
+            sb.append("\n");
+
+            // Create nodes bottom-up - use newLeaf for all since sizes are now explicit in style
+            for (int idx : order) {
+                List<Integer> ch = children.get(idx);
+                if (ch.isEmpty()) {
+                    sb.append("        n").append(idx).append(" = tree.newLeaf(s").append(idx).append(");\n");
+                } else {
+                    sb.append("        n").append(idx).append(" = tree.newWithChildren(s").append(idx).append(", ");
+                    for (int j = 0; j < ch.size(); j++) {
+                        if (j > 0) sb.append(", ");
+                        sb.append("n").append(ch.get(j));
+                    }
+                    sb.append(");\n");
+                }
+            }
+
+            sb.append("\n");
+            sb.append("        tree.computeLayout(n0, TaffySize.maxContent());\n\n");
+
+            // Emit assertions
+            for (AssertionData a : assertions) {
+                sb.append("        // ").append(escapeJava(a.label)).append("\n");
+                sb.append("        Layout l").append(a.index).append(" = tree.getLayout(n").append(a.index).append(");\n");
+                sb.append("        assertEquals(").append(fmt(a.width)).append("f, l").append(a.index).append(".size().width, EPSILON, \"width\");\n");
+                sb.append("        assertEquals(").append(fmt(a.height)).append("f, l").append(a.index).append(".size().height, EPSILON, \"height\");\n");
+                sb.append("        assertEquals(").append(fmt(a.x)).append("f, l").append(a.index).append(".location().x, EPSILON, \"x\");\n");
+                sb.append("        assertEquals(").append(fmt(a.y)).append("f, l").append(a.index).append(".location().y, EPSILON, \"y\");\n\n");
+            }
+
+            sb.append("    }\n\n");
+        }
+
+        return sb.toString();
     }
+    
+    private record AssertionData(int index, String label, float width, float height, float x, float y) {}
 
     /**
      * Very small static HTTP server to serve files from a local WPT root.
@@ -642,35 +726,166 @@ public final class WptTestGenerator {
     }
 
     private static void emitStyleAssignments(StringBuilder sb, String var, StyleSpec style, boolean isRoot, int vw, int vh) {
-        // Root: force a definite size matching the viewport so abspos/percentages have a stable containing block.
-        if (isRoot) {
-            sb.append("        ").append(var).append(".size = new Size<>(Dimension.length(").append(vw).append("f), Dimension.length(").append(vh).append("f));\n");
-        }
+        emitStyleAssignments(sb, var, style, isRoot, vw, vh, Float.NaN, Float.NaN);
+    }
 
+    /**
+     * Emit style assignments for split tests where browser sizes come from arrays.
+     * @param idx the node index for accessing browserW/browserH arrays
+     */
+    private static void emitStyleAssignmentsWithBrowserSize(StringBuilder sb, String var, StyleSpec style, boolean isRoot, int idx) {
         if (style.display != null) {
-            sb.append("        ").append(var).append(".display = Display.").append(style.display).append(";\n");
+            sb.append("        ").append(var).append(".display = TaffyDisplay.").append(style.display).append(";\n");
         }
         if (style.position != null) {
-            sb.append("        ").append(var).append(".position = Position.").append(style.position).append(";\n");
+            sb.append("        ").append(var).append(".position = TaffyPosition.").append(style.position).append(";\n");
         }
         if (style.boxSizing != null) {
             sb.append("        ").append(var).append(".boxSizing = BoxSizing.").append(style.boxSizing).append(";\n");
         }
-
-        if (style.width != null || style.height != null) {
-            String w = style.width != null ? style.width : "Dimension.AUTO";
-            String h = style.height != null ? style.height : "Dimension.AUTO";
-            sb.append("        ").append(var).append(".size = new Size<>(").append(w).append(", ").append(h).append(");\n");
+        if (style.direction != null) {
+            sb.append("        ").append(var).append(".direction = TaffyDirection.").append(style.direction).append(";\n");
         }
+        
+        // Use browser-computed size from arrays
+        sb.append("        ").append(var).append(".size = new TaffySize<>(TaffyDimension.length(browserW[").append(idx).append("]), TaffyDimension.length(browserH[").append(idx).append("]));\n");
+        
         if (style.minWidth != null || style.minHeight != null) {
-            String w = style.minWidth != null ? style.minWidth : "Dimension.AUTO";
-            String h = style.minHeight != null ? style.minHeight : "Dimension.AUTO";
-            sb.append("        ").append(var).append(".minSize = new Size<>(").append(w).append(", ").append(h).append(");\n");
+            String w = style.minWidth != null ? style.minWidth : "TaffyDimension.AUTO";
+            String h = style.minHeight != null ? style.minHeight : "TaffyDimension.AUTO";
+            sb.append("        ").append(var).append(".minSize = new TaffySize<>(").append(w).append(", ").append(h).append(");\n");
         }
         if (style.maxWidth != null || style.maxHeight != null) {
-            String w = style.maxWidth != null ? style.maxWidth : "Dimension.AUTO";
-            String h = style.maxHeight != null ? style.maxHeight : "Dimension.AUTO";
-            sb.append("        ").append(var).append(".maxSize = new Size<>(").append(w).append(", ").append(h).append(");\n");
+            String w = style.maxWidth != null ? style.maxWidth : "TaffyDimension.AUTO";
+            String h = style.maxHeight != null ? style.maxHeight : "TaffyDimension.AUTO";
+            sb.append("        ").append(var).append(".maxSize = new TaffySize<>(").append(w).append(", ").append(h).append(");\n");
+        }
+
+        // Emit aspect-ratio if present
+        if (style.aspectRatio != null) {
+            sb.append("        ").append(var).append(".aspectRatio = ").append(style.aspectRatio).append("f;\n");
+        }
+
+        if (style.margin != null) {
+            sb.append("        ").append(var).append(".margin = ").append(style.margin).append(";\n");
+        }
+        if (style.padding != null) {
+            sb.append("        ").append(var).append(".padding = ").append(style.padding).append(";\n");
+        }
+        if (style.border != null) {
+            sb.append("        ").append(var).append(".border = ").append(style.border).append(";\n");
+        }
+        if (style.inset != null) {
+            sb.append("        ").append(var).append(".inset = ").append(style.inset).append(";\n");
+        }
+        if (style.flexDirection != null) {
+            sb.append("        ").append(var).append(".flexDirection = FlexDirection.").append(style.flexDirection).append(";\n");
+        }
+        if (style.flexWrap != null) {
+            sb.append("        ").append(var).append(".flexWrap = FlexWrap.").append(style.flexWrap).append(";\n");
+        }
+        // Flex properties - direct field assignment
+        if (style.flexGrow != null) {
+            sb.append("        ").append(var).append(".flexGrow = ").append(fmt(style.flexGrow)).append("f;\n");
+        }
+        if (style.flexShrink != null) {
+            sb.append("        ").append(var).append(".flexShrink = ").append(fmt(style.flexShrink)).append("f;\n");
+        }
+        if (style.flexBasis != null) {
+            sb.append("        ").append(var).append(".flexBasis = ").append(style.flexBasis).append(";\n");
+        }
+        if (style.gap != null) {
+            sb.append("        ").append(var).append(".gap = ").append(style.gap).append(";\n");
+        }
+        if (style.alignItems != null) {
+            sb.append("        ").append(var).append(".alignItems = AlignItems.").append(style.alignItems).append(";\n");
+        }
+        if (style.alignContent != null) {
+            sb.append("        ").append(var).append(".alignContent = AlignContent.").append(style.alignContent).append(";\n");
+        }
+        if (style.justifyContent != null) {
+            sb.append("        ").append(var).append(".justifyContent = JustifyContent.").append(style.justifyContent).append(";\n");
+        }
+        if (style.alignSelf != null) {
+            sb.append("        ").append(var).append(".alignSelf = AlignSelf.").append(style.alignSelf).append(";\n");
+        }
+        if (style.justifySelf != null) {
+            sb.append("        ").append(var).append(".justifySelf = JustifySelf.").append(style.justifySelf).append(";\n");
+        }
+        if (style.gridTemplateColumns != null || style.gridTemplateColumnsWithRepeat != null) {
+            sb.append("        ").append(var).append(".gridTemplateColumns = ")
+              .append(style.gridTemplateColumnsWithRepeat != null ? style.gridTemplateColumnsWithRepeat : style.gridTemplateColumns).append(";\n");
+        }
+        if (style.gridTemplateRows != null || style.gridTemplateRowsWithRepeat != null) {
+            sb.append("        ").append(var).append(".gridTemplateRows = ")
+              .append(style.gridTemplateRowsWithRepeat != null ? style.gridTemplateRowsWithRepeat : style.gridTemplateRows).append(";\n");
+        }
+        if (style.gridAutoColumns != null) {
+            sb.append("        ").append(var).append(".gridAutoColumns = ").append(style.gridAutoColumns).append(";\n");
+        }
+        if (style.gridAutoRows != null) {
+            sb.append("        ").append(var).append(".gridAutoRows = ").append(style.gridAutoRows).append(";\n");
+        }
+        if (style.gridAutoFlow != null) {
+            sb.append("        ").append(var).append(".gridAutoFlow = GridAutoFlow.").append(style.gridAutoFlow).append(";\n");
+        }
+        if (style.gridColumn != null) {
+            sb.append("        ").append(var).append(".gridColumn = ").append(style.gridColumn).append(";\n");
+        }
+        if (style.gridRow != null) {
+            sb.append("        ").append(var).append(".gridRow = ").append(style.gridRow).append(";\n");
+        }
+    }
+
+    /**
+     * Emit style assignments, optionally overriding size with browser-computed values for leaf nodes.
+     * @param browserW browser-computed width (NaN to use style's width)
+     * @param browserH browser-computed height (NaN to use style's height)
+     */
+    private static void emitStyleAssignments(StringBuilder sb, String var, StyleSpec style, boolean isRoot, int vw, int vh, float browserW, float browserH) {
+        // Root: force a definite size matching the viewport so abspos/percentages have a stable containing block.
+        if (isRoot) {
+            sb.append("        ").append(var).append(".size = new TaffySize<>(TaffyDimension.length(").append(vw).append("f), TaffyDimension.length(").append(vh).append("f));\n");
+        }
+
+        if (style.display != null) {
+            sb.append("        ").append(var).append(".display = TaffyDisplay.").append(style.display).append(";\n");
+        }
+        if (style.position != null) {
+            sb.append("        ").append(var).append(".position = TaffyPosition.").append(style.position).append(";\n");
+        }
+        if (style.boxSizing != null) {
+            sb.append("        ").append(var).append(".boxSizing = BoxSizing.").append(style.boxSizing).append(";\n");
+        }
+        if (style.direction != null) {
+            sb.append("        ").append(var).append(".direction = TaffyDirection.").append(style.direction).append(";\n");
+        }
+
+        // Use browser-computed size for leaf nodes that need intrinsic sizing
+        boolean useBrowserSize = !Float.isNaN(browserW) || !Float.isNaN(browserH);
+        if (useBrowserSize) {
+            String w = !Float.isNaN(browserW) ? "TaffyDimension.length(" + fmt(browserW) + "f)" : (style.width != null ? style.width : "TaffyDimension.AUTO");
+            String h = !Float.isNaN(browserH) ? "TaffyDimension.length(" + fmt(browserH) + "f)" : (style.height != null ? style.height : "TaffyDimension.AUTO");
+            sb.append("        ").append(var).append(".size = new TaffySize<>(").append(w).append(", ").append(h).append(");\n");
+        } else if (style.width != null || style.height != null) {
+            String w = style.width != null ? style.width : "TaffyDimension.AUTO";
+            String h = style.height != null ? style.height : "TaffyDimension.AUTO";
+            sb.append("        ").append(var).append(".size = new TaffySize<>(").append(w).append(", ").append(h).append(");\n");
+        }
+        if (style.minWidth != null || style.minHeight != null) {
+            String w = style.minWidth != null ? style.minWidth : "TaffyDimension.AUTO";
+            String h = style.minHeight != null ? style.minHeight : "TaffyDimension.AUTO";
+            sb.append("        ").append(var).append(".minSize = new TaffySize<>(").append(w).append(", ").append(h).append(");\n");
+        }
+        if (style.maxWidth != null || style.maxHeight != null) {
+            String w = style.maxWidth != null ? style.maxWidth : "TaffyDimension.AUTO";
+            String h = style.maxHeight != null ? style.maxHeight : "TaffyDimension.AUTO";
+            sb.append("        ").append(var).append(".maxSize = new TaffySize<>(").append(w).append(", ").append(h).append(");\n");
+        }
+
+        // Emit aspect-ratio if present
+        if (style.aspectRatio != null) {
+            sb.append("        ").append(var).append(".aspectRatio = ").append(style.aspectRatio).append("f;\n");
         }
 
         if (style.margin != null) {
@@ -692,6 +907,7 @@ public final class WptTestGenerator {
         if (style.flexWrap != null) {
             sb.append("        ").append(var).append(".flexWrap = FlexWrap.").append(style.flexWrap).append(";\n");
         }
+        // Flex properties - direct field assignment
         if (style.flexGrow != null) {
             sb.append("        ").append(var).append(".flexGrow = ").append(style.flexGrow).append("f;\n");
         }
@@ -1038,8 +1254,20 @@ public final class WptTestGenerator {
             int index = o.get("index").getAsInt();
             int parent = o.get("parent").getAsInt();
             String tag = o.get("tag").getAsString();
-            String id = o.has("id") ? o.get("id").getAsString() : "";
-            String cls = o.has("className") ? o.get("className").getAsString() : "";
+            String id = "";
+            if (o.has("id")) {
+                JsonElement idElem = o.get("id");
+                if (idElem.isJsonPrimitive()) {
+                    id = idElem.getAsString();
+                }
+            }
+            String cls = "";
+            if (o.has("className")) {
+                JsonElement clsElem = o.get("className");
+                if (clsElem.isJsonPrimitive()) {
+                    cls = clsElem.getAsString();
+                }
+            }
             String style = o.has("style") ? o.get("style").getAsString() : "";
 
             Map<String, String> computed = new HashMap<>();
@@ -1084,6 +1312,7 @@ public final class WptTestGenerator {
         String display;
         String position;
         String boxSizing;
+        String direction;
 
         String width;
         String height;
@@ -1091,6 +1320,24 @@ public final class WptTestGenerator {
         String minHeight;
         String maxWidth;
         String maxHeight;
+        String aspectRatio;  // e.g., "1.5" or null
+        
+
+        /**
+         * Check if this style has no intrinsic sizing, meaning a leaf node with this style
+         * needs a measure function to provide its natural size.
+         */
+        boolean needsMeasure() {
+            // If explicit width or height is set (not AUTO), no measure needed
+            if (width != null && !width.equals("TaffyDimension.AUTO")) return false;
+            if (height != null && !height.equals("TaffyDimension.AUTO")) return false;
+            // Containers (flex, grid, block) don't need measure - their size comes from children
+            if (display != null && (display.equals("FLEX") || display.equals("GRID") || display.equals("BLOCK"))) {
+                return false;
+            }
+            // Everything else (inline elements, text, etc.) with AUTO size needs measure
+            return true;
+        }
 
         String margin;
         String padding;
@@ -1157,12 +1404,51 @@ public final class WptTestGenerator {
                 };
             }
 
+            String dir = css.get("direction");
+            if (dir != null) {
+                dir = dir.toLowerCase(Locale.ROOT);
+                s.direction = switch (dir) {
+                    case "ltr" -> "LTR";
+                    case "rtl" -> "RTL";
+                    default -> null;
+                };
+            }
+
             s.width = dimExpr(css.get("width"));
             s.height = dimExpr(css.get("height"));
             s.minWidth = dimExpr(css.get("min-width"));
             s.minHeight = dimExpr(css.get("min-height"));
             s.maxWidth = dimExpr(css.get("max-width"));
             s.maxHeight = dimExpr(css.get("max-height"));
+            
+            // Parse aspect-ratio (e.g., "1/1", "16/9", "1.5", "auto")
+            String ar = css.get("aspect-ratio");
+            if (ar != null && !ar.isEmpty() && !ar.equals("auto")) {
+                ar = ar.trim();
+                if (ar.contains("/")) {
+                    // Format: "W / H" or "W/H"
+                    String[] parts = ar.split("\\s*/\\s*");
+                    if (parts.length == 2) {
+                        try {
+                            float w = Float.parseFloat(parts[0].trim());
+                            float h = Float.parseFloat(parts[1].trim());
+                            if (h != 0) {
+                                s.aspectRatio = String.valueOf(w / h);
+                            }
+                        } catch (NumberFormatException e) {
+                            // Skip unsupported aspect-ratio
+                        }
+                    }
+                } else {
+                    // Format: single number like "1.5"
+                    try {
+                        float ratio = Float.parseFloat(ar);
+                        s.aspectRatio = String.valueOf(ratio);
+                    } catch (NumberFormatException e) {
+                        // Skip unsupported
+                    }
+                }
+            }
 
             RectParts m = RectParts.fromBoxShorthand(css, "margin", true);
             if (m != null) s.margin = m.toJavaLPA();
@@ -1215,20 +1501,41 @@ public final class WptTestGenerator {
             GapParts gp = GapParts.from(gap, rowGap, colGap);
             if (gp != null) s.gap = gp.toJava();
 
+            // Limit for generated grid template code length (to avoid 65KB bytecode limit)
+            final int MAX_GRID_TEMPLATE_CODE_LENGTH = 10000;
+
             String gtc = css.get("grid-template-columns");
             if (gtc != null && !gtc.isBlank() && !"none".equalsIgnoreCase(gtc)) {
+                String code;
                 if (gtc.toLowerCase(Locale.ROOT).contains("repeat(")) {
-                    s.gridTemplateColumnsWithRepeat = GridTemplateList.parse(gtc).toJavaList();
+                    code = GridTemplateList.parse(gtc).toJavaList();
                 } else {
-                    s.gridTemplateColumns = TrackList.parse(gtc).toJavaList();
+                    code = TrackList.parse(gtc).toJavaList();
+                }
+                if (code.length() > MAX_GRID_TEMPLATE_CODE_LENGTH) {
+                    throw new UnsupportedStyleException("grid-template-columns code too long: " + code.length() + " chars");
+                }
+                if (gtc.toLowerCase(Locale.ROOT).contains("repeat(")) {
+                    s.gridTemplateColumnsWithRepeat = code;
+                } else {
+                    s.gridTemplateColumns = code;
                 }
             }
             String gtr = css.get("grid-template-rows");
             if (gtr != null && !gtr.isBlank() && !"none".equalsIgnoreCase(gtr)) {
+                String code;
                 if (gtr.toLowerCase(Locale.ROOT).contains("repeat(")) {
-                    s.gridTemplateRowsWithRepeat = GridTemplateList.parse(gtr).toJavaList();
+                    code = GridTemplateList.parse(gtr).toJavaList();
                 } else {
-                    s.gridTemplateRows = TrackList.parse(gtr).toJavaList();
+                    code = TrackList.parse(gtr).toJavaList();
+                }
+                if (code.length() > MAX_GRID_TEMPLATE_CODE_LENGTH) {
+                    throw new UnsupportedStyleException("grid-template-rows code too long: " + code.length() + " chars");
+                }
+                if (gtr.toLowerCase(Locale.ROOT).contains("repeat(")) {
+                    s.gridTemplateRowsWithRepeat = code;
+                } else {
+                    s.gridTemplateRows = code;
                 }
             }
 
@@ -1361,13 +1668,36 @@ public final class WptTestGenerator {
             if (v == null) return null;
             v = v.trim().toLowerCase(Locale.ROOT);
             if (v.isEmpty()) return null;
-            if ("auto".equals(v)) return "Dimension.AUTO";
-            if ("content".equals(v)) return "Dimension.AUTO";
+            if ("auto".equals(v)) return "TaffyDimension.AUTO";
+            if ("content".equals(v)) return "TaffyDimension.AUTO";
+            // Intrinsic sizing keywords
+            if ("min-content".equals(v)) return "TaffyDimension.minContent()";
+            if ("max-content".equals(v)) return "TaffyDimension.maxContent()";
+            if ("stretch".equals(v)) return "TaffyDimension.stretch()";
+            if (v.startsWith("fit-content")) {
+                // fit-content can have an optional argument: fit-content(200px)
+                if (v.equals("fit-content")) {
+                    return "TaffyDimension.fitContent()";
+                }
+                // fit-content(<length-percentage>)
+                if (v.startsWith("fit-content(") && v.endsWith(")")) {
+                    String arg = v.substring(12, v.length() - 1).trim();
+                    LengthValue lv = LengthValue.parse(arg);
+                    if (lv != null) {
+                        return switch (lv.type) {
+                            case PX -> "TaffyDimension.fitContent(" + lv.value + "f)";
+                            case PERCENT -> "TaffyDimension.fitContentPercent(" + (lv.value / 100f) + "f)";
+                        };
+                    }
+                }
+                // Fallback to basic fit-content
+                return "TaffyDimension.fitContent()";
+            }
             LengthValue lv = LengthValue.parse(v);
             if (lv == null) return null;
             return switch (lv.type) {
-                case PX -> "Dimension.length(" + lv.value + "f)";
-                case PERCENT -> "Dimension.percent(" + (lv.value / 100f) + "f)";
+                case PX -> "TaffyDimension.length(" + lv.value + "f)";
+                case PERCENT -> "TaffyDimension.percent(" + (lv.value / 100f) + "f)";
             };
         }
 
@@ -1382,7 +1712,7 @@ public final class WptTestGenerator {
             if (s == null || e == null) {
                 throw new UnsupportedStyleException("Unsupported grid line syntax: " + v);
             }
-            return "new Line<>(" + s.toJava() + ", " + e.toJava() + ")";
+            return "new TaffyLine<>(" + s.toJava() + ", " + e.toJava() + ")";
         }
     }
 
@@ -1437,17 +1767,103 @@ public final class WptTestGenerator {
     private enum LengthType { PX, PERCENT }
 
     private record LengthValue(LengthType type, float value) {
+        // Base font size for em/rem conversion (browser default is 16px)
+        private static final float BASE_FONT_SIZE = 16f;
+        // Average character width for ch unit (roughly 0.5em for most fonts)
+        private static final float CH_WIDTH = 8f;
+
         static LengthValue parse(String raw) {
             if (raw == null) return null;
             String v = raw.trim().toLowerCase(Locale.ROOT);
             if (v.isEmpty()) return null;
             if ("0".equals(v)) return new LengthValue(LengthType.PX, 0f);
+            
+            // Handle calc() expressions - try to evaluate simple ones
+            if (v.startsWith("calc(") && v.endsWith(")")) {
+                return parseCalc(v.substring(5, v.length() - 1));
+            }
+            
             if (v.endsWith("px")) {
                 return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 2)));
             }
             if (v.endsWith("%")) {
                 return new LengthValue(LengthType.PERCENT, parseFloatSafe(v.substring(0, v.length() - 1)));
             }
+            // Support em unit (relative to font-size, use default 16px)
+            if (v.endsWith("em") && !v.endsWith("rem")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 2)) * BASE_FONT_SIZE);
+            }
+            // Support rem unit (relative to root font-size)
+            if (v.endsWith("rem")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 3)) * BASE_FONT_SIZE);
+            }
+            // Support ch unit (width of '0' character, roughly 0.5em)
+            if (v.endsWith("ch")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 2)) * CH_WIDTH);
+            }
+            // Support vw/vh units (viewport width/height percentage)
+            // Use our fixed viewport size: 800x600
+            if (v.endsWith("vw")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 2)) * VIEWPORT_WIDTH / 100f);
+            }
+            if (v.endsWith("vh")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 2)) * VIEWPORT_HEIGHT / 100f);
+            }
+            // Support vmin/vmax
+            if (v.endsWith("vmin")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 4)) * Math.min(VIEWPORT_WIDTH, VIEWPORT_HEIGHT) / 100f);
+            }
+            if (v.endsWith("vmax")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 4)) * Math.max(VIEWPORT_WIDTH, VIEWPORT_HEIGHT) / 100f);
+            }
+            // Support pt (points, 1pt = 1.333px)
+            if (v.endsWith("pt")) {
+                return new LengthValue(LengthType.PX, parseFloatSafe(v.substring(0, v.length() - 2)) * 1.333f);
+            }
+            return null;
+        }
+        
+        // Parse simple calc() expressions like "calc(5% + 20px)" or "calc(10% - 8px)"
+        private static LengthValue parseCalc(String expr) {
+            expr = expr.trim();
+            // Try to find + or - operator (not at the start, and not inside a number like -5px)
+            int opIdx = -1;
+            char op = 0;
+            for (int i = 1; i < expr.length(); i++) {
+                char c = expr.charAt(i);
+                if ((c == '+' || c == '-') && Character.isWhitespace(expr.charAt(i - 1))) {
+                    opIdx = i;
+                    op = c;
+                    break;
+                }
+            }
+            
+            if (opIdx <= 0) {
+                // No operator found, try parsing as a single value
+                return parse(expr);
+            }
+            
+            String left = expr.substring(0, opIdx).trim();
+            String right = expr.substring(opIdx + 1).trim();
+            
+            LengthValue lv = parse(left);
+            LengthValue rv = parse(right);
+            
+            if (lv == null || rv == null) return null;
+            
+            // If both are pixels, we can compute the result
+            if (lv.type == LengthType.PX && rv.type == LengthType.PX) {
+                float result = op == '+' ? lv.value + rv.value : lv.value - rv.value;
+                return new LengthValue(LengthType.PX, result);
+            }
+            // If both are percentages, we can compute the result
+            if (lv.type == LengthType.PERCENT && rv.type == LengthType.PERCENT) {
+                float result = op == '+' ? lv.value + rv.value : lv.value - rv.value;
+                return new LengthValue(LengthType.PERCENT, result);
+            }
+            // Mixed units (% + px) - cannot be resolved at parse time
+            // For test generation, we'll approximate by assuming a reasonable context
+            // This is imperfect but allows more tests to be generated
             return null;
         }
 
@@ -1568,11 +1984,11 @@ public final class WptTestGenerator {
         }
 
         String toJavaLPA() {
-            return "new Rect<>(" + lpaExpr(left) + ", " + lpaExpr(right) + ", " + lpaExpr(top) + ", " + lpaExpr(bottom) + ")";
+            return "new TaffyRect<>(" + lpaExpr(left) + ", " + lpaExpr(right) + ", " + lpaExpr(top) + ", " + lpaExpr(bottom) + ")";
         }
 
         String toJavaLP() {
-            return "new Rect<>(" + lpExpr(left) + ", " + lpExpr(right) + ", " + lpExpr(top) + ", " + lpExpr(bottom) + ")";
+            return "new TaffyRect<>(" + lpExpr(left) + ", " + lpExpr(right) + ", " + lpExpr(top) + ", " + lpExpr(bottom) + ")";
         }
 
         String toJavaInset() {
@@ -1638,7 +2054,7 @@ public final class WptTestGenerator {
 
         String toJava() {
             // Style.gap is Size<LengthPercentage> with width=column gap, height=row gap.
-            return "new Size<>(" + lp(col) + ", " + lp(row) + ")";
+            return "new TaffySize<>(" + lp(col) + ", " + lp(row) + ")";
         }
 
         private static String lp(String v) {
@@ -1870,12 +2286,16 @@ public final class WptTestGenerator {
             if (v.startsWith("span")) {
                 String[] parts = v.replaceAll("\\s+", " ").split(" ");
                 if (parts.length != 2) throw new UnsupportedStyleException("Unsupported span: " + raw);
-                return new GridPlacementParts("span", Integer.parseInt(parts[1]));
+                try {
+                    return new GridPlacementParts("span", Integer.parseInt(parts[1]));
+                } catch (NumberFormatException e) {
+                    throw new UnsupportedStyleException("Unsupported span with named line: " + raw);
+                }
             }
 
-            // Named lines are not supported for now.
+            // Named lines are not supported (taffy doesn't support them).
             if (!v.matches("-?\\d+")) {
-                return null;
+                throw new UnsupportedStyleException("Unsupported grid line syntax: " + v);
             }
             return new GridPlacementParts("line", Integer.parseInt(v));
         }
@@ -1911,8 +2331,9 @@ public final class WptTestGenerator {
         "  const bodyRect = body.getBoundingClientRect();\n" +
         "\n" +
         "  const props = [\n" +
-        "    'display','position','box-sizing',\n" +
+        "    'display','position','box-sizing','direction',\n" +
         "    'width','height','min-width','min-height','max-width','max-height',\n" +
+        "    'aspect-ratio',\n" +
         "    'margin','margin-left','margin-right','margin-top','margin-bottom',\n" +
         "    'padding','padding-left','padding-right','padding-top','padding-bottom',\n" +
         "    'border','border-left-width','border-right-width','border-top-width','border-bottom-width',\n" +
@@ -2016,13 +2437,41 @@ public final class WptTestGenerator {
         "  const bodyIdx = addNode(body, -1);\n" +
         "  let root = document.getElementById('container') || document.getElementById('test');\n" +
         "  if (!root) {\n" +
+        "    // Priority 1: Find element with flex/grid display (actual test container)\n" +
         "    let best = null;\n" +
         "    let bestArea = 0;\n" +
         "    for (const child of body.children) {\n" +
         "      if (shouldSkip(child)) continue;\n" +
-        "      const r = child.getBoundingClientRect();\n" +
-        "      const area = r.width * r.height;\n" +
-        "      if (area > bestArea) { bestArea = area; best = child; }\n" +
+        "      const cs = getComputedStyle(child);\n" +
+        "      const disp = cs.display;\n" +
+        "      // Prioritize flex/grid containers as they are the actual test subjects\n" +
+        "      if (disp === 'flex' || disp === 'inline-flex' || disp === 'grid' || disp === 'inline-grid') {\n" +
+        "        const r = child.getBoundingClientRect();\n" +
+        "        const area = r.width * r.height;\n" +
+        "        if (area > bestArea) { bestArea = area; best = child; }\n" +
+        "      }\n" +
+        "    }\n" +
+        "    // Priority 2: If no flex/grid found, use largest non-paragraph element\n" +
+        "    if (!best) {\n" +
+        "      bestArea = 0;\n" +
+        "      for (const child of body.children) {\n" +
+        "        if (shouldSkip(child)) continue;\n" +
+        "        // Skip paragraphs (usually test descriptions like 'Test passes if...')\n" +
+        "        if (child.tagName === 'P') continue;\n" +
+        "        const r = child.getBoundingClientRect();\n" +
+        "        const area = r.width * r.height;\n" +
+        "        if (area > bestArea) { bestArea = area; best = child; }\n" +
+        "      }\n" +
+        "    }\n" +
+        "    // Priority 3: Fallback to any largest element\n" +
+        "    if (!best) {\n" +
+        "      bestArea = 0;\n" +
+        "      for (const child of body.children) {\n" +
+        "        if (shouldSkip(child)) continue;\n" +
+        "        const r = child.getBoundingClientRect();\n" +
+        "        const area = r.width * r.height;\n" +
+        "        if (area > bestArea) { bestArea = area; best = child; }\n" +
+        "      }\n" +
         "    }\n" +
         "    root = best;\n" +
         "  }\n" +

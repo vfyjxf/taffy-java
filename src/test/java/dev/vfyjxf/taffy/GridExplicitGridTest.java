@@ -1,17 +1,16 @@
 package dev.vfyjxf.taffy;
 
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.GridTemplateComponent;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.tree.GridTestAdapter;
 import dev.vfyjxf.taffy.tree.TrackCounts;
 
@@ -25,10 +24,10 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class GridExplicitGridTest {
 
-    private static Style grid(float width, float height, int cols, int rows) {
-        Style s = new Style();
-        s.display = Display.GRID;
-        s.size = new Size<>(Dimension.length(width), Dimension.length(height));
+    private static TaffyStyle grid(float width, float height, int cols, int rows) {
+        TaffyStyle s = new TaffyStyle();
+        s.display = TaffyDisplay.GRID;
+        s.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
         s.gridTemplateColumns = new ArrayList<>();
         s.gridTemplateRows = new ArrayList<>();
         for (int i = 0; i < cols; i++) s.gridTemplateColumns.add(TrackSizingFunction.fr(1f));
@@ -36,7 +35,7 @@ public class GridExplicitGridTest {
         return s;
     }
 
-    private static void assertExplicit(Style style,
+    private static void assertExplicit(TaffyStyle style,
                                        float innerWidth,
                                        float innerHeight,
                                        GridTestAdapter.AutoRepeatStrategy strategy,
@@ -66,7 +65,7 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_no_repeats")
     void explicitGridSizingNoRepeats() {
-        Style style = grid(600f, 600f, 2, 4);
+        TaffyStyle style = grid(600f, 600f, 2, 4);
         float preferredWidth = style.size.width.intoOption();
         float preferredHeight = style.size.height.intoOption();
 
@@ -85,9 +84,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_auto_fill_exact_fit")
     void explicitGridSizingAutoFillExactFit() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.size = new Size<>(Dimension.length(120f), Dimension.length(80f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(TaffyDimension.length(120f), TaffyDimension.length(80f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -115,9 +114,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_auto_fill_non_exact_fit")
     void explicitGridSizingAutoFillNonExactFit() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.size = new Size<>(Dimension.length(140f), Dimension.length(90f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(TaffyDimension.length(140f), TaffyDimension.length(90f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -145,9 +144,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_auto_fill_min_size_exact_fit")
     void explicitGridSizingAutoFillMinSizeExactFit() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.minSize = new Size<>(Dimension.length(120f), Dimension.length(80f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.minSize = new TaffySize<>(TaffyDimension.length(120f), TaffyDimension.length(80f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -176,9 +175,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_auto_fill_min_size_non_exact_fit")
     void explicitGridSizingAutoFillMinSizeNonExactFit() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.minSize = new Size<>(Dimension.length(140f), Dimension.length(90f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.minSize = new TaffySize<>(TaffyDimension.length(140f), TaffyDimension.length(90f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -206,9 +205,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_auto_fill_multiple_repeated_tracks")
     void explicitGridSizingAutoFillMultipleRepeatedTracks() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.size = new Size<>(Dimension.length(140f), Dimension.length(100f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(TaffyDimension.length(140f), TaffyDimension.length(100f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -242,9 +241,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_auto_fill_gap")
     void explicitGridSizingAutoFillGap() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.size = new Size<>(Dimension.length(140f), Dimension.length(100f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(TaffyDimension.length(140f), TaffyDimension.length(100f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -253,7 +252,7 @@ public class GridExplicitGridTest {
         style.gridTemplateRowsWithRepeat.add(
             GridTemplateComponent.autoFill(TrackSizingFunction.fixed(LengthPercentage.length(20f)))
         );
-        style.gap = new Size<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
+        style.gap = new TaffySize<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
 
         Float preferredWidth = style.size.width.intoOption();
         Float preferredHeight = style.size.height.intoOption();
@@ -273,8 +272,8 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_no_defined_size")
     void explicitGridSizingNoDefinedSize() {
-        Style style = new Style();
-        style.display = Display.GRID;
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(
@@ -287,7 +286,7 @@ public class GridExplicitGridTest {
         style.gridTemplateRowsWithRepeat.add(
             GridTemplateComponent.autoFill(TrackSizingFunction.fixed(LengthPercentage.length(20f)))
         );
-        style.gap = new Size<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
+        style.gap = new TaffySize<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
 
         // No preferred size => autoFitContainerSize is null
         assertExplicit(
@@ -305,9 +304,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_mix_repeated_and_non_repeated")
     void explicitGridSizingMixRepeatedAndNonRepeated() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.size = new Size<>(Dimension.length(140f), Dimension.length(100f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(TaffyDimension.length(140f), TaffyDimension.length(100f));
         style.gridTemplateColumnsWithRepeat = new ArrayList<>();
         style.gridTemplateRowsWithRepeat = new ArrayList<>();
         style.gridTemplateColumnsWithRepeat.add(GridTemplateComponent.single(TrackSizingFunction.fixed(LengthPercentage.length(20f))));
@@ -318,7 +317,7 @@ public class GridExplicitGridTest {
         style.gridTemplateRowsWithRepeat.add(
             GridTemplateComponent.autoFill(TrackSizingFunction.fixed(LengthPercentage.length(20f)))
         );
-        style.gap = new Size<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
+        style.gap = new TaffySize<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
 
         Float preferredWidth = style.size.width.intoOption();
         Float preferredHeight = style.size.height.intoOption();
@@ -338,10 +337,10 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("explicit_grid_sizing_mix_with_padding")
     void explicitGridSizingMixWithPadding() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.size = new Size<>(Dimension.length(120f), Dimension.length(120f));
-        style.padding = new Rect<>(
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(TaffyDimension.length(120f), TaffyDimension.length(120f));
+        style.padding = new TaffyRect<>(
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
             LengthPercentage.length(20f),
@@ -372,9 +371,9 @@ public class GridExplicitGridTest {
     @Test
     @DisplayName("test_initialize_grid_tracks")
     void testInitializeGridTracks() {
-        Style style = new Style();
-        style.display = Display.GRID;
-        style.gap = new Size<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.gap = new TaffySize<>(LengthPercentage.length(20f), LengthPercentage.length(20f));
         style.gridTemplateColumns = List.of(
             TrackSizingFunction.fixed(LengthPercentage.length(100f)),
             TrackSizingFunction.minmax(

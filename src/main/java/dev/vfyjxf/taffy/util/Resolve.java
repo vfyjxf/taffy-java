@@ -2,9 +2,9 @@ package dev.vfyjxf.taffy.util;
 
 import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 
@@ -19,7 +19,7 @@ public final class Resolve {
     /**
      * Resolve a Size of Dimensions against a parent size.
      */
-    public static FloatSize resolveSize(Size<Dimension> size, FloatSize parentSize) {
+    public static FloatSize resolveSize(TaffySize<TaffyDimension> size, FloatSize parentSize) {
         return new FloatSize(
             size.width.maybeResolve(parentSize.width),
             size.height.maybeResolve(parentSize.height)
@@ -29,7 +29,7 @@ public final class Resolve {
     /**
      * Resolve a Size of Dimensions against a parent size, returning zero for unresolvable values.
      */
-    public static FloatSize resolveSizeOrZero(Size<Dimension> size, FloatSize parentSize) {
+    public static FloatSize resolveSizeOrZero(TaffySize<TaffyDimension> size, FloatSize parentSize) {
         return new FloatSize(
             size.width.resolveOrZero(parentSize.width),
             size.height.resolveOrZero(parentSize.height)
@@ -39,7 +39,7 @@ public final class Resolve {
     /**
      * Resolve a Rect of LengthPercentage against a context width.
      */
-    public static FloatRect resolveRectOrZero(Rect<LengthPercentage> rect, float contextWidth) {
+    public static FloatRect resolveRectOrZero(TaffyRect<LengthPercentage> rect, float contextWidth) {
         return new FloatRect(
             rect.left.resolveOrZero(contextWidth),
             rect.right.resolveOrZero(contextWidth),
@@ -51,7 +51,7 @@ public final class Resolve {
     /**
      * Resolve a Rect of LengthPercentageAuto against a context width.
      */
-    public static FloatRect resolveRectLpaOrZero(Rect<LengthPercentageAuto> rect, float contextWidth) {
+    public static FloatRect resolveRectLpaOrZero(TaffyRect<LengthPercentageAuto> rect, float contextWidth) {
         return new FloatRect(
             rect.left.resolveOrZero(contextWidth),
             rect.right.resolveOrZero(contextWidth),
@@ -64,7 +64,7 @@ public final class Resolve {
      * Maybe resolve a Rect of LengthPercentageAuto against a context width.
      * Returns null for auto values, allowing tracking of which margins are auto.
      */
-    public static FloatRect maybeResolveRectLpa(Rect<LengthPercentageAuto> rect, float contextWidth) {
+    public static FloatRect maybeResolveRectLpa(TaffyRect<LengthPercentageAuto> rect, float contextWidth) {
         return new FloatRect(
             rect.left.maybeResolve(contextWidth),
             rect.right.maybeResolve(contextWidth),
@@ -76,7 +76,7 @@ public final class Resolve {
     /**
      * Maybe resolve a Size of Dimensions with null for unresolvable values.
      */
-    public static FloatSize maybeResolveSize(Size<Dimension> size, FloatSize parentSize) {
+    public static FloatSize maybeResolveSize(TaffySize<TaffyDimension> size, FloatSize parentSize) {
         return new FloatSize(
             size.width.maybeResolve(parentSize.width),
             size.height.maybeResolve(parentSize.height)
@@ -86,7 +86,7 @@ public final class Resolve {
     /**
      * Resolve a Size of LengthPercentage against a parent size.
      */
-    public static FloatSize resolveSizeLp(Size<LengthPercentage> size, FloatSize parentSize) {
+    public static FloatSize resolveSizeLp(TaffySize<LengthPercentage> size, FloatSize parentSize) {
         return new FloatSize(
             size.width.maybeResolve(parentSize.width),
             size.height.maybeResolve(parentSize.height)
@@ -96,7 +96,7 @@ public final class Resolve {
     /**
      * Resolve a Size of LengthPercentage against a size, returning zero for unresolvable.
      */
-    public static FloatSize resolveSizeLpOrZero(Size<LengthPercentage> size, FloatSize contextSize) {
+    public static FloatSize resolveSizeLpOrZero(TaffySize<LengthPercentage> size, FloatSize contextSize) {
         return new FloatSize(
             size.width.resolveOrZero(contextSize.width),
             size.height.resolveOrZero(contextSize.height)

@@ -1,10 +1,9 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
-import dev.vfyjxf.taffy.style.Display;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.util.MeasureFunc;
@@ -37,17 +36,17 @@ public class CachingTest {
             return new FloatSize(w, h);
         };
         
-        Style leafStyle = new Style();
+        TaffyStyle leafStyle = new TaffyStyle();
         NodeId leaf = tree.newLeafWithMeasure(leafStyle, countingMeasure);
         
         // Create 100 levels of nesting as in Rust test
-        Style defaultStyle = new Style();
+        TaffyStyle defaultStyle = new TaffyStyle();
         NodeId node = tree.newWithChildren(defaultStyle, leaf);
         for (int i = 0; i < 100; i++) {
-            node = tree.newWithChildren(new Style(), node);
+            node = tree.newWithChildren(new TaffyStyle(), node);
         }
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         // Original Rust test expects exactly 4 calls due to caching
         // Allow some tolerance for implementation differences
@@ -69,17 +68,17 @@ public class CachingTest {
             return new FloatSize(w, h);
         };
         
-        Style leafStyle = new Style();
-        leafStyle.display = Display.GRID;
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.display = TaffyDisplay.GRID;
         NodeId leaf = tree.newLeafWithMeasure(leafStyle, countingMeasure);
         
         // Create 100 levels of nesting as in Rust test
-        NodeId node = tree.newWithChildren(new Style(), leaf);
+        NodeId node = tree.newWithChildren(new TaffyStyle(), leaf);
         for (int i = 0; i < 100; i++) {
-            node = tree.newWithChildren(new Style(), node);
+            node = tree.newWithChildren(new TaffyStyle(), node);
         }
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         // Original Rust test expects exactly 4 calls due to caching
         // Allow some tolerance for implementation differences

@@ -1,7 +1,7 @@
 package dev.vfyjxf.taffy.geometry;
 
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.FlexDirection;
 
 import java.util.Objects;
@@ -14,11 +14,11 @@ import java.util.function.Supplier;
  *
  * @param <T> The type of the size values
  */
-public final class Size<T> {
+public final class TaffySize<T> {
     public T width;
     public T height;
 
-    public Size(T width, T height) {
+    public TaffySize(T width, T height) {
         this.width = width;
         this.height = height;
     }
@@ -26,36 +26,36 @@ public final class Size<T> {
     /**
      * Creates a new Size with both dimensions set to the same value
      */
-    public static <T> Size<T> all(T value) {
-        return new Size<>(value, value);
+    public static <T> TaffySize<T> all(T value) {
+        return new TaffySize<>(value, value);
     }
 
     /**
      * Creates a new Size with specified width and height
      */
-    public static <T> Size<T> of(T width, T height) {
-        return new Size<>(width, height);
+    public static <T> TaffySize<T> of(T width, T height) {
+        return new TaffySize<>(width, height);
     }
 
     /**
      * Creates a zero Size for floats
      */
-    public static Size<Float> zero() {
-        return new Size<>(0f, 0f);
+    public static TaffySize<Float> zero() {
+        return new TaffySize<>(0f, 0f);
     }
 
     /**
      * Creates a Size with both dimensions set to NONE (null)
      */
-    public static <T> Size<T> none() {
-        return new Size<>(null, null);
+    public static <T> TaffySize<T> none() {
+        return new TaffySize<>(null, null);
     }
 
     /**
      * Creates a Size with auto values using the provided supplier
      */
-    public static <T> Size<T> auto(Supplier<T> autoSupplier) {
-        return new Size<>(autoSupplier.get(), autoSupplier.get());
+    public static <T> TaffySize<T> auto(Supplier<T> autoSupplier) {
+        return new TaffySize<>(autoSupplier.get(), autoSupplier.get());
     }
 
     public T getWidth() {
@@ -69,31 +69,31 @@ public final class Size<T> {
     /**
      * Creates a Size with both dimensions set to MAX_CONTENT
      */
-    public static Size<AvailableSpace> maxContent() {
-        return new Size<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT);
+    public static TaffySize<AvailableSpace> maxContent() {
+        return new TaffySize<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT);
     }
 
     /**
      * Creates a Size with both dimensions set to MIN_CONTENT
      */
-    public static Size<AvailableSpace> minContent() {
-        return new Size<>(AvailableSpace.MIN_CONTENT, AvailableSpace.MIN_CONTENT);
+    public static TaffySize<AvailableSpace> minContent() {
+        return new TaffySize<>(AvailableSpace.MIN_CONTENT, AvailableSpace.MIN_CONTENT);
     }
 
-    public static final Size<Float> ZERO = zero();
+    public static final TaffySize<Float> ZERO = zero();
 
     /**
      * Map each dimension using the provided function
      */
-    public <R> Size<R> map(Function<T, R> mapper) {
-        return new Size<>(mapper.apply(width), mapper.apply(height));
+    public <R> TaffySize<R> map(Function<T, R> mapper) {
+        return new TaffySize<>(mapper.apply(width), mapper.apply(height));
     }
 
     /**
      * Zip two sizes together using the provided function
      */
-    public <U, R> Size<R> zipWith(Size<U> other, BiFunction<T, U, R> mapper) {
-        return new Size<>(mapper.apply(width, other.width), mapper.apply(height, other.height));
+    public <U, R> TaffySize<R> zipWith(TaffySize<U> other, BiFunction<T, U, R> mapper) {
+        return new TaffySize<>(mapper.apply(width, other.width), mapper.apply(height, other.height));
     }
 
     /**
@@ -153,22 +153,22 @@ public final class Size<T> {
     /**
      * Create a Size from main and cross axis values
      */
-    public static <T> Size<T> fromMainCross(FlexDirection direction, T main, T cross) {
+    public static <T> TaffySize<T> fromMainCross(FlexDirection direction, T main, T cross) {
         if (direction.isRow()) {
-            return new Size<>(main, cross);
+            return new TaffySize<>(main, cross);
         } else {
-            return new Size<>(cross, main);
+            return new TaffySize<>(cross, main);
         }
     }
 
     /**
      * Create a Size from cross axis value only (main axis is null)
      */
-    public static <T> Size<T> fromCross(FlexDirection direction, T cross) {
+    public static <T> TaffySize<T> fromCross(FlexDirection direction, T cross) {
         if (direction.isRow()) {
-            return new Size<>(null, cross);
+            return new TaffySize<>(null, cross);
         } else {
-            return new Size<>(cross, null);
+            return new TaffySize<>(cross, null);
         }
     }
 
@@ -176,7 +176,7 @@ public final class Size<T> {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Size<?> size = (Size<?>) o;
+        TaffySize<?> size = (TaffySize<?>) o;
         return Objects.equals(width, size.width) && Objects.equals(height, size.height);
     }
 
@@ -193,8 +193,8 @@ public final class Size<T> {
     /**
      * Copy this Size
      */
-    public Size<T> copy() {
-        return new Size<>(width, height);
+    public TaffySize<T> copy() {
+        return new TaffySize<>(width, height);
     }
 
     /**
@@ -217,7 +217,7 @@ public final class Size<T> {
      */
     public FloatSize maybeResolve(FloatSize context) {
         @SuppressWarnings("unchecked")
-        Size<Dimension> self = (Size<Dimension>) this;
+        TaffySize<TaffyDimension> self = (TaffySize<TaffyDimension>) this;
         return new FloatSize(
             self.width.maybeResolve(context.width),
             self.height.maybeResolve(context.height)

@@ -3,7 +3,7 @@ package dev.vfyjxf.taffy.style;
 /**
  * Sets the layout used for the children of this node.
  */
-public enum Display {
+public enum TaffyDisplay {
     /** The children will follow the block layout algorithm */
     BLOCK,
     
@@ -17,5 +17,5 @@ public enum Display {
     NONE;
 
     /** The default Display mode */
-    public static final Display DEFAULT = FLEX;
+    public static final TaffyDisplay DEFAULT = FLEX;
 }

@@ -1,14 +1,14 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -28,8 +28,8 @@ public class TaffyTreeTest {
     @Test
     void testCreateLeafNode() {
         TaffyTree tree = new TaffyTree();
-        Style style = new Style();
-        style.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
 
         NodeId node = tree.newLeaf(style);
 
@@ -42,14 +42,14 @@ public class TaffyTreeTest {
     void testCreateNodeWithChildren() {
         TaffyTree tree = new TaffyTree();
 
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(childStyle);
         NodeId child2 = tree.newLeaf(childStyle);
 
-        Style parentStyle = new Style();
-        parentStyle.display = Display.FLEX;
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.FLEX;
 
         NodeId parent = tree.newWithChildren(parentStyle, child1, child2);
 
@@ -64,22 +64,22 @@ public class TaffyTreeTest {
         TaffyTree tree = new TaffyTree();
 
         // Create children with fixed sizes
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
 
         NodeId child1 = tree.newLeaf(childStyle);
         NodeId child2 = tree.newLeaf(childStyle);
 
         // Create parent with flexbox
-        Style parentStyle = new Style();
-        parentStyle.display = Display.FLEX;
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.FLEX;
         parentStyle.flexDirection = FlexDirection.ROW;
-        parentStyle.size = new Size<>(Dimension.length(400), Dimension.length(200));
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(400), TaffyDimension.length(200));
 
         NodeId parent = tree.newWithChildren(parentStyle, child1, child2);
 
         // Compute layout
-        tree.computeLayout(parent, new Size<>(AvailableSpace.definite(400f), AvailableSpace.definite(200f)));
+        tree.computeLayout(parent, new TaffySize<>(AvailableSpace.definite(400f), AvailableSpace.definite(200f)));
 
         // Verify parent layout
         Layout parentLayout = tree.getLayout(parent);
@@ -106,25 +106,25 @@ public class TaffyTreeTest {
         TaffyTree tree = new TaffyTree();
 
         // Create children with flex-grow
-        Style child1Style = new Style();
-        child1Style.flexGrow = 1.0f;
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.flexGrow = 1.0f; child1Style.flexShrink = 1.0f; child1Style.flexBasis = TaffyDimension.AUTO;
 
-        Style child2Style = new Style();
-        child2Style.flexGrow = 2.0f;
+        TaffyStyle child2Style = new TaffyStyle();
+        child2Style.flexGrow = 2.0f; child2Style.flexShrink = 1.0f; child2Style.flexBasis = TaffyDimension.AUTO;
 
         NodeId child1 = tree.newLeaf(child1Style);
         NodeId child2 = tree.newLeaf(child2Style);
 
         // Create parent with flexbox
-        Style parentStyle = new Style();
-        parentStyle.display = Display.FLEX;
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.FLEX;
         parentStyle.flexDirection = FlexDirection.ROW;
-        parentStyle.size = new Size<>(Dimension.length(300), Dimension.length(100));
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(300), TaffyDimension.length(100));
 
         NodeId parent = tree.newWithChildren(parentStyle, child1, child2);
 
         // Compute layout
-        tree.computeLayout(parent, new Size<>(AvailableSpace.definite(300f), AvailableSpace.definite(100f)));
+        tree.computeLayout(parent, new TaffySize<>(AvailableSpace.definite(300f), AvailableSpace.definite(100f)));
 
         // Child 1 should get 1/3 of the space, child 2 should get 2/3
         Layout child1Layout = tree.getLayout(child1);
@@ -144,24 +144,24 @@ public class TaffyTreeTest {
         TaffyTree tree = new TaffyTree();
 
         // Create children with fixed heights
-        Style child1Style = new Style();
-        child1Style.size = new Size<>(Dimension.AUTO, Dimension.length(50));
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(50));
 
-        Style child2Style = new Style();
-        child2Style.size = new Size<>(Dimension.AUTO, Dimension.length(50));
+        TaffyStyle child2Style = new TaffyStyle();
+        child2Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(50));
 
         NodeId child1 = tree.newLeaf(child1Style);
         NodeId child2 = tree.newLeaf(child2Style);
 
         // Create parent with block layout
-        Style parentStyle = new Style();
-        parentStyle.display = Display.BLOCK;
-        parentStyle.size = new Size<>(Dimension.length(200), Dimension.AUTO);
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.BLOCK;
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(200), TaffyDimension.AUTO);
 
         NodeId parent = tree.newWithChildren(parentStyle, child1, child2);
 
         // Compute layout
-        tree.computeLayout(parent, new Size<>(AvailableSpace.definite(200f), AvailableSpace.maxContent()));
+        tree.computeLayout(parent, new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.maxContent()));
 
         // Verify children are stacked vertically
         Layout child1Layout = tree.getLayout(child1);
@@ -180,21 +180,21 @@ public class TaffyTreeTest {
         TaffyTree tree = new TaffyTree();
 
         // Create a child
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
 
         NodeId child = tree.newLeaf(childStyle);
 
         // Create parent with padding and border
-        Style parentStyle = new Style();
-        parentStyle.display = Display.FLEX;
-        parentStyle.padding = Rect.all(LengthPercentage.length(10f));
-        parentStyle.border = Rect.all(LengthPercentage.length(5f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.FLEX;
+        parentStyle.padding = TaffyRect.all(LengthPercentage.length(10f));
+        parentStyle.border = TaffyRect.all(LengthPercentage.length(5f));
 
         NodeId parent = tree.newWithChildren(parentStyle, child);
 
         // Compute layout
-        tree.computeLayout(parent, new Size<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
+        tree.computeLayout(parent, new TaffySize<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
 
         // Child should be offset by padding + border
         Layout childLayout = tree.getLayout(child);
@@ -210,7 +210,7 @@ public class TaffyTreeTest {
         TaffyTree tree = new TaffyTree();
 
         // Create a leaf with a measure function
-        Style style = new Style();
+        TaffyStyle style = new TaffyStyle();
 
         NodeId leaf = tree.newLeafWithMeasure(style, (knownDimensions, availableSpace) -> {
             // Return a fixed size based on text measurement simulation
@@ -220,7 +220,7 @@ public class TaffyTreeTest {
         });
 
         // Compute layout
-        tree.computeLayout(leaf, new Size<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
+        tree.computeLayout(leaf, new TaffySize<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
 
         Layout layout = tree.getLayout(leaf);
         assertNotNull(layout);
@@ -232,8 +232,8 @@ public class TaffyTreeTest {
     void testMarkDirty() {
         TaffyTree tree = new TaffyTree();
 
-        Style style = new Style();
-        style.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
 
         NodeId node = tree.newLeaf(style);
 
@@ -241,7 +241,7 @@ public class TaffyTreeTest {
         assertTrue(tree.isDirty(node));
 
         // Compute layout
-        tree.computeLayout(node, new Size<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
+        tree.computeLayout(node, new TaffySize<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
 
         // After layout, node should not be dirty
         assertFalse(tree.isDirty(node));
@@ -257,7 +257,7 @@ public class TaffyTreeTest {
     void testRemoveNode() {
         TaffyTree tree = new TaffyTree();
 
-        Style style = new Style();
+        TaffyStyle style = new TaffyStyle();
         NodeId child = tree.newLeaf(style);
         NodeId parent = tree.newWithChildren(style, child);
 
@@ -277,23 +277,23 @@ public class TaffyTreeTest {
         TaffyTree tree = new TaffyTree();
 
         // Create a hidden child
-        Style hiddenStyle = new Style();
-        hiddenStyle.display = Display.NONE;
-        hiddenStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle hiddenStyle = new TaffyStyle();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        hiddenStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
 
-        Style visibleStyle = new Style();
-        visibleStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle visibleStyle = new TaffyStyle();
+        visibleStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
 
         NodeId hidden = tree.newLeaf(hiddenStyle);
         NodeId visible = tree.newLeaf(visibleStyle);
 
-        Style parentStyle = new Style();
-        parentStyle.display = Display.FLEX;
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.FLEX;
 
         NodeId parent = tree.newWithChildren(parentStyle, hidden, visible);
 
         // Compute layout
-        tree.computeLayout(parent, new Size<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
+        tree.computeLayout(parent, new TaffySize<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()));
 
         // Hidden node should have zero size
         Layout hiddenLayout = tree.getLayout(hidden);

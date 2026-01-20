@@ -1,14 +1,13 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignItems;
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Position;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyPosition;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -48,9 +47,9 @@ public class MeasureTest {
     @DisplayName("measure_root")
     void measureRoot() {
         TaffyTree tree = new TaffyTree();
-        NodeId node = tree.newLeafWithMeasure(new Style(), fixedMeasure(100.0f, 100.0f));
+        NodeId node = tree.newLeafWithMeasure(new TaffyStyle(), fixedMeasure(100.0f, 100.0f));
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout layout = tree.getLayout(node);
         assertEquals(100.0f, layout.size().width, EPSILON);
@@ -62,12 +61,12 @@ public class MeasureTest {
     void measureChild() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId child = tree.newLeafWithMeasure(new Style(), fixedMeasure(100.0f, 100.0f));
+        NodeId child = tree.newLeafWithMeasure(new TaffyStyle(), fixedMeasure(100.0f, 100.0f));
         
-        Style parentStyle = new Style();
+        TaffyStyle parentStyle = new TaffyStyle();
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(100.0f, nodeLayout.size().width, EPSILON);
@@ -83,13 +82,13 @@ public class MeasureTest {
     void measureChildConstraint() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId child = tree.newLeafWithMeasure(new Style(), fixedMeasure(100.0f, 100.0f));
+        NodeId child = tree.newLeafWithMeasure(new TaffyStyle(), fixedMeasure(100.0f, 100.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         // Parent
         Layout nodeLayout = tree.getLayout(node);
@@ -107,11 +106,11 @@ public class MeasureTest {
     void measureChildConstraintPaddingParent() {
         TaffyTree tree = new TaffyTree();
         
-        NodeId child = tree.newLeafWithMeasure(new Style(), fixedMeasure(100.0f, 100.0f));
+        NodeId child = tree.newLeafWithMeasure(new TaffyStyle(), fixedMeasure(100.0f, 100.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
-        parentStyle.padding = new Rect<>(
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
+        parentStyle.padding = new TaffyRect<>(
             LengthPercentage.length(10.0f),
             LengthPercentage.length(10.0f),
             LengthPercentage.length(10.0f),
@@ -119,7 +118,7 @@ public class MeasureTest {
         );
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         // Parent
         Layout nodeLayout = tree.getLayout(node);
@@ -141,19 +140,19 @@ public class MeasureTest {
     void measureChildWithFlexGrow() {
         TaffyTree tree = new TaffyTree();
         
-        Style child0Style = new Style();
-        child0Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
+        TaffyStyle child0Style = new TaffyStyle();
+        child0Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
         NodeId child0 = tree.newLeaf(child0Style);
         
-        Style child1Style = new Style();
-        child1Style.flexGrow = 1.0f;
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.flexGrow = 1.0f; child1Style.flexShrink = 1.0f; child1Style.flexBasis = TaffyDimension.AUTO;
         NodeId child1 = tree.newLeafWithMeasure(child1Style, fixedMeasure(50.0f, 50.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.AUTO);
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(parentStyle, child0, child1);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout child1Layout = tree.getLayout(child1);
         assertEquals(50.0f, child1Layout.size().width, EPSILON);
@@ -165,19 +164,19 @@ public class MeasureTest {
     void measureChildWithFlexShrink() {
         TaffyTree tree = new TaffyTree();
         
-        Style child0Style = new Style();
-        child0Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
-        child0Style.flexShrink = 0.0f;
+        TaffyStyle child0Style = new TaffyStyle();
+        child0Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
+        child0Style.flexGrow = 0.0f; child0Style.flexShrink = 0.0f; child0Style.flexBasis = TaffyDimension.AUTO;
         NodeId child0 = tree.newLeaf(child0Style);
         
-        Style child1Style = new Style();
+        TaffyStyle child1Style = new TaffyStyle();
         NodeId child1 = tree.newLeafWithMeasure(child1Style, fixedMeasure(100.0f, 50.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.AUTO);
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(parentStyle, child0, child1);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout child1Layout = tree.getLayout(child1);
         assertEquals(100.0f, child1Layout.size().width, EPSILON);
@@ -189,21 +188,21 @@ public class MeasureTest {
     void remeasureChildAfterGrowing() {
         TaffyTree tree = new TaffyTree();
         
-        Style child0Style = new Style();
-        child0Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
+        TaffyStyle child0Style = new TaffyStyle();
+        child0Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
         NodeId child0 = tree.newLeaf(child0Style);
         
-        Style child1Style = new Style();
-        child1Style.flexGrow = 1.0f;
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.flexGrow = 1.0f; child1Style.flexShrink = 1.0f; child1Style.flexBasis = TaffyDimension.AUTO;
         // Aspect ratio measure: width=10, height=width*2
         NodeId child1 = tree.newLeafWithMeasure(child1Style, aspectRatioMeasure(10.0f, 2.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.AUTO);
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
         parentStyle.alignItems = AlignItems.START;
         NodeId node = tree.newWithChildren(parentStyle, child0, child1);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout child1Layout = tree.getLayout(child1);
         assertEquals(50.0f, child1Layout.size().width, EPSILON);
@@ -215,21 +214,21 @@ public class MeasureTest {
     void remeasureChildAfterShrinking() {
         TaffyTree tree = new TaffyTree();
         
-        Style child0Style = new Style();
-        child0Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
-        child0Style.flexShrink = 0.0f;
+        TaffyStyle child0Style = new TaffyStyle();
+        child0Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
+        child0Style.flexGrow = 0.0f; child0Style.flexShrink = 0.0f; child0Style.flexBasis = TaffyDimension.AUTO;
         NodeId child0 = tree.newLeaf(child0Style);
         
-        Style child1Style = new Style();
+        TaffyStyle child1Style = new TaffyStyle();
         // Aspect ratio measure: width=100, height=width*2
         NodeId child1 = tree.newLeafWithMeasure(child1Style, aspectRatioMeasure(100.0f, 2.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.AUTO);
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
         parentStyle.alignItems = AlignItems.START;
         NodeId node = tree.newWithChildren(parentStyle, child0, child1);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout child1Layout = tree.getLayout(child1);
         assertEquals(100.0f, child1Layout.size().width, EPSILON);
@@ -248,14 +247,14 @@ public class MeasureTest {
             return new FloatSize(w, h);
         };
         
-        Style childStyle = new Style();
+        TaffyStyle childStyle = new TaffyStyle();
         NodeId child = tree.newLeafWithMeasure(childStyle, stretchMeasure);
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout childLayout = tree.getLayout(child);
         assertEquals(100.0f, childLayout.size().width, EPSILON);
@@ -267,14 +266,14 @@ public class MeasureTest {
     void widthOverridesMeasure() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId child = tree.newLeafWithMeasure(childStyle, fixedMeasure(100.0f, 100.0f));
         
-        Style parentStyle = new Style();
+        TaffyStyle parentStyle = new TaffyStyle();
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout childLayout = tree.getLayout(child);
         assertEquals(50.0f, childLayout.size().width, EPSILON);
@@ -286,14 +285,14 @@ public class MeasureTest {
     void heightOverridesMeasure() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.size = new Size<>(Dimension.AUTO, Dimension.length(50.0f));
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(50.0f));
         NodeId child = tree.newLeafWithMeasure(childStyle, fixedMeasure(100.0f, 100.0f));
         
-        Style parentStyle = new Style();
+        TaffyStyle parentStyle = new TaffyStyle();
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout childLayout = tree.getLayout(child);
         assertEquals(100.0f, childLayout.size().width, EPSILON);
@@ -305,21 +304,19 @@ public class MeasureTest {
     void flexBasisOverridesMeasure() {
         TaffyTree tree = new TaffyTree();
         
-        Style child0Style = new Style();
-        child0Style.flexBasis = Dimension.length(50.0f);
-        child0Style.flexGrow = 1.0f;
+        TaffyStyle child0Style = new TaffyStyle();
+        child0Style.flexGrow = 1.0f; child0Style.flexShrink = 1.0f; child0Style.flexBasis = TaffyDimension.length(50.0f);
         NodeId child0 = tree.newLeaf(child0Style);
         
-        Style child1Style = new Style();
-        child1Style.flexBasis = Dimension.length(50.0f);
-        child1Style.flexGrow = 1.0f;
+        TaffyStyle child1Style = new TaffyStyle();
+        child1Style.flexGrow = 1.0f; child1Style.flexShrink = 1.0f; child1Style.flexBasis = TaffyDimension.length(50.0f);
         NodeId child1 = tree.newLeafWithMeasure(child1Style, fixedMeasure(100.0f, 100.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(200.0f), Dimension.length(100.0f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.length(100.0f));
         NodeId node = tree.newWithChildren(parentStyle, child0, child1);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout child0Layout = tree.getLayout(child0);
         assertEquals(100.0f, child0Layout.size().width, EPSILON);
@@ -335,14 +332,14 @@ public class MeasureTest {
     void stretchOverridesMeasure() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
+        TaffyStyle childStyle = new TaffyStyle();
         NodeId child = tree.newLeafWithMeasure(childStyle, fixedMeasure(50.0f, 50.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout childLayout = tree.getLayout(child);
         assertEquals(50.0f, childLayout.size().width, EPSILON);
@@ -354,15 +351,15 @@ public class MeasureTest {
     void measureAbsoluteChild() {
         TaffyTree tree = new TaffyTree();
         
-        Style childStyle = new Style();
-        childStyle.position = Position.ABSOLUTE;
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
         NodeId child = tree.newLeafWithMeasure(childStyle, fixedMeasure(50.0f, 50.0f));
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout childLayout = tree.getLayout(child);
         assertEquals(50.0f, childLayout.size().width, EPSILON);
@@ -375,15 +372,15 @@ public class MeasureTest {
         TaffyTree tree = new TaffyTree();
         
         // Child without measure function but with flex_grow
-        Style childStyle = new Style();
-        childStyle.flexGrow = 1.0f;
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.flexGrow = 1.0f; childStyle.flexShrink = 1.0f; childStyle.flexBasis = TaffyDimension.AUTO;
         NodeId child = tree.newLeaf(childStyle);
         
-        Style parentStyle = new Style();
-        parentStyle.size = new Size<>(Dimension.length(100.0f), Dimension.length(100.0f));
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
         NodeId node = tree.newWithChildren(parentStyle, child);
         
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
         
         Layout childLayout = tree.getLayout(child);
         assertEquals(100.0f, childLayout.size().width, EPSILON);

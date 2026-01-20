@@ -1,7 +1,7 @@
 package dev.vfyjxf.taffy.tree;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 
 import java.util.Arrays;
@@ -10,7 +10,7 @@ import java.util.Arrays;
  * A cache for storing the results of layout computation.
  * Uses a multi-slot caching strategy based on known dimensions and available space constraints.
  */
-public final class Cache {
+public final class LayoutCache {
 
     private static final int CACHE_SIZE = 9;
 
@@ -35,16 +35,16 @@ public final class Cache {
      */
     private static class CacheEntry<T> {
         FloatSize knownDimensions;
-        Size<AvailableSpace> availableSpace;
+        TaffySize<AvailableSpace> availableSpace;
         T content;
 
-        CacheEntry(FloatSize knownDimensions, Size<AvailableSpace> availableSpace, T content) {
+        CacheEntry(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpace, T content) {
             this.knownDimensions = knownDimensions;
             this.availableSpace = availableSpace;
             this.content = content;
         }
 
-        boolean matches(FloatSize knownDimensions, Size<AvailableSpace> availableSpace) {
+        boolean matches(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpace) {
             return sizesEqual(this.knownDimensions, knownDimensions) &&
                    this.availableSpace.equals(availableSpace);
         }
@@ -63,13 +63,13 @@ public final class Cache {
     /**
      * Create a new empty cache
      */
-    public Cache() {
+    public LayoutCache() {
     }
 
     /**
      * Compute the cache slot to use for the given known dimensions and available space.
      */
-    private static int computeCacheSlot(FloatSize knownDimensions, Size<AvailableSpace> availableSpace) {
+    private static int computeCacheSlot(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpace) {
         boolean hasKnownWidth = !Float.isNaN(knownDimensions.width);
         boolean hasKnownHeight = !Float.isNaN(knownDimensions.height);
 
@@ -106,7 +106,7 @@ public final class Cache {
      */
     public LayoutOutput get(
         FloatSize knownDimensions,
-        Size<AvailableSpace> availableSpace,
+        TaffySize<AvailableSpace> availableSpace,
         RunMode runMode
     ) {
         if (isEmpty) return null;
@@ -147,7 +147,7 @@ public final class Cache {
     }
     
     private static boolean matchesEntry(CacheEntry<LayoutOutput> entry, float kdWidth, float kdHeight,
-                                        boolean hasKnownWidth, boolean hasKnownHeight, Size<AvailableSpace> availableSpace) {
+                                        boolean hasKnownWidth, boolean hasKnownHeight, TaffySize<AvailableSpace> availableSpace) {
         FloatSize cachedSize = entry.content.size();
         return (floatEquals(kdWidth, entry.knownDimensions.width) || floatEquals(kdWidth, cachedSize.width))
             && (floatEquals(kdHeight, entry.knownDimensions.height) || floatEquals(kdHeight, cachedSize.height))
@@ -156,7 +156,7 @@ public final class Cache {
     }
     
     private static <T> boolean matchesSizeEntry(CacheEntry<T> entry, FloatSize cachedSize, float kdWidth, float kdHeight,
-                                                boolean hasKnownWidth, boolean hasKnownHeight, Size<AvailableSpace> availableSpace) {
+                                                boolean hasKnownWidth, boolean hasKnownHeight, TaffySize<AvailableSpace> availableSpace) {
         return (floatEquals(kdWidth, entry.knownDimensions.width) || floatEquals(kdWidth, cachedSize.width))
             && (floatEquals(kdHeight, entry.knownDimensions.height) || floatEquals(kdHeight, cachedSize.height))
             && (hasKnownWidth || entry.availableSpace.width.isRoughlyEqual(availableSpace.width))
@@ -175,7 +175,7 @@ public final class Cache {
      */
     public void store(
         FloatSize knownDimensions,
-        Size<AvailableSpace> availableSpace,
+        TaffySize<AvailableSpace> availableSpace,
         RunMode runMode,
         LayoutOutput layoutOutput
     ) {

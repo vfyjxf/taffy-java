@@ -75,13 +75,24 @@ public final class RoundLayout {
             float roundedWidth = round(absoluteX + nodeWidth) - round(absoluteX);
             float roundedHeight = round(absoluteY + nodeHeight) - round(absoluteY);
 
+            FloatSize contentSize = layout.contentSize();
+            float contentWidth = (contentSize != null && !Float.isNaN(contentSize.width)) ? contentSize.width : 0f;
+            float contentHeight = (contentSize != null && !Float.isNaN(contentSize.height)) ? contentSize.height : 0f;
+            float roundedContentWidth = round(absoluteX + contentWidth) - round(absoluteX);
+            float roundedContentHeight = round(absoluteY + contentHeight) - round(absoluteY);
+
+            FloatSize scrollbarSize = layout.scrollbarSize();
+            float scrollbarWidth = (scrollbarSize != null && !Float.isNaN(scrollbarSize.width)) ? scrollbarSize.width : 0f;
+            float scrollbarHeight = (scrollbarSize != null && !Float.isNaN(scrollbarSize.height)) ? scrollbarSize.height : 0f;
+            FloatSize roundedScrollbarSize = new FloatSize(round(scrollbarWidth), round(scrollbarHeight));
+
             // Apply rounding to layout
             Layout roundedLayout = new Layout(
                 layout.order(),
                 new FloatPoint(roundedX, roundedY),
                 new FloatSize(roundedWidth, roundedHeight),
-                layout.contentSize(),
-                layout.scrollbarSize(),
+                new FloatSize(roundedContentWidth, roundedContentHeight),
+                roundedScrollbarSize,
                 roundRect(layout.border()),
                 roundRect(layout.padding()),
                 roundRect(layout.margin())
@@ -128,12 +139,23 @@ public final class RoundLayout {
         float roundedWidth = round(absoluteX + nodeWidth) - round(absoluteX);
         float roundedHeight = round(absoluteY + nodeHeight) - round(absoluteY);
 
+        FloatSize contentSize = layout.contentSize();
+        float contentWidth = (contentSize != null && !Float.isNaN(contentSize.width)) ? contentSize.width : 0f;
+        float contentHeight = (contentSize != null && !Float.isNaN(contentSize.height)) ? contentSize.height : 0f;
+        float roundedContentWidth = round(absoluteX + contentWidth) - round(absoluteX);
+        float roundedContentHeight = round(absoluteY + contentHeight) - round(absoluteY);
+
+        FloatSize scrollbarSize = layout.scrollbarSize();
+        float scrollbarWidth = (scrollbarSize != null && !Float.isNaN(scrollbarSize.width)) ? scrollbarSize.width : 0f;
+        float scrollbarHeight = (scrollbarSize != null && !Float.isNaN(scrollbarSize.height)) ? scrollbarSize.height : 0f;
+        FloatSize roundedScrollbarSize = new FloatSize(round(scrollbarWidth), round(scrollbarHeight));
+
         Layout roundedLayout = new Layout(
             layout.order(),
             new FloatPoint(roundedX, roundedY),
             new FloatSize(roundedWidth, roundedHeight),
-            layout.contentSize(),
-            layout.scrollbarSize(),
+            new FloatSize(roundedContentWidth, roundedContentHeight),
+            roundedScrollbarSize,
             roundRect(layout.border()),
             roundRect(layout.padding()),
             roundRect(layout.margin())

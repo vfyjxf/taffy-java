@@ -1,6 +1,6 @@
 package dev.vfyjxf.taffy.geometry;
 
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import java.util.Objects;
 import java.util.function.Function;
@@ -12,13 +12,13 @@ import java.util.function.BiFunction;
  * This can represent either a bounding box or padding/margin/border values.
  * @param <T> The type of the edge values
  */
-public final class Rect<T> {
+public final class TaffyRect<T> {
     public T left;
     public T right;
     public T top;
     public T bottom;
 
-    public Rect(T left, T right, T top, T bottom) {
+    public TaffyRect(T left, T right, T top, T bottom) {
         this.left = left;
         this.right = right;
         this.top = top;
@@ -28,66 +28,66 @@ public final class Rect<T> {
     /**
      * Creates a new Rect with all edges set to the same value
      */
-    public static <T> Rect<T> all(T value) {
-        return new Rect<>(value, value, value, value);
+    public static <T> TaffyRect<T> all(T value) {
+        return new TaffyRect<>(value, value, value, value);
     }
 
     /**
      * Creates a new Rect with left, top, right, bottom edges (CSS order)
      */
-    public static <T> Rect<T> ltrb(T left, T top, T right, T bottom) {
-        return new Rect<>(left, right, top, bottom);
+    public static <T> TaffyRect<T> ltrb(T left, T top, T right, T bottom) {
+        return new TaffyRect<>(left, right, top, bottom);
     }
 
     /**
      * Creates a new Rect with horizontal (left/right) and vertical (top/bottom) values
      */
-    public static <T> Rect<T> hv(T horizontal, T vertical) {
-        return new Rect<>(horizontal, horizontal, vertical, vertical);
+    public static <T> TaffyRect<T> hv(T horizontal, T vertical) {
+        return new TaffyRect<>(horizontal, horizontal, vertical, vertical);
     }
 
     /**
      * Creates a zero Rect for floats
      */
-    public static Rect<Float> zero() {
-        return new Rect<>(0f, 0f, 0f, 0f);
+    public static TaffyRect<Float> zero() {
+        return new TaffyRect<>(0f, 0f, 0f, 0f);
     }
 
     /**
      * Creates a new Rect with left, right, top, bottom values
      */
-    public static <T> Rect<T> of(T left, T right, T top, T bottom) {
-        return new Rect<>(left, right, top, bottom);
+    public static <T> TaffyRect<T> of(T left, T right, T top, T bottom) {
+        return new TaffyRect<>(left, right, top, bottom);
     }
 
     /**
      * Creates a Rect with auto values using the provided supplier
      */
-    public static <T> Rect<T> auto(Supplier<T> autoSupplier) {
-        return new Rect<>(autoSupplier.get(), autoSupplier.get(), autoSupplier.get(), autoSupplier.get());
+    public static <T> TaffyRect<T> auto(Supplier<T> autoSupplier) {
+        return new TaffyRect<>(autoSupplier.get(), autoSupplier.get(), autoSupplier.get(), autoSupplier.get());
     }
 
     /**
      * Creates a Rect<Dimension> with all edges set to a fixed length
      */
-    public static Rect<Dimension> fromLength(float value) {
-        return new Rect<>(
-            Dimension.length(value),
-            Dimension.length(value),
-            Dimension.length(value),
-            Dimension.length(value)
+    public static TaffyRect<TaffyDimension> fromLength(float value) {
+        return new TaffyRect<>(
+            TaffyDimension.length(value),
+            TaffyDimension.length(value),
+            TaffyDimension.length(value),
+            TaffyDimension.length(value)
         );
     }
 
     /**
      * Creates a Rect<Dimension> with all edges set to a percentage
      */
-    public static Rect<Dimension> fromPercent(float value) {
-        return new Rect<>(
-            Dimension.percent(value),
-            Dimension.percent(value),
-            Dimension.percent(value),
-            Dimension.percent(value)
+    public static TaffyRect<TaffyDimension> fromPercent(float value) {
+        return new TaffyRect<>(
+            TaffyDimension.percent(value),
+            TaffyDimension.percent(value),
+            TaffyDimension.percent(value),
+            TaffyDimension.percent(value)
         );
     }
 
@@ -96,13 +96,13 @@ public final class Rect<T> {
     public T getTop() { return top; }
     public T getBottom() { return bottom; }
 
-    public static final Rect<Float> ZERO = zero();
+    public static final TaffyRect<Float> ZERO = zero();
 
     /**
      * Map each edge using the provided function
      */
-    public <R> Rect<R> map(Function<T, R> mapper) {
-        return new Rect<>(
+    public <R> TaffyRect<R> map(Function<T, R> mapper) {
+        return new TaffyRect<>(
             mapper.apply(left),
             mapper.apply(right),
             mapper.apply(top),
@@ -113,8 +113,8 @@ public final class Rect<T> {
     /**
      * Zip with a Size, applying mapper to left/right with width and top/bottom with height
      */
-    public <U, R> Rect<R> zipSize(Size<U> size, BiFunction<T, U, R> mapper) {
-        return new Rect<>(
+    public <U, R> TaffyRect<R> zipSize(TaffySize<U> size, BiFunction<T, U, R> mapper) {
+        return new TaffyRect<>(
             mapper.apply(left, size.width),
             mapper.apply(right, size.width),
             mapper.apply(top, size.height),
@@ -139,8 +139,8 @@ public final class Rect<T> {
     /**
      * Returns both axis sums as a Size
      */
-    public Size<Float> sumAxes() {
-        return new Size<>(horizontalAxisSum(), verticalAxisSum());
+    public TaffySize<Float> sumAxes() {
+        return new TaffySize<>(horizontalAxisSum(), verticalAxisSum());
     }
 
     /**
@@ -203,24 +203,24 @@ public final class Rect<T> {
     /**
      * Returns a Line representing the left and right properties
      */
-    public Line<T> horizontalComponents() {
-        return new Line<>(left, right);
+    public TaffyLine<T> horizontalComponents() {
+        return new TaffyLine<>(left, right);
     }
 
     /**
      * Returns a Line representing the top and bottom properties
      */
-    public Line<T> verticalComponents() {
-        return new Line<>(top, bottom);
+    public TaffyLine<T> verticalComponents() {
+        return new TaffyLine<>(top, bottom);
     }
 
     /**
      * Add two rects together (for float types)
      */
-    public Rect<Float> add(Rect<Float> other) {
+    public TaffyRect<Float> add(TaffyRect<Float> other) {
         @SuppressWarnings("unchecked")
-        Rect<Float> self = (Rect<Float>) this;
-        return new Rect<>(
+        TaffyRect<Float> self = (TaffyRect<Float>) this;
+        return new TaffyRect<>(
             self.left + other.left,
             self.right + other.right,
             self.top + other.top,
@@ -232,7 +232,7 @@ public final class Rect<T> {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Rect<?> rect = (Rect<?>) o;
+        TaffyRect<?> rect = (TaffyRect<?>) o;
         return Objects.equals(left, rect.left) &&
                Objects.equals(right, rect.right) &&
                Objects.equals(top, rect.top) &&
@@ -252,22 +252,22 @@ public final class Rect<T> {
     /**
      * Copy this Rect
      */
-    public Rect<T> copy() {
-        return new Rect<>(left, right, top, bottom);
+    public TaffyRect<T> copy() {
+        return new TaffyRect<>(left, right, top, bottom);
     }
 
     /**
      * Resolve a Rect<Dimension> against a context Size<Float>
      * Returns Rect<Float> with resolved values (0 for unresolvable)
      */
-    public Rect<Float> resolveOrZero(Size<Float> context) {
+    public TaffyRect<Float> resolveOrZero(TaffySize<Float> context) {
         @SuppressWarnings("unchecked")
-        Rect<Dimension> self = (Rect<Dimension>) this;
+        TaffyRect<TaffyDimension> self = (TaffyRect<TaffyDimension>) this;
 
         // NOTE: older API uses nullable Float; treat null as "None" => NaN
         float cw = context.width == null ? Float.NaN : context.width;
         float ch = context.height == null ? Float.NaN : context.height;
-        return new Rect<>(
+        return new TaffyRect<>(
             self.left.resolveOrZero(cw),
             self.right.resolveOrZero(cw),
             self.top.resolveOrZero(ch),
@@ -279,10 +279,10 @@ public final class Rect<T> {
      * Resolve a Rect<Dimension> against a context FloatSize (NaN means unresolvable)
      * Returns Rect<Float> with resolved values (0 for unresolvable)
      */
-    public Rect<Float> resolveOrZero(FloatSize context) {
+    public TaffyRect<Float> resolveOrZero(FloatSize context) {
         @SuppressWarnings("unchecked")
-        Rect<Dimension> self = (Rect<Dimension>) this;
-        return new Rect<>(
+        TaffyRect<TaffyDimension> self = (TaffyRect<TaffyDimension>) this;
+        return new TaffyRect<>(
             self.left.resolveOrZero(context.width),
             self.right.resolveOrZero(context.width),
             self.top.resolveOrZero(context.height),
@@ -294,10 +294,10 @@ public final class Rect<T> {
      * Resolve a Rect<Dimension> against a single optional context value (used for all edges)
      * Returns Rect<Float> with resolved values (0 for unresolvable)
      */
-    public Rect<Float> resolveOrZero(float context) {
+    public TaffyRect<Float> resolveOrZero(float context) {
         @SuppressWarnings("unchecked")
-        Rect<Dimension> self = (Rect<Dimension>) this;
-        return new Rect<>(
+        TaffyRect<TaffyDimension> self = (TaffyRect<TaffyDimension>) this;
+        return new TaffyRect<>(
             self.left.resolveOrZero(context),
             self.right.resolveOrZero(context),
             self.top.resolveOrZero(context),
@@ -309,7 +309,7 @@ public final class Rect<T> {
      * Backwards-compatible overload accepting nullable Float.
      * Null is treated as "None" => NaN.
      */
-    public Rect<Float> resolveOrZero(Float context) {
+    public TaffyRect<Float> resolveOrZero(Float context) {
         return resolveOrZero(context == null ? Float.NaN : context.floatValue());
     }
 }

@@ -95,36 +95,42 @@ public class GridflexTest {
     void gridflexColumnIntegrationBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
         MeasureFunc node00Measure = ahemTextMeasure("HH", false);
         NodeId node00 = tree.newLeafWithMeasure(node00Style, node00Measure);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
+        node01Style.direction = TaffyDirection.LTR;
         MeasureFunc node01Measure = ahemTextMeasure("HH", false);
         NodeId node01 = tree.newLeafWithMeasure(node01Style, node01Measure);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
+        node02Style.direction = TaffyDirection.LTR;
         MeasureFunc node02Measure = ahemTextMeasure("HH", false);
         NodeId node02 = tree.newLeafWithMeasure(node02Style, node02Measure);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
+        node03Style.direction = TaffyDirection.LTR;
         MeasureFunc node03Measure = ahemTextMeasure("HH", false);
         NodeId node03 = tree.newLeafWithMeasure(node03Style, node03Measure);
 
-        Style node0Style = new Style();
-        node0Style.display = Display.GRID;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
         nodeStyle.flexDirection = FlexDirection.COLUMN;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(40.0f, nodeLayout.size().width, "width of node");
@@ -163,42 +169,48 @@ public class GridflexTest {
     void gridflexColumnIntegrationContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node00Style.direction = TaffyDirection.LTR;
         MeasureFunc node00Measure = ahemTextMeasure("HH", false);
         NodeId node00 = tree.newLeafWithMeasure(node00Style, node00Measure);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
         node01Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node01Style.direction = TaffyDirection.LTR;
         MeasureFunc node01Measure = ahemTextMeasure("HH", false);
         NodeId node01 = tree.newLeafWithMeasure(node01Style, node01Measure);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
         node02Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node02Style.direction = TaffyDirection.LTR;
         MeasureFunc node02Measure = ahemTextMeasure("HH", false);
         NodeId node02 = tree.newLeafWithMeasure(node02Style, node02Measure);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
         node03Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node03Style.direction = TaffyDirection.LTR;
         MeasureFunc node03Measure = ahemTextMeasure("HH", false);
         NodeId node03 = tree.newLeafWithMeasure(node03Style, node03Measure);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.GRID;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
+        nodeStyle.direction = TaffyDirection.LTR;
         nodeStyle.flexDirection = FlexDirection.COLUMN;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(40.0f, nodeLayout.size().width, "width of node");
@@ -237,64 +249,77 @@ public class GridflexTest {
     void gridflexKitchenSinkBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node000Style = new Style();
-        node000Style.size = new Size<>(Dimension.length(20.0f), Dimension.AUTO);
+        TaffyStyle node000Style = new TaffyStyle();
+        node000Style.direction = TaffyDirection.LTR;
+        node000Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.AUTO);
         NodeId node000 = tree.newLeaf(node000Style);
 
-        Style node00100Style = new Style();
-        node00100Style.size = new Size<>(Dimension.length(20.0f), Dimension.AUTO);
+        TaffyStyle node00100Style = new TaffyStyle();
+        node00100Style.direction = TaffyDirection.LTR;
+        node00100Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.AUTO);
         NodeId node00100 = tree.newLeaf(node00100Style);
 
-        Style node00101Style = new Style();
+        TaffyStyle node00101Style = new TaffyStyle();
+        node00101Style.direction = TaffyDirection.LTR;
         NodeId node00101 = tree.newLeaf(node00101Style);
 
-        Style node00102Style = new Style();
+        TaffyStyle node00102Style = new TaffyStyle();
+        node00102Style.direction = TaffyDirection.LTR;
         NodeId node00102 = tree.newLeaf(node00102Style);
 
-        Style node00103Style = new Style();
+        TaffyStyle node00103Style = new TaffyStyle();
+        node00103Style.direction = TaffyDirection.LTR;
         NodeId node00103 = tree.newLeaf(node00103Style);
 
-        Style node0010Style = new Style();
-        node0010Style.display = Display.GRID;
+        TaffyStyle node0010Style = new TaffyStyle();
+        node0010Style.direction = TaffyDirection.LTR;
+        node0010Style.display = TaffyDisplay.GRID;
         node0010Style.gridTemplateColumns.add(TrackSizingFunction.auto());
         node0010Style.gridTemplateColumns.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         node0010Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.3f)));
         node0010Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         NodeId node0010 = tree.newWithChildren(node0010Style, node00100, node00101, node00102, node00103);
 
-        Style node001Style = new Style();
+        TaffyStyle node001Style = new TaffyStyle();
+        node001Style.direction = TaffyDirection.LTR;
         node001Style.flexGrow = 1.0f;
-        node001Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        node001Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node001 = tree.newWithChildren(node001Style, node0010);
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
         NodeId node00 = tree.newWithChildren(node00Style, node000, node001);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
+        node01Style.direction = TaffyDirection.LTR;
         MeasureFunc node01Measure = ahemTextMeasure("HH", false);
         NodeId node01 = tree.newLeafWithMeasure(node01Style, node01Measure);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
+        node02Style.direction = TaffyDirection.LTR;
         MeasureFunc node02Measure = ahemTextMeasure("HH", false);
         NodeId node02 = tree.newLeafWithMeasure(node02Style, node02Measure);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
+        node03Style.direction = TaffyDirection.LTR;
         MeasureFunc node03Measure = ahemTextMeasure("HH", false);
         NodeId node03 = tree.newLeafWithMeasure(node03Style, node03Measure);
 
-        Style node0Style = new Style();
-        node0Style.display = Display.GRID;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(140.0f, nodeLayout.size().width, "width of node");
@@ -368,77 +393,90 @@ public class GridflexTest {
     void gridflexKitchenSinkContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node000Style = new Style();
+        TaffyStyle node000Style = new TaffyStyle();
         node000Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node000Style.size = new Size<>(Dimension.length(20.0f), Dimension.AUTO);
+        node000Style.direction = TaffyDirection.LTR;
+        node000Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.AUTO);
         NodeId node000 = tree.newLeaf(node000Style);
 
-        Style node00100Style = new Style();
+        TaffyStyle node00100Style = new TaffyStyle();
         node00100Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00100Style.size = new Size<>(Dimension.length(20.0f), Dimension.AUTO);
+        node00100Style.direction = TaffyDirection.LTR;
+        node00100Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.AUTO);
         NodeId node00100 = tree.newLeaf(node00100Style);
 
-        Style node00101Style = new Style();
+        TaffyStyle node00101Style = new TaffyStyle();
         node00101Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node00101Style.direction = TaffyDirection.LTR;
         NodeId node00101 = tree.newLeaf(node00101Style);
 
-        Style node00102Style = new Style();
+        TaffyStyle node00102Style = new TaffyStyle();
         node00102Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node00102Style.direction = TaffyDirection.LTR;
         NodeId node00102 = tree.newLeaf(node00102Style);
 
-        Style node00103Style = new Style();
+        TaffyStyle node00103Style = new TaffyStyle();
         node00103Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node00103Style.direction = TaffyDirection.LTR;
         NodeId node00103 = tree.newLeaf(node00103Style);
 
-        Style node0010Style = new Style();
+        TaffyStyle node0010Style = new TaffyStyle();
         node0010Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0010Style.display = Display.GRID;
+        node0010Style.direction = TaffyDirection.LTR;
+        node0010Style.display = TaffyDisplay.GRID;
         node0010Style.gridTemplateColumns.add(TrackSizingFunction.auto());
         node0010Style.gridTemplateColumns.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         node0010Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.3f)));
         node0010Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         NodeId node0010 = tree.newWithChildren(node0010Style, node00100, node00101, node00102, node00103);
 
-        Style node001Style = new Style();
+        TaffyStyle node001Style = new TaffyStyle();
         node001Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node001Style.direction = TaffyDirection.LTR;
         node001Style.flexGrow = 1.0f;
-        node001Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        node001Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node001 = tree.newWithChildren(node001Style, node0010);
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node00Style.direction = TaffyDirection.LTR;
         NodeId node00 = tree.newWithChildren(node00Style, node000, node001);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
         node01Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node01Style.direction = TaffyDirection.LTR;
         MeasureFunc node01Measure = ahemTextMeasure("HH", false);
         NodeId node01 = tree.newLeafWithMeasure(node01Style, node01Measure);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
         node02Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node02Style.direction = TaffyDirection.LTR;
         MeasureFunc node02Measure = ahemTextMeasure("HH", false);
         NodeId node02 = tree.newLeafWithMeasure(node02Style, node02Measure);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
         node03Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node03Style.direction = TaffyDirection.LTR;
         MeasureFunc node03Measure = ahemTextMeasure("HH", false);
         NodeId node03 = tree.newLeafWithMeasure(node03Style, node03Measure);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.GRID;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
+        nodeStyle.direction = TaffyDirection.LTR;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(140.0f, nodeLayout.size().width, "width of node");
@@ -512,25 +550,29 @@ public class GridflexTest {
     void gridflexKitchenSinkMinimiseBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
-        node00Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
+        node01Style.direction = TaffyDirection.LTR;
         NodeId node01 = tree.newLeaf(node01Style);
 
-        Style node0Style = new Style();
-        node0Style.display = Display.GRID;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.length(20.0f)));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(100.0f, nodeLayout.size().width, "width of node");
@@ -559,29 +601,33 @@ public class GridflexTest {
     void gridflexKitchenSinkMinimiseContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
         node01Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node01Style.direction = TaffyDirection.LTR;
         NodeId node01 = tree.newLeaf(node01Style);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.GRID;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.length(20.0f)));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
+        nodeStyle.direction = TaffyDirection.LTR;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(100.0f, nodeLayout.size().width, "width of node");
@@ -610,23 +656,26 @@ public class GridflexTest {
     void gridflexKitchenSinkMinimise2BorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
-        node00Style.size = new Size<>(Dimension.length(20.0f), Dimension.length(20.0f));
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(20.0f));
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node0Style = new Style();
-        node0Style.display = Display.GRID;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.auto());
         node0Style.gridTemplateRows.add(TrackSizingFunction.auto());
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
         nodeStyle.flexGrow = 1.0f;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -650,26 +699,29 @@ public class GridflexTest {
     void gridflexKitchenSinkMinimise2ContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00Style.size = new Size<>(Dimension.length(20.0f), Dimension.length(20.0f));
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(20.0f));
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.GRID;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.auto());
         node0Style.gridTemplateRows.add(TrackSizingFunction.auto());
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
+        nodeStyle.direction = TaffyDirection.LTR;
         nodeStyle.flexGrow = 1.0f;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -693,33 +745,39 @@ public class GridflexTest {
     void gridflexKitchenSinkMinimise3BorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
-        node00Style.size = new Size<>(Dimension.length(20.0f), Dimension.length(20.0f));
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(20.0f));
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
+        node01Style.direction = TaffyDirection.LTR;
         NodeId node01 = tree.newLeaf(node01Style);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
+        node02Style.direction = TaffyDirection.LTR;
         NodeId node02 = tree.newLeaf(node02Style);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
+        node03Style.direction = TaffyDirection.LTR;
         NodeId node03 = tree.newLeaf(node03Style);
 
-        Style node0Style = new Style();
-        node0Style.display = Display.GRID;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.auto());
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.3f)));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -758,39 +816,45 @@ public class GridflexTest {
     void gridflexKitchenSinkMinimise3ContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00Style.size = new Size<>(Dimension.length(20.0f), Dimension.length(20.0f));
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(20.0f));
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
         node01Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node01Style.direction = TaffyDirection.LTR;
         NodeId node01 = tree.newLeaf(node01Style);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
         node02Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node02Style.direction = TaffyDirection.LTR;
         NodeId node02 = tree.newLeaf(node02Style);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
         node03Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node03Style.direction = TaffyDirection.LTR;
         NodeId node03 = tree.newLeaf(node03Style);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.GRID;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.auto());
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.3f)));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fixed(LengthPercentage.percent(0.1f)));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -829,35 +893,41 @@ public class GridflexTest {
     void gridflexRowIntegrationBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
         MeasureFunc node00Measure = ahemTextMeasure("HH", false);
         NodeId node00 = tree.newLeafWithMeasure(node00Style, node00Measure);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
+        node01Style.direction = TaffyDirection.LTR;
         MeasureFunc node01Measure = ahemTextMeasure("HH", false);
         NodeId node01 = tree.newLeafWithMeasure(node01Style, node01Measure);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
+        node02Style.direction = TaffyDirection.LTR;
         MeasureFunc node02Measure = ahemTextMeasure("HH", false);
         NodeId node02 = tree.newLeafWithMeasure(node02Style, node02Measure);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
+        node03Style.direction = TaffyDirection.LTR;
         MeasureFunc node03Measure = ahemTextMeasure("HH", false);
         NodeId node03 = tree.newLeafWithMeasure(node03Style, node03Measure);
 
-        Style node0Style = new Style();
-        node0Style.display = Display.GRID;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(40.0f, nodeLayout.size().width, "width of node");
@@ -896,41 +966,47 @@ public class GridflexTest {
     void gridflexRowIntegrationContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node00Style.direction = TaffyDirection.LTR;
         MeasureFunc node00Measure = ahemTextMeasure("HH", false);
         NodeId node00 = tree.newLeafWithMeasure(node00Style, node00Measure);
 
-        Style node01Style = new Style();
+        TaffyStyle node01Style = new TaffyStyle();
         node01Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node01Style.direction = TaffyDirection.LTR;
         MeasureFunc node01Measure = ahemTextMeasure("HH", false);
         NodeId node01 = tree.newLeafWithMeasure(node01Style, node01Measure);
 
-        Style node02Style = new Style();
+        TaffyStyle node02Style = new TaffyStyle();
         node02Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node02Style.direction = TaffyDirection.LTR;
         MeasureFunc node02Measure = ahemTextMeasure("HH", false);
         NodeId node02 = tree.newLeafWithMeasure(node02Style, node02Measure);
 
-        Style node03Style = new Style();
+        TaffyStyle node03Style = new TaffyStyle();
         node03Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node03Style.direction = TaffyDirection.LTR;
         MeasureFunc node03Measure = ahemTextMeasure("HH", false);
         NodeId node03 = tree.newLeafWithMeasure(node03Style, node03Measure);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.GRID;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.GRID;
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateColumns.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         node0Style.gridTemplateRows.add(TrackSizingFunction.fr(1.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00, node01, node02, node03);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
+        nodeStyle.direction = TaffyDirection.LTR;
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(40.0f, nodeLayout.size().width, "width of node");

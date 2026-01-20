@@ -1,10 +1,10 @@
 package dev.vfyjxf.taffy;
 
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -20,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 // @Disabled("Ignored in Rust; grid/border edge cases pending") - Temporarily enabled for investigation
 public class BorderAndPaddingTest {
 
-    private Rect<LengthPercentage> arrToRect(LengthPercentage[] items) {
-        return new Rect<>(items[0], items[1], items[2], items[3]);
+    private TaffyRect<LengthPercentage> arrToRect(LengthPercentage[] items) {
+        return new TaffyRect<>(items[0], items[1], items[2], items[3]);
     }
 
     @Test
@@ -33,11 +33,11 @@ public class BorderAndPaddingTest {
                 LengthPercentage.ZERO, LengthPercentage.ZERO, LengthPercentage.ZERO, LengthPercentage.ZERO
             };
             lengths[i] = LengthPercentage.length(10f);
-            Style style = new Style();
+            TaffyStyle style = new TaffyStyle();
             style.border = arrToRect(lengths);
             NodeId node = tree.newLeaf(style);
 
-            tree.computeLayout(node, new Size<>(
+            tree.computeLayout(node, new TaffySize<>(
                 AvailableSpace.definite(100f),
                 AvailableSpace.definite(100f)
             ));
@@ -56,11 +56,11 @@ public class BorderAndPaddingTest {
                 LengthPercentage.ZERO, LengthPercentage.ZERO, LengthPercentage.ZERO, LengthPercentage.ZERO
             };
             lengths[i] = LengthPercentage.length(10f);
-            Style style = new Style();
+            TaffyStyle style = new TaffyStyle();
             style.padding = arrToRect(lengths);
             NodeId node = tree.newLeaf(style);
 
-            tree.computeLayout(node, new Size<>(
+            tree.computeLayout(node, new TaffySize<>(
                 AvailableSpace.definite(100f),
                 AvailableSpace.definite(100f)
             ));
@@ -79,13 +79,13 @@ public class BorderAndPaddingTest {
                 LengthPercentage.ZERO, LengthPercentage.ZERO, LengthPercentage.ZERO, LengthPercentage.ZERO
             };
             lengths[i] = LengthPercentage.length(10f);
-            Rect<LengthPercentage> rect = arrToRect(lengths);
-            Style style = new Style();
+            TaffyRect<LengthPercentage> rect = arrToRect(lengths);
+            TaffyStyle style = new TaffyStyle();
             style.border = rect;
             style.padding = rect;
             NodeId node = tree.newLeaf(style);
 
-            tree.computeLayout(node, new Size<>(
+            tree.computeLayout(node, new TaffySize<>(
                 AvailableSpace.definite(100f),
                 AvailableSpace.definite(100f)
             ));
@@ -100,8 +100,8 @@ public class BorderAndPaddingTest {
     void verticalBorderAndPaddingPercentageValuesUseAvailableSpaceCorrectly() {
         TaffyTree tree = new TaffyTree();
 
-        Style style = new Style();
-        style.padding = new Rect<>(
+        TaffyStyle style = new TaffyStyle();
+        style.padding = new TaffyRect<>(
             LengthPercentage.percent(1.0f),
             LengthPercentage.ZERO,
             LengthPercentage.percent(1.0f),
@@ -109,7 +109,7 @@ public class BorderAndPaddingTest {
         );
 
         NodeId node = tree.newLeaf(style);
-        tree.computeLayout(node, new Size<>(
+        tree.computeLayout(node, new TaffySize<>(
             AvailableSpace.definite(200f),
             AvailableSpace.definite(100f)
         ));

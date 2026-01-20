@@ -1,11 +1,10 @@
 package dev.vfyjxf.taffy.benchmark;
 
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -58,7 +57,7 @@ public class GridBenchmark {
 
     @Benchmark
     public void wideGrid(WideGridState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
+        state.tree.computeLayout(state.root, TaffySize.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -91,7 +90,7 @@ public class GridBenchmark {
     @Benchmark
     public void deepGrid(DeepGridState state, Blackhole bh) {
         // Rust uses: taffy.compute_layout(root, length(12000.0))
-        state.tree.computeLayout(state.root, Size.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
+        state.tree.computeLayout(state.root, TaffySize.of(AvailableSpace.definite(12000f), AvailableSpace.definite(12000f)));
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -119,7 +118,7 @@ public class GridBenchmark {
     @Benchmark
     public void superDeepGrid(SuperDeepGridState state, Blackhole bh) {
         // Rust uses: taffy.compute_layout(root, max_content())
-        state.tree.computeLayout(state.root, Size.maxContent());
+        state.tree.computeLayout(state.root, TaffySize.maxContent());
         bh.consume(state.tree.getLayout(state.root));
     }
 
@@ -130,8 +129,8 @@ public class GridBenchmark {
      * Rust: Style { size: length(20.0), ..Default::default() }
      */
     private static NodeId buildRandomLeaf(TaffyTree taffy, Random rng) {
-        Style style = new Style();
-        style.size = new Size<>(Dimension.length(20.0f), Dimension.length(20.0f));
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(20.0f));
         return taffy.newLeaf(style);
     }
 
@@ -173,9 +172,9 @@ public class GridBenchmark {
     /**
      * Create random NxN grid style (matching Rust's random_nxn_grid_style)
      */
-    private static Style randomNxNGridStyle(Random rng, int trackCount) {
-        Style style = new Style();
-        style.display = Display.GRID;
+    private static TaffyStyle randomNxNGridStyle(Random rng, int trackCount) {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
         
         List<TrackSizingFunction> cols = new ArrayList<>(trackCount);
         List<TrackSizingFunction> rows = new ArrayList<>(trackCount);
@@ -198,8 +197,8 @@ public class GridBenchmark {
         Random rng = new Random(SEED);
 
         // Create root style with random grid tracks
-        Style style = new Style();
-        style.display = Display.GRID;
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
         
         List<TrackSizingFunction> cols = new ArrayList<>(colCount);
         List<TrackSizingFunction> rows = new ArrayList<>(rowCount);
@@ -250,7 +249,7 @@ public class GridBenchmark {
         List<NodeId> nodes = new ArrayList<>(childCount);
         for (int i = 0; i < childCount; i++) {
             List<NodeId> subChildren = buildDeepGridTree(tree, levels - 1, trackCount, leafRng, containerRng);
-            Style gridStyle = randomNxNGridStyle(containerRng, trackCount);
+            TaffyStyle gridStyle = randomNxNGridStyle(containerRng, trackCount);
             NodeId container = tree.newWithChildren(gridStyle, subChildren.toArray(new NodeId[0]));
             nodes.add(container);
         }
@@ -275,11 +274,11 @@ public class GridBenchmark {
         if (trackCount == 1 && levels > 200) {
             NodeId child = buildRandomLeaf(taffy, leafRng);
             for (int lvl = 2; lvl <= levels; lvl++) {
-                Style gridStyle = randomNxNGridStyle(containerRng, 1);
+                TaffyStyle gridStyle = randomNxNGridStyle(containerRng, 1);
                 child = taffy.newWithChildren(gridStyle, new NodeId[]{child});
             }
 
-            Style rootStyle = new Style();
+            TaffyStyle rootStyle = new TaffyStyle();
             NodeId root = taffy.newWithChildren(rootStyle, new NodeId[]{child});
             return new Object[]{taffy, root};
         }
@@ -287,7 +286,7 @@ public class GridBenchmark {
         List<NodeId> tree = buildDeepGridTree(taffy, levels, trackCount, leafRng, containerRng);
         
         // Root with default style
-        Style rootStyle = new Style();
+        TaffyStyle rootStyle = new TaffyStyle();
         NodeId root = taffy.newWithChildren(rootStyle, tree.toArray(new NodeId[0]));
         
         return new Object[]{taffy, root};

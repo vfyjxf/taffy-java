@@ -287,7 +287,7 @@ public class TestGenerator {
         }
         
         // Generate style
-        sb.append(ind).append("Style ").append(ident).append("Style = new Style();\n");
+        sb.append(ind).append("TaffyStyle ").append(ident).append("Style = new TaffyStyle();\n");
         generateStyleSetters(sb, ident + "Style", style, ind);
 
         // Optional text content (used for intrinsic sizing via measure funcs)
@@ -373,14 +373,24 @@ public class TestGenerator {
                 sb.append(ind).append(styleVar).append(".boxSizing = BoxSizing.CONTENT_BOX;\n");
             }
         }
+
+        // Writing direction (LTR/RTL). Default is LTR so only emit when explicitly set.
+        if (style.has("direction") && !style.get("direction").isJsonNull()) {
+            String dir = style.get("direction").getAsString();
+            if ("rtl".equals(dir)) {
+                sb.append(ind).append(styleVar).append(".direction = TaffyDirection.RTL;\n");
+            } else if ("ltr".equals(dir)) {
+                sb.append(ind).append(styleVar).append(".direction = TaffyDirection.LTR;\n");
+            }
+        }
         
         // Display
         if (style.has("display") && !style.get("display").isJsonNull()) {
             String display = style.get("display").getAsString();
             switch (display) {
-                case "none" -> sb.append(ind).append(styleVar).append(".display = Display.NONE;\n");
-                case "block" -> sb.append(ind).append(styleVar).append(".display = Display.BLOCK;\n");
-                case "grid" -> sb.append(ind).append(styleVar).append(".display = Display.GRID;\n");
+                case "none" -> sb.append(ind).append(styleVar).append(".display = TaffyDisplay.NONE;\n");
+                case "block" -> sb.append(ind).append(styleVar).append(".display = TaffyDisplay.BLOCK;\n");
+                case "grid" -> sb.append(ind).append(styleVar).append(".display = TaffyDisplay.GRID;\n");
                 case "flex" -> {} // Default
             }
         }
@@ -389,7 +399,7 @@ public class TestGenerator {
         if (style.has("position") && !style.get("position").isJsonNull()) {
             String position = style.get("position").getAsString();
             if ("absolute".equals(position)) {
-                sb.append(ind).append(styleVar).append(".position = Position.ABSOLUTE;\n");
+                sb.append(ind).append(styleVar).append(".position = TaffyPosition.ABSOLUTE;\n");
             }
         }
         
@@ -475,22 +485,17 @@ public class TestGenerator {
             }
         }
         
-        // Flex grow
+        // Flex properties - direct field assignment
         if (style.has("flexGrow") && !style.get("flexGrow").isJsonNull()) {
             float fg = style.get("flexGrow").getAsFloat();
             sb.append(ind).append(styleVar).append(".flexGrow = ").append(fg).append("f;\n");
         }
-        
-        // Flex shrink
         if (style.has("flexShrink") && !style.get("flexShrink").isJsonNull()) {
             float fs = style.get("flexShrink").getAsFloat();
             sb.append(ind).append(styleVar).append(".flexShrink = ").append(fs).append("f;\n");
         }
-        
-        // Flex basis
         if (style.has("flexBasis") && !style.get("flexBasis").isJsonNull()) {
-            JsonObject fb = style.getAsJsonObject("flexBasis");
-            String dim = generateDimension(fb);
+            String dim = generateDimension(style.getAsJsonObject("flexBasis"));
             if (dim != null) {
                 sb.append(ind).append(styleVar).append(".flexBasis = ").append(dim).append(";\n");
             }
@@ -502,9 +507,9 @@ public class TestGenerator {
             String width = size.has("width") && !size.get("width").isJsonNull() ? generateDimension(size.getAsJsonObject("width")) : null;
             String height = size.has("height") && !size.get("height").isJsonNull() ? generateDimension(size.getAsJsonObject("height")) : null;
             if (width != null || height != null) {
-                sb.append(ind).append(styleVar).append(".size = new Size<>(")
-                    .append(width != null ? width : "Dimension.AUTO").append(", ")
-                    .append(height != null ? height : "Dimension.AUTO").append(");\n");
+                sb.append(ind).append(styleVar).append(".size = new TaffySize<>(")
+                    .append(width != null ? width : "TaffyDimension.AUTO").append(", ")
+                    .append(height != null ? height : "TaffyDimension.AUTO").append(");\n");
             }
         }
         
@@ -514,9 +519,9 @@ public class TestGenerator {
             String width = minSize.has("width") && !minSize.get("width").isJsonNull() ? generateDimension(minSize.getAsJsonObject("width")) : null;
             String height = minSize.has("height") && !minSize.get("height").isJsonNull() ? generateDimension(minSize.getAsJsonObject("height")) : null;
             if (width != null || height != null) {
-                sb.append(ind).append(styleVar).append(".minSize = new Size<>(")
-                    .append(width != null ? width : "Dimension.AUTO").append(", ")
-                    .append(height != null ? height : "Dimension.AUTO").append(");\n");
+                sb.append(ind).append(styleVar).append(".minSize = new TaffySize<>(")
+                    .append(width != null ? width : "TaffyDimension.AUTO").append(", ")
+                    .append(height != null ? height : "TaffyDimension.AUTO").append(");\n");
             }
         }
         
@@ -526,9 +531,9 @@ public class TestGenerator {
             String width = maxSize.has("width") && !maxSize.get("width").isJsonNull() ? generateDimension(maxSize.getAsJsonObject("width")) : null;
             String height = maxSize.has("height") && !maxSize.get("height").isJsonNull() ? generateDimension(maxSize.getAsJsonObject("height")) : null;
             if (width != null || height != null) {
-                sb.append(ind).append(styleVar).append(".maxSize = new Size<>(")
-                    .append(width != null ? width : "Dimension.AUTO").append(", ")
-                    .append(height != null ? height : "Dimension.AUTO").append(");\n");
+                sb.append(ind).append(styleVar).append(".maxSize = new TaffySize<>(")
+                    .append(width != null ? width : "TaffyDimension.AUTO").append(", ")
+                    .append(height != null ? height : "TaffyDimension.AUTO").append(");\n");
             }
         }
         
@@ -544,7 +549,7 @@ public class TestGenerator {
             String column = gap.has("column") && !gap.get("column").isJsonNull() ? generateLengthPercentage(gap.getAsJsonObject("column")) : null;
             String row = gap.has("row") && !gap.get("row").isJsonNull() ? generateLengthPercentage(gap.getAsJsonObject("row")) : null;
             if (column != null || row != null) {
-                sb.append(ind).append(styleVar).append(".gap = new Size<>(")
+                sb.append(ind).append(styleVar).append(".gap = new TaffySize<>(")
                     .append(column != null ? column : "LengthPercentage.ZERO").append(", ")
                     .append(row != null ? row : "LengthPercentage.ZERO").append(");\n");
             }
@@ -632,7 +637,7 @@ public class TestGenerator {
             JsonObject grs = style.getAsJsonObject("gridRowStart");
             String placement = generateGridPlacement(grs);
             if (placement != null) {
-                sb.append(ind).append(styleVar).append(".gridRow = new Line<>(").append(placement);
+                sb.append(ind).append(styleVar).append(".gridRow = new TaffyLine<>(").append(placement);
                 if (style.has("gridRowEnd") && !style.get("gridRowEnd").isJsonNull()) {
                     sb.append(", ").append(generateGridPlacement(style.getAsJsonObject("gridRowEnd")));
                 } else {
@@ -643,7 +648,7 @@ public class TestGenerator {
         } else if (style.has("gridRowEnd") && !style.get("gridRowEnd").isJsonNull()) {
             String placement = generateGridPlacement(style.getAsJsonObject("gridRowEnd"));
             if (placement != null) {
-                sb.append(ind).append(styleVar).append(".gridRow = new Line<>(GridPlacement.auto(), ").append(placement).append(");\n");
+                sb.append(ind).append(styleVar).append(".gridRow = new TaffyLine<>(GridPlacement.auto(), ").append(placement).append(");\n");
             }
         }
         
@@ -652,7 +657,7 @@ public class TestGenerator {
             JsonObject gcs = style.getAsJsonObject("gridColumnStart");
             String placement = generateGridPlacement(gcs);
             if (placement != null) {
-                sb.append(ind).append(styleVar).append(".gridColumn = new Line<>(").append(placement);
+                sb.append(ind).append(styleVar).append(".gridColumn = new TaffyLine<>(").append(placement);
                 if (style.has("gridColumnEnd") && !style.get("gridColumnEnd").isJsonNull()) {
                     sb.append(", ").append(generateGridPlacement(style.getAsJsonObject("gridColumnEnd")));
                 } else {
@@ -663,7 +668,7 @@ public class TestGenerator {
         } else if (style.has("gridColumnEnd") && !style.get("gridColumnEnd").isJsonNull()) {
             String placement = generateGridPlacement(style.getAsJsonObject("gridColumnEnd"));
             if (placement != null) {
-                sb.append(ind).append(styleVar).append(".gridColumn = new Line<>(GridPlacement.auto(), ").append(placement).append(");\n");
+                sb.append(ind).append(styleVar).append(".gridColumn = new TaffyLine<>(GridPlacement.auto(), ").append(placement).append(");\n");
             }
         }
         
@@ -675,7 +680,7 @@ public class TestGenerator {
             String oxVal = mapOverflow(ox);
             String oyVal = mapOverflow(oy);
             if (!"Overflow.VISIBLE".equals(oxVal) || !"Overflow.VISIBLE".equals(oyVal)) {
-                sb.append(ind).append(styleVar).append(".overflow = new Point<>(").append(oxVal).append(", ").append(oyVal).append(");\n");
+                sb.append(ind).append(styleVar).append(".overflow = new TaffyPoint<>(").append(oxVal).append(", ").append(oyVal).append(");\n");
                 // Set scrollbar width if overflow is scroll
                 if ("scroll".equals(ox) || "scroll".equals(oy)) {
                     if (style.has("scrollbarWidth") && !style.get("scrollbarWidth").isJsonNull()) {
@@ -936,9 +941,13 @@ public class TestGenerator {
         if (dim == null) return null;
         String unit = dim.get("unit").getAsString();
         return switch (unit) {
-            case "auto" -> "Dimension.AUTO";
-            case "px" -> "Dimension.length(" + dim.get("value").getAsFloat() + "f)";
-            case "percent" -> "Dimension.percent(" + dim.get("value").getAsFloat() + "f)";
+            case "auto" -> "TaffyDimension.AUTO";
+            case "px" -> "TaffyDimension.length(" + dim.get("value").getAsFloat() + "f)";
+            case "percent" -> "TaffyDimension.percent(" + dim.get("value").getAsFloat() + "f)";
+            case "min-content" -> "TaffyDimension.minContent()";
+            case "max-content" -> "TaffyDimension.maxContent()";
+            case "fit-content" -> "TaffyDimension.fitContent()";
+            case "stretch" -> "TaffyDimension.stretch()";
             default -> null;
         };
     }
@@ -960,6 +969,10 @@ public class TestGenerator {
             case "auto" -> "LengthPercentageAuto.AUTO";
             case "px" -> "LengthPercentageAuto.length(" + lpa.get("value").getAsFloat() + "f)";
             case "percent" -> "LengthPercentageAuto.percent(" + lpa.get("value").getAsFloat() + "f)";
+            case "min-content" -> "LengthPercentageAuto.minContent()";
+            case "max-content" -> "LengthPercentageAuto.maxContent()";
+            case "fit-content" -> "LengthPercentageAuto.fitContent()";
+            case "stretch" -> "LengthPercentageAuto.stretch()";
             default -> null;
         };
     }
@@ -984,7 +997,7 @@ public class TestGenerator {
         
         // Use the provided defaultSuffix (e.g., "ZERO" or "AUTO")
         String defaultValue = type + "." + defaultSuffix;
-        return "new Rect<>(" + 
+        return "new TaffyRect<>(" + 
             (left != null ? left : defaultValue) + ", " +
             (right != null ? right : defaultValue) + ", " +
             (top != null ? top : defaultValue) + ", " +
@@ -993,7 +1006,7 @@ public class TestGenerator {
     
     private static String generateAvailableSpace(JsonObject viewport) {
         if (viewport == null) {
-            return "Size.maxContent()";
+            return "TaffySize.maxContent()";
         }
         
         JsonObject width = viewport.has("width") ? viewport.getAsJsonObject("width") : null;
@@ -1003,13 +1016,13 @@ public class TestGenerator {
         boolean heightMaxContent = height == null || "max-content".equals(height.get("unit").getAsString());
         
         if (widthMaxContent && heightMaxContent) {
-            return "Size.maxContent()";
+            return "TaffySize.maxContent()";
         }
         
         String w = widthMaxContent ? "AvailableSpace.maxContent()" : generateAvailableSpaceDim(width);
         String h = heightMaxContent ? "AvailableSpace.maxContent()" : generateAvailableSpaceDim(height);
         
-        return "new Size<>(" + w + ", " + h + ")";
+        return "new TaffySize<>(" + w + ", " + h + ")";
     }
     
     private static String generateAvailableSpaceDim(JsonObject dim) {

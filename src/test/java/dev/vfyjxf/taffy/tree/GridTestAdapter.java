@@ -1,13 +1,12 @@
 package dev.vfyjxf.taffy.tree;
 
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.style.GridAutoFlow;
 import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.GridRepetition;
 import dev.vfyjxf.taffy.style.GridTemplateComponent;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 
 import java.util.ArrayList;
@@ -55,7 +54,7 @@ public final class GridTestAdapter {
     public static PlacementResult runPlacement(
             int explicitColumnCount,
             int explicitRowCount,
-            List<Style> childStyles,
+            List<TaffyStyle> childStyles,
             GridAutoFlow flow) {
         GridComputer.DebugPlacementResult raw = GridComputer.debugRunPlacementForTest(
                 explicitColumnCount,
@@ -87,7 +86,7 @@ public final class GridTestAdapter {
      * Port of Rust's compute_explicit_grid_size_in_axis (tests only).
      */
     public static ExplicitGridSizeInAxis computeExplicitGridSizeInAxis(
-            Style containerStyle,
+            TaffyStyle containerStyle,
             float autoFitContainerSize,
             AutoRepeatStrategy autoFitStrategy,
             boolean horizontalAxis) {
@@ -239,7 +238,7 @@ public final class GridTestAdapter {
         return val != null ? val : 0f;
     }
 
-    private static List<GridTemplateComponent> getTemplate(Style style, boolean horizontalAxis) {
+    private static List<GridTemplateComponent> getTemplate(TaffyStyle style, boolean horizontalAxis) {
         if (style == null) return null;
 
         List<GridTemplateComponent> withRepeat = horizontalAxis
@@ -286,7 +285,7 @@ public final class GridTestAdapter {
     /**
      * Port of Rust child_min_line_max_line_span. Returns values in OriginZero line coordinates.
      */
-    public static ChildMinMaxLineSpan childMinMaxLineSpan(Line<GridPlacement> line, int explicitTrackCount) {
+    public static ChildMinMaxLineSpan childMinMaxLineSpan(TaffyLine<GridPlacement> line, int explicitTrackCount) {
         if (line == null) {
             return new ChildMinMaxLineSpan(0, 0, 0);
         }
@@ -357,7 +356,7 @@ public final class GridTestAdapter {
     public static GridSizeEstimate computeGridSizeEstimate(
             int explicitColumnCount,
             int explicitRowCount,
-            List<Style> childStyles) {
+            List<TaffyStyle> childStyles) {
 
         int colMin = 0;
         int colMax = 0;
@@ -366,7 +365,7 @@ public final class GridTestAdapter {
         int rowMax = 0;
         int rowMaxSpan = 0;
 
-        for (Style child : childStyles) {
+        for (TaffyStyle child : childStyles) {
             ChildMinMaxLineSpan col = childMinMaxLineSpan(child.gridColumn, explicitColumnCount);
             ChildMinMaxLineSpan row = childMinMaxLineSpan(child.gridRow, explicitRowCount);
 
@@ -422,7 +421,7 @@ public final class GridTestAdapter {
      */
     public static List<DebugGridTrack> initializeGridTracks(
             TrackCounts counts,
-            Style containerStyle,
+            TaffyStyle containerStyle,
             boolean horizontalAxis,
             java.util.function.IntPredicate trackHasItems) {
 
@@ -624,7 +623,7 @@ public final class GridTestAdapter {
         }
     }
 
-    private static OriginZeroPlacement intoOriginZeroIgnoringNamed(Line<GridPlacement> line, int explicitTrackCount) {
+    private static OriginZeroPlacement intoOriginZeroIgnoringNamed(TaffyLine<GridPlacement> line, int explicitTrackCount) {
         GridPlacement start = line.start != null ? line.start : GridPlacement.auto();
         GridPlacement end = line.end != null ? line.end : GridPlacement.auto();
 

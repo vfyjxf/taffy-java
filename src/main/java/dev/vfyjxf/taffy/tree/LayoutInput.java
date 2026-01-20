@@ -1,8 +1,8 @@
 package dev.vfyjxf.taffy.tree;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 
 /**
@@ -22,8 +22,8 @@ public record LayoutInput(
     RequestedAxis axis,
     FloatSize knownDimensions,
     FloatSize parentSize,
-    Size<AvailableSpace> availableSpace,
-    Line<Boolean> verticalMarginsAreCollapsible
+    TaffySize<AvailableSpace> availableSpace,
+    TaffyLine<Boolean> verticalMarginsAreCollapsible
 ) {
 
     /**
@@ -35,8 +35,8 @@ public record LayoutInput(
         RequestedAxis.BOTH,
         FloatSize.none(),
         FloatSize.none(),
-        new Size<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT),
-        Line.FALSE
+        new TaffySize<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT),
+        TaffyLine.FALSE
     );
 
     /**
@@ -66,7 +66,7 @@ public record LayoutInput(
     /**
      * Create a copy with modified availableSpace
      */
-    public LayoutInput withAvailableSpace(Size<AvailableSpace> availableSpace) {
+    public LayoutInput withAvailableSpace(TaffySize<AvailableSpace> availableSpace) {
         return new LayoutInput(
             this.runMode,
             this.sizingMode,

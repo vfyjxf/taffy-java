@@ -95,15 +95,16 @@ public class LeafTest {
     void leafOverflowScrollbarsAffectAvailableSpaceXAxisBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(45.0f), Dimension.length(45.0f));
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.VISIBLE);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(45.0f), TaffyDimension.length(45.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.VISIBLE);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHHHHHHHHHHHHHHHHHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(45.0f, nodeLayout.size().width, "width of node");
@@ -117,16 +118,17 @@ public class LeafTest {
     void leafOverflowScrollbarsAffectAvailableSpaceXAxisContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(45.0f), Dimension.length(45.0f));
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.VISIBLE);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(45.0f), TaffyDimension.length(45.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.VISIBLE);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHHHHHHHHHHHHHHHHHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(45.0f, nodeLayout.size().width, "width of node");
@@ -140,15 +142,16 @@ public class LeafTest {
     void leafOverflowScrollbarsAffectAvailableSpaceYAxisBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(45.0f), Dimension.length(45.0f));
-        nodeStyle.overflow = new Point<>(Overflow.VISIBLE, Overflow.SCROLL);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(45.0f), TaffyDimension.length(45.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.VISIBLE, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHHHHHHHHHHHHHHHHHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(45.0f, nodeLayout.size().width, "width of node");
@@ -162,16 +165,17 @@ public class LeafTest {
     void leafOverflowScrollbarsAffectAvailableSpaceYAxisContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(45.0f), Dimension.length(45.0f));
-        nodeStyle.overflow = new Point<>(Overflow.VISIBLE, Overflow.SCROLL);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(45.0f), TaffyDimension.length(45.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.VISIBLE, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHHHHHHHHHHHHHHHHHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(45.0f, nodeLayout.size().width, "width of node");
@@ -185,18 +189,20 @@ public class LeafTest {
     void leafOverflowScrollbarsOverriddenByAvailableSpaceBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
         node0Style.flexGrow = 1.0f;
-        node0Style.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        node0Style.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         node0Style.scrollbarWidth = 15.0f;
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(2.0f), Dimension.length(4.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(2.0f), TaffyDimension.length(4.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(2.0f, nodeLayout.size().width, "width of node");
@@ -215,20 +221,22 @@ public class LeafTest {
     void leafOverflowScrollbarsOverriddenByAvailableSpaceContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node0Style.direction = TaffyDirection.LTR;
         node0Style.flexGrow = 1.0f;
-        node0Style.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        node0Style.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         node0Style.scrollbarWidth = 15.0f;
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(2.0f), Dimension.length(4.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(2.0f), TaffyDimension.length(4.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(2.0f, nodeLayout.size().width, "width of node");
@@ -247,14 +255,15 @@ public class LeafTest {
     void leafOverflowScrollbarsOverriddenByMaxSizeBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.maxSize = new Size<>(Dimension.length(2.0f), Dimension.length(4.0f));
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.maxSize = new TaffySize<>(TaffyDimension.length(2.0f), TaffyDimension.length(4.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(2.0f, nodeLayout.size().width, "width of node");
@@ -268,15 +277,16 @@ public class LeafTest {
     void leafOverflowScrollbarsOverriddenByMaxSizeContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.maxSize = new Size<>(Dimension.length(2.0f), Dimension.length(4.0f));
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.maxSize = new TaffySize<>(TaffyDimension.length(2.0f), TaffyDimension.length(4.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(2.0f, nodeLayout.size().width, "width of node");
@@ -290,14 +300,15 @@ public class LeafTest {
     void leafOverflowScrollbarsOverriddenBySizeBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(2.0f), Dimension.length(4.0f));
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(2.0f), TaffyDimension.length(4.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(2.0f, nodeLayout.size().width, "width of node");
@@ -311,15 +322,16 @@ public class LeafTest {
     void leafOverflowScrollbarsOverriddenBySizeContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(2.0f), Dimension.length(4.0f));
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(2.0f), TaffyDimension.length(4.0f));
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(2.0f, nodeLayout.size().width, "width of node");
@@ -333,14 +345,15 @@ public class LeafTest {
     void leafOverflowScrollbarsTakeUpSpaceBothAxisBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(35.0f, nodeLayout.size().width, "width of node");
@@ -354,15 +367,16 @@ public class LeafTest {
     void leafOverflowScrollbarsTakeUpSpaceBothAxisContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.SCROLL);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(35.0f, nodeLayout.size().width, "width of node");
@@ -376,14 +390,15 @@ public class LeafTest {
     void leafOverflowScrollbarsTakeUpSpaceXAxisBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.VISIBLE);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.VISIBLE);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(20.0f, nodeLayout.size().width, "width of node");
@@ -397,15 +412,16 @@ public class LeafTest {
     void leafOverflowScrollbarsTakeUpSpaceXAxisContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.overflow = new Point<>(Overflow.SCROLL, Overflow.VISIBLE);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.SCROLL, Overflow.VISIBLE);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(20.0f, nodeLayout.size().width, "width of node");
@@ -419,14 +435,15 @@ public class LeafTest {
     void leafOverflowScrollbarsTakeUpSpaceYAxisBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.overflow = new Point<>(Overflow.VISIBLE, Overflow.SCROLL);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.VISIBLE, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(35.0f, nodeLayout.size().width, "width of node");
@@ -440,15 +457,16 @@ public class LeafTest {
     void leafOverflowScrollbarsTakeUpSpaceYAxisContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.overflow = new Point<>(Overflow.VISIBLE, Overflow.SCROLL);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.overflow = new TaffyPoint<>(Overflow.VISIBLE, Overflow.SCROLL);
         nodeStyle.scrollbarWidth = 15.0f;
         MeasureFunc nodeMeasure = ahemTextMeasure("HH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(35.0f, nodeLayout.size().width, "width of node");
@@ -462,14 +480,15 @@ public class LeafTest {
     void leafPaddingBorderOverridesMaxSizeBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.maxSize = new Size<>(Dimension.length(12.0f), Dimension.length(12.0f));
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.maxSize = new TaffySize<>(TaffyDimension.length(12.0f), TaffyDimension.length(12.0f));
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(22.0f, nodeLayout.size().width, "width of node");
@@ -483,15 +502,16 @@ public class LeafTest {
     void leafPaddingBorderOverridesMaxSizeContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.maxSize = new Size<>(Dimension.length(12.0f), Dimension.length(12.0f));
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.maxSize = new TaffySize<>(TaffyDimension.length(12.0f), TaffyDimension.length(12.0f));
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(22.0f, nodeLayout.size().width, "width of node");
@@ -505,14 +525,15 @@ public class LeafTest {
     void leafPaddingBorderOverridesMinSizeBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.minSize = new Size<>(Dimension.length(0.0f), Dimension.length(0.0f));
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(22.0f, nodeLayout.size().width, "width of node");
@@ -526,15 +547,16 @@ public class LeafTest {
     void leafPaddingBorderOverridesMinSizeContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.minSize = new Size<>(Dimension.length(0.0f), Dimension.length(0.0f));
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(22.0f, nodeLayout.size().width, "width of node");
@@ -548,14 +570,15 @@ public class LeafTest {
     void leafPaddingBorderOverridesSizeBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(12.0f), Dimension.length(12.0f));
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(12.0f), TaffyDimension.length(12.0f));
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(22.0f, nodeLayout.size().width, "width of node");
@@ -569,15 +592,16 @@ public class LeafTest {
     void leafPaddingBorderOverridesSizeContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(12.0f), Dimension.length(12.0f));
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(12.0f), TaffyDimension.length(12.0f));
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         NodeId node = tree.newLeaf(nodeStyle);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(34.0f, nodeLayout.size().width, "width of node");
@@ -591,13 +615,14 @@ public class LeafTest {
     void leafWithContentAndBorderBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.border = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(52.0f, nodeLayout.size().width, "width of node");
@@ -611,14 +636,15 @@ public class LeafTest {
     void leafWithContentAndBorderContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.border = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(52.0f, nodeLayout.size().width, "width of node");
@@ -632,13 +658,14 @@ public class LeafTest {
     void leafWithContentAndPaddingBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(52.0f, nodeLayout.size().width, "width of node");
@@ -652,14 +679,15 @@ public class LeafTest {
     void leafWithContentAndPaddingContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(52.0f, nodeLayout.size().width, "width of node");
@@ -673,14 +701,15 @@ public class LeafTest {
     void leafWithContentAndPaddingBorderBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(62.0f, nodeLayout.size().width, "width of node");
@@ -694,15 +723,16 @@ public class LeafTest {
     void leafWithContentAndPaddingBorderContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.padding = new Rect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
-        nodeStyle.border = new Rect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.padding = new TaffyRect<>(LengthPercentage.length(8.0f), LengthPercentage.length(4.0f), LengthPercentage.length(2.0f), LengthPercentage.length(6.0f));
+        nodeStyle.border = new TaffyRect<>(LengthPercentage.length(7.0f), LengthPercentage.length(3.0f), LengthPercentage.length(1.0f), LengthPercentage.length(5.0f));
         MeasureFunc nodeMeasure = ahemTextMeasure("HHHH", false);
         NodeId node = tree.newLeafWithMeasure(nodeStyle, nodeMeasure);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(62.0f, nodeLayout.size().width, "width of node");

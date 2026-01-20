@@ -3,7 +3,7 @@ package dev.vfyjxf.taffy.style;
 import java.util.Objects;
 
 /**
- * A unit of linear measurement that can be either a fixed length or a percentage.
+ * A unit of linear measurement that can be either a fixed length, a percentage, or a calc expression.
  */
 public final class LengthPercentage {
 
@@ -18,15 +18,27 @@ public final class LengthPercentage {
         /**
          * A percentage length relative to the size of the containing block
          */
-        PERCENT
+        PERCENT,
+        /**
+         * A calc() expression that will be evaluated at layout time
+         */
+        CALC
     }
 
     private final Type type;
     private final float value;
+    private final CalcExpression calcExpression;
 
     private LengthPercentage(Type type, float value) {
         this.type = type;
         this.value = value;
+        this.calcExpression = null;
+    }
+    
+    private LengthPercentage(CalcExpression calcExpression) {
+        this.type = Type.CALC;
+        this.value = 0;
+        this.calcExpression = calcExpression;
     }
 
     /**
@@ -42,6 +54,14 @@ public final class LengthPercentage {
      */
     public static LengthPercentage percent(float value) {
         return new LengthPercentage(Type.PERCENT, value);
+    }
+    
+    /**
+     * Creates a calc() expression value.
+     * The expression will be evaluated during layout computation.
+     */
+    public static LengthPercentage calc(CalcExpression expression) {
+        return new LengthPercentage(expression);
     }
 
     /**
@@ -76,6 +96,20 @@ public final class LengthPercentage {
     public boolean isPercent() {
         return type == Type.PERCENT;
     }
+    
+    /**
+     * Returns true if this is a calc expression
+     */
+    public boolean isCalc() {
+        return type == Type.CALC;
+    }
+    
+    /**
+     * Returns the calc expression, or null if not a calc type
+     */
+    public CalcExpression getCalcExpression() {
+        return calcExpression;
+    }
 
     /**
      * Resolve this length against a context size
@@ -87,17 +121,19 @@ public final class LengthPercentage {
         return switch (type) {
             case LENGTH -> value;
             case PERCENT -> context * value;
+            case CALC -> calcExpression != null ? calcExpression.resolve(context) : 0f;
         };
     }
 
     /**
      * Resolve this length against a potentially null context size.
-     * Returns NaN if this is a percentage and context is null.
+     * Returns NaN if this is a percentage/calc and context is NaN.
      */
     public float maybeResolve(float context) {
         return switch (type) {
             case LENGTH -> value;
             case PERCENT -> Float.isNaN(context) ? Float.NaN : context * value;
+            case CALC -> Float.isNaN(context) ? Float.NaN : (calcExpression != null ? calcExpression.resolve(context) : 0f);
         };
     }
 
@@ -114,11 +150,18 @@ public final class LengthPercentage {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         LengthPercentage that = (LengthPercentage) o;
-        return type == that.type && Float.compare(value, that.value) == 0;
+        if (type != that.type) return false;
+        if (type == Type.CALC) {
+            return Objects.equals(calcExpression, that.calcExpression);
+        }
+        return Float.compare(value, that.value) == 0;
     }
 
     @Override
     public int hashCode() {
+        if (type == Type.CALC) {
+            return Objects.hash(type, calcExpression);
+        }
         return Objects.hash(type, value);
     }
 
@@ -127,6 +170,7 @@ public final class LengthPercentage {
         return switch (type) {
             case LENGTH -> value + "px";
             case PERCENT -> (value * 100) + "%";
+            case CALC -> "calc(...)";
         };
     }
 }

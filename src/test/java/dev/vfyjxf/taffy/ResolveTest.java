@@ -1,9 +1,9 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.Dimension;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -31,10 +31,10 @@ public class ResolveTest {
         @Test
         @DisplayName("resolve_auto")
         void resolveAuto() {
-            assertTrue(Float.isNaN(Dimension.AUTO.maybeResolve(Float.NaN)));
-            assertTrue(Float.isNaN(Dimension.AUTO.maybeResolve(5.0f)));
-            assertTrue(Float.isNaN(Dimension.AUTO.maybeResolve(-5.0f)));
-            assertTrue(Float.isNaN(Dimension.AUTO.maybeResolve(0f)));
+            assertTrue(Float.isNaN(TaffyDimension.AUTO.maybeResolve(Float.NaN)));
+            assertTrue(Float.isNaN(TaffyDimension.AUTO.maybeResolve(5.0f)));
+            assertTrue(Float.isNaN(TaffyDimension.AUTO.maybeResolve(-5.0f)));
+            assertTrue(Float.isNaN(TaffyDimension.AUTO.maybeResolve(0f)));
         }
 
         /**
@@ -45,10 +45,10 @@ public class ResolveTest {
         @Test
         @DisplayName("resolve_length")
         void resolveLength() {
-            assertEquals(1.0f, Dimension.length(1.0f).maybeResolve(Float.NaN), EPSILON);
-            assertEquals(1.0f, Dimension.length(1.0f).maybeResolve(5.0f), EPSILON);
-            assertEquals(1.0f, Dimension.length(1.0f).maybeResolve(-5.0f), EPSILON);
-            assertEquals(1.0f, Dimension.length(1.0f).maybeResolve(0f), EPSILON);
+            assertEquals(1.0f, TaffyDimension.length(1.0f).maybeResolve(Float.NaN), EPSILON);
+            assertEquals(1.0f, TaffyDimension.length(1.0f).maybeResolve(5.0f), EPSILON);
+            assertEquals(1.0f, TaffyDimension.length(1.0f).maybeResolve(-5.0f), EPSILON);
+            assertEquals(1.0f, TaffyDimension.length(1.0f).maybeResolve(0f), EPSILON);
         }
 
         /**
@@ -60,10 +60,10 @@ public class ResolveTest {
         @Test
         @DisplayName("resolve_percent")
         void resolvePercent() {
-            assertTrue(Float.isNaN(Dimension.percent(1.0f).maybeResolve(Float.NaN)));
-            assertEquals(5.0f, Dimension.percent(1.0f).maybeResolve(5.0f), EPSILON);
-            assertEquals(-5.0f, Dimension.percent(1.0f).maybeResolve(-5.0f), EPSILON);
-            assertEquals(50.0f, Dimension.percent(1.0f).maybeResolve(50.0f), EPSILON);
+            assertTrue(Float.isNaN(TaffyDimension.percent(1.0f).maybeResolve(Float.NaN)));
+            assertEquals(5.0f, TaffyDimension.percent(1.0f).maybeResolve(5.0f), EPSILON);
+            assertEquals(-5.0f, TaffyDimension.percent(1.0f).maybeResolve(-5.0f), EPSILON);
+            assertEquals(50.0f, TaffyDimension.percent(1.0f).maybeResolve(50.0f), EPSILON);
         }
     }
 
@@ -80,7 +80,7 @@ public class ResolveTest {
         @Test
         @DisplayName("maybe_resolve_auto")
         void maybeResolveAuto() {
-            var autoSize = Size.auto(Dimension::auto);
+            var autoSize = TaffySize.auto(TaffyDimension::auto);
             
             assertSizeEquals(FloatSize.none(), autoSize.maybeResolve(FloatSize.none()));
             assertSizeEquals(FloatSize.none(), autoSize.maybeResolve(FloatSize.of(5.0f, 5.0f)));
@@ -96,7 +96,7 @@ public class ResolveTest {
         @Test
         @DisplayName("maybe_resolve_length")
         void maybeResolveLength() {
-            var lengthSize = Size.of(Dimension.length(5.0f), Dimension.length(5.0f));
+            var lengthSize = TaffySize.of(TaffyDimension.length(5.0f), TaffyDimension.length(5.0f));
             
             assertSizeEquals(FloatSize.of(5.0f, 5.0f), lengthSize.maybeResolve(FloatSize.none()));
             assertSizeEquals(FloatSize.of(5.0f, 5.0f), lengthSize.maybeResolve(FloatSize.of(5.0f, 5.0f)));
@@ -113,7 +113,7 @@ public class ResolveTest {
         @Test
         @DisplayName("maybe_resolve_percent")
         void maybeResolvePercent() {
-            var percentSize = Size.of(Dimension.percent(5.0f), Dimension.percent(5.0f));
+            var percentSize = TaffySize.of(TaffyDimension.percent(5.0f), TaffyDimension.percent(5.0f));
             
             assertSizeEquals(FloatSize.none(), percentSize.maybeResolve(FloatSize.none()));
             assertSizeEquals(FloatSize.of(25.0f, 25.0f), percentSize.maybeResolve(FloatSize.of(5.0f, 5.0f)));
@@ -131,28 +131,28 @@ public class ResolveTest {
         @Test
         @DisplayName("resolve_or_zero_auto")
         void resolveOrZeroAuto() {
-            assertEquals(0.0f, Dimension.AUTO.resolveOrZero(Float.NaN), EPSILON);
-            assertEquals(0.0f, Dimension.AUTO.resolveOrZero(5.0f), EPSILON);
-            assertEquals(0.0f, Dimension.AUTO.resolveOrZero(-5.0f), EPSILON);
-            assertEquals(0.0f, Dimension.AUTO.resolveOrZero(0.0f), EPSILON);
+            assertEquals(0.0f, TaffyDimension.AUTO.resolveOrZero(Float.NaN), EPSILON);
+            assertEquals(0.0f, TaffyDimension.AUTO.resolveOrZero(5.0f), EPSILON);
+            assertEquals(0.0f, TaffyDimension.AUTO.resolveOrZero(-5.0f), EPSILON);
+            assertEquals(0.0f, TaffyDimension.AUTO.resolveOrZero(0.0f), EPSILON);
         }
 
         @Test
         @DisplayName("resolve_or_zero_length")
         void resolveOrZeroLength() {
-            assertEquals(5.0f, Dimension.length(5.0f).resolveOrZero(Float.NaN), EPSILON);
-            assertEquals(5.0f, Dimension.length(5.0f).resolveOrZero(5.0f), EPSILON);
-            assertEquals(5.0f, Dimension.length(5.0f).resolveOrZero(-5.0f), EPSILON);
-            assertEquals(5.0f, Dimension.length(5.0f).resolveOrZero(0.0f), EPSILON);
+            assertEquals(5.0f, TaffyDimension.length(5.0f).resolveOrZero(Float.NaN), EPSILON);
+            assertEquals(5.0f, TaffyDimension.length(5.0f).resolveOrZero(5.0f), EPSILON);
+            assertEquals(5.0f, TaffyDimension.length(5.0f).resolveOrZero(-5.0f), EPSILON);
+            assertEquals(5.0f, TaffyDimension.length(5.0f).resolveOrZero(0.0f), EPSILON);
         }
 
         @Test
         @DisplayName("resolve_or_zero_percent")
         void resolveOrZeroPercent() {
-            assertEquals(0.0f, Dimension.percent(5.0f).resolveOrZero(Float.NaN), EPSILON);
-            assertEquals(25.0f, Dimension.percent(5.0f).resolveOrZero(5.0f), EPSILON);
-            assertEquals(-25.0f, Dimension.percent(5.0f).resolveOrZero(-5.0f), EPSILON);
-            assertEquals(0.0f, Dimension.percent(5.0f).resolveOrZero(0.0f), EPSILON);
+            assertEquals(0.0f, TaffyDimension.percent(5.0f).resolveOrZero(Float.NaN), EPSILON);
+            assertEquals(25.0f, TaffyDimension.percent(5.0f).resolveOrZero(5.0f), EPSILON);
+            assertEquals(-25.0f, TaffyDimension.percent(5.0f).resolveOrZero(-5.0f), EPSILON);
+            assertEquals(0.0f, TaffyDimension.percent(5.0f).resolveOrZero(0.0f), EPSILON);
         }
     }
 
@@ -165,34 +165,34 @@ public class ResolveTest {
         @Test
         @DisplayName("resolve_or_zero_auto")
         void resolveOrZeroAuto() {
-            var autoRect = Rect.auto(Dimension::auto);
+            var autoRect = TaffyRect.auto(TaffyDimension::auto);
             
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(FloatSize.none()));
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(FloatSize.of(5.0f, 5.0f)));
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(FloatSize.of(-5.0f, -5.0f)));
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(FloatSize.of(0.0f, 0.0f)));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(FloatSize.none()));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(FloatSize.of(5.0f, 5.0f)));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(FloatSize.of(-5.0f, -5.0f)));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(FloatSize.of(0.0f, 0.0f)));
         }
 
         @Test
         @DisplayName("resolve_or_zero_length")
         void resolveOrZeroLength() {
-            var lengthRect = Rect.fromLength(5.0f);
+            var lengthRect = TaffyRect.fromLength(5.0f);
             
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.none()));
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.of(5.0f, 5.0f)));
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.of(-5.0f, -5.0f)));
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.of(0.0f, 0.0f)));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.none()));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.of(5.0f, 5.0f)));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.of(-5.0f, -5.0f)));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(FloatSize.of(0.0f, 0.0f)));
         }
 
         @Test
         @DisplayName("resolve_or_zero_percent")
         void resolveOrZeroPercent() {
-            var percentRect = Rect.fromPercent(5.0f);
+            var percentRect = TaffyRect.fromPercent(5.0f);
             
-            assertRectEquals(Rect.zero(), percentRect.resolveOrZero(FloatSize.none()));
-            assertRectEquals(Rect.of(25.0f, 25.0f, 25.0f, 25.0f), percentRect.resolveOrZero(FloatSize.of(5.0f, 5.0f)));
-            assertRectEquals(Rect.of(-25.0f, -25.0f, -25.0f, -25.0f), percentRect.resolveOrZero(FloatSize.of(-5.0f, -5.0f)));
-            assertRectEquals(Rect.zero(), percentRect.resolveOrZero(FloatSize.of(0.0f, 0.0f)));
+            assertRectEquals(TaffyRect.zero(), percentRect.resolveOrZero(FloatSize.none()));
+            assertRectEquals(TaffyRect.of(25.0f, 25.0f, 25.0f, 25.0f), percentRect.resolveOrZero(FloatSize.of(5.0f, 5.0f)));
+            assertRectEquals(TaffyRect.of(-25.0f, -25.0f, -25.0f, -25.0f), percentRect.resolveOrZero(FloatSize.of(-5.0f, -5.0f)));
+            assertRectEquals(TaffyRect.zero(), percentRect.resolveOrZero(FloatSize.of(0.0f, 0.0f)));
         }
     }
 
@@ -205,34 +205,34 @@ public class ResolveTest {
         @Test
         @DisplayName("resolve_or_zero_auto")
         void resolveOrZeroAuto() {
-            var autoRect = Rect.auto(Dimension::auto);
+            var autoRect = TaffyRect.auto(TaffyDimension::auto);
             
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(Float.NaN));
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(5.0f));
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(-5.0f));
-            assertRectEquals(Rect.zero(), autoRect.resolveOrZero(0.0f));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(Float.NaN));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(5.0f));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(-5.0f));
+            assertRectEquals(TaffyRect.zero(), autoRect.resolveOrZero(0.0f));
         }
 
         @Test
         @DisplayName("resolve_or_zero_length")
         void resolveOrZeroLength() {
-            var lengthRect = Rect.fromLength(5.0f);
+            var lengthRect = TaffyRect.fromLength(5.0f);
             
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(Float.NaN));
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(5.0f));
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(-5.0f));
-            assertRectEquals(Rect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(0.0f));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(Float.NaN));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(5.0f));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(-5.0f));
+            assertRectEquals(TaffyRect.of(5.0f, 5.0f, 5.0f, 5.0f), lengthRect.resolveOrZero(0.0f));
         }
 
         @Test
         @DisplayName("resolve_or_zero_percent")
         void resolveOrZeroPercent() {
-            var percentRect = Rect.fromPercent(5.0f);
+            var percentRect = TaffyRect.fromPercent(5.0f);
             
-            assertRectEquals(Rect.zero(), percentRect.resolveOrZero(Float.NaN));
-            assertRectEquals(Rect.of(25.0f, 25.0f, 25.0f, 25.0f), percentRect.resolveOrZero(5.0f));
-            assertRectEquals(Rect.of(-25.0f, -25.0f, -25.0f, -25.0f), percentRect.resolveOrZero(-5.0f));
-            assertRectEquals(Rect.zero(), percentRect.resolveOrZero(0.0f));
+            assertRectEquals(TaffyRect.zero(), percentRect.resolveOrZero(Float.NaN));
+            assertRectEquals(TaffyRect.of(25.0f, 25.0f, 25.0f, 25.0f), percentRect.resolveOrZero(5.0f));
+            assertRectEquals(TaffyRect.of(-25.0f, -25.0f, -25.0f, -25.0f), percentRect.resolveOrZero(-5.0f));
+            assertRectEquals(TaffyRect.zero(), percentRect.resolveOrZero(0.0f));
         }
     }
 
@@ -251,7 +251,7 @@ public class ResolveTest {
         }
     }
 
-    private void assertRectEquals(Rect<Float> expected, Rect<Float> actual) {
+    private void assertRectEquals(TaffyRect<Float> expected, TaffyRect<Float> actual) {
         assertEquals(expected.getLeft(), actual.getLeft(), EPSILON, "Left mismatch");
         assertEquals(expected.getRight(), actual.getRight(), EPSILON, "Right mismatch");
         assertEquals(expected.getTop(), actual.getTop(), EPSILON, "Top mismatch");

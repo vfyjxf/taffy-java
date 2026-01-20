@@ -1,18 +1,17 @@
 package dev.vfyjxf.taffy.benchmark;
 
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
-import dev.vfyjxf.taffy.geometry.Rect;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -50,8 +49,8 @@ public class TaffyBenchmark {
     private NodeId createWideTree(int leafCount) {
         TaffyTree tree = this.tree;
         
-        Style leafStyle = new Style();
-        leafStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
         leafStyle.flexGrow = 1.0f;
         
         NodeId[] children = new NodeId[leafCount];
@@ -59,11 +58,11 @@ public class TaffyBenchmark {
             children[i] = tree.newLeaf(leafStyle);
         }
         
-        Style parentStyle = new Style();
-        parentStyle.display = Display.FLEX;
+        TaffyStyle parentStyle = new TaffyStyle();
+        parentStyle.display = TaffyDisplay.FLEX;
         parentStyle.flexDirection = FlexDirection.ROW;
         parentStyle.flexWrap = FlexWrap.WRAP;
-        parentStyle.size = new Size<>(Dimension.length(1000), Dimension.AUTO);
+        parentStyle.size = new TaffySize<>(TaffyDimension.length(1000), TaffyDimension.AUTO);
         
         return tree.newWithChildren(parentStyle, children);
     }
@@ -71,7 +70,7 @@ public class TaffyBenchmark {
     @Benchmark
     public void benchmarkLayoutComputation() {
         tree.markDirty(rootNode);
-        tree.computeLayout(rootNode, new Size<>(
+        tree.computeLayout(rootNode, new TaffySize<>(
             AvailableSpace.definite(1000f),
             AvailableSpace.definite(10000f)
         ));
@@ -92,16 +91,16 @@ public class TaffyBenchmark {
         }
 
         private NodeId createDeepTree(int depth) {
-            Style leafStyle = new Style();
-            leafStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle leafStyle = new TaffyStyle();
+            leafStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             
             NodeId currentNode = tree.newLeaf(leafStyle);
             
             for (int i = 1; i < depth; i++) {
-                Style parentStyle = new Style();
-                parentStyle.display = Display.FLEX;
+                TaffyStyle parentStyle = new TaffyStyle();
+                parentStyle.display = TaffyDisplay.FLEX;
                 parentStyle.flexDirection = FlexDirection.COLUMN;
-                parentStyle.padding = Rect.all(LengthPercentage.length(10f));
+                parentStyle.padding = TaffyRect.all(LengthPercentage.length(10f));
                 
                 currentNode = tree.newWithChildren(parentStyle, currentNode);
             }
@@ -113,7 +112,7 @@ public class TaffyBenchmark {
     @Benchmark
     public void benchmarkDeepTreeLayout(DeepTreeState state) {
         state.tree.markDirty(state.rootNode);
-        state.tree.computeLayout(state.rootNode, new Size<>(
+        state.tree.computeLayout(state.rootNode, new TaffySize<>(
             AvailableSpace.maxContent(),
             AvailableSpace.maxContent()
         ));
@@ -136,17 +135,17 @@ public class TaffyBenchmark {
         private NodeId createGrid(int size) {
             int totalCells = size * size;
             
-            Style cellStyle = new Style();
-            cellStyle.size = new Size<>(Dimension.length(50), Dimension.length(50));
+            TaffyStyle cellStyle = new TaffyStyle();
+            cellStyle.size = new TaffySize<>(TaffyDimension.length(50), TaffyDimension.length(50));
             
             NodeId[] cells = new NodeId[totalCells];
             for (int i = 0; i < totalCells; i++) {
                 cells[i] = tree.newLeaf(cellStyle);
             }
             
-            Style gridStyle = new Style();
-            gridStyle.display = Display.GRID;
-            gridStyle.gap = new Size<>(LengthPercentage.length(10f), LengthPercentage.length(10f));
+            TaffyStyle gridStyle = new TaffyStyle();
+            gridStyle.display = TaffyDisplay.GRID;
+            gridStyle.gap = new TaffySize<>(LengthPercentage.length(10f), LengthPercentage.length(10f));
             
             // Add column template
             for (int i = 0; i < size; i++) {
@@ -160,7 +159,7 @@ public class TaffyBenchmark {
     @Benchmark
     public void benchmarkGridLayout(GridState state) {
         state.tree.markDirty(state.rootNode);
-        state.tree.computeLayout(state.rootNode, new Size<>(
+        state.tree.computeLayout(state.rootNode, new TaffySize<>(
             AvailableSpace.definite(1000f),
             AvailableSpace.definite(1000f)
         ));
@@ -176,8 +175,8 @@ public class TaffyBenchmark {
     public TaffyTree benchmarkTreeCreation(TreeCreationState state) {
         TaffyTree tree = new TaffyTree();
         
-        Style leafStyle = new Style();
-        leafStyle.size = new Size<>(Dimension.length(100), Dimension.length(100));
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.size = new TaffySize<>(TaffyDimension.length(100), TaffyDimension.length(100));
         
         for (int i = 0; i < state.nodeCount; i++) {
             tree.newLeaf(leafStyle);

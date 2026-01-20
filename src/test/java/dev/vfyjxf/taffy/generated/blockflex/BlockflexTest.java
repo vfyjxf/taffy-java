@@ -95,22 +95,25 @@ public class BlockflexTest {
     void blockflexBlockInFlexColumnBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
-        node0Style.display = Display.BLOCK;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style node1Style = new Style();
-        node1Style.display = Display.BLOCK;
-        node1Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
+        node1Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
         nodeStyle.flexDirection = FlexDirection.COLUMN;
-        nodeStyle.size = new Size<>(Dimension.length(200.0f), Dimension.length(50.0f));
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.length(50.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(200.0f, nodeLayout.size().width, "width of node");
@@ -134,25 +137,28 @@ public class BlockflexTest {
     void blockflexBlockInFlexColumnContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.BLOCK;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style node1Style = new Style();
+        TaffyStyle node1Style = new TaffyStyle();
         node1Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node1Style.display = Display.BLOCK;
-        node1Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
+        node1Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
+        nodeStyle.direction = TaffyDirection.LTR;
         nodeStyle.flexDirection = FlexDirection.COLUMN;
-        nodeStyle.size = new Size<>(Dimension.length(200.0f), Dimension.length(50.0f));
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.length(50.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(200.0f, nodeLayout.size().width, "width of node");
@@ -176,21 +182,24 @@ public class BlockflexTest {
     void blockflexBlockInFlexRowBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
-        node0Style.display = Display.BLOCK;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style node1Style = new Style();
-        node1Style.display = Display.BLOCK;
-        node1Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
+        node1Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(200.0f), Dimension.length(50.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.length(50.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(200.0f, nodeLayout.size().width, "width of node");
@@ -214,24 +223,27 @@ public class BlockflexTest {
     void blockflexBlockInFlexRowContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.BLOCK;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style node1Style = new Style();
+        TaffyStyle node1Style = new TaffyStyle();
         node1Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node1Style.display = Display.BLOCK;
-        node1Style.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
+        node1Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(200.0f), Dimension.length(50.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.length(50.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(200.0f, nodeLayout.size().width, "width of node");
@@ -255,25 +267,29 @@ public class BlockflexTest {
     void blockflexFlexInBlockBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
-        node00Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style node1Style = new Style();
-        node1Style.display = Display.BLOCK;
-        node1Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(20.0f));
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
+        node1Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(20.0f));
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style nodeStyle = new Style();
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(200.0f), Dimension.AUTO);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(200.0f, nodeLayout.size().width, "width of node");
@@ -302,29 +318,33 @@ public class BlockflexTest {
     void blockflexFlexInBlockContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(50.0f));
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(50.0f));
         NodeId node00 = tree.newLeaf(node00Style);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
+        node0Style.direction = TaffyDirection.LTR;
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style node1Style = new Style();
+        TaffyStyle node1Style = new TaffyStyle();
         node1Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node1Style.display = Display.BLOCK;
-        node1Style.size = new Size<>(Dimension.length(50.0f), Dimension.length(20.0f));
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
+        node1Style.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.length(20.0f));
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(200.0f), Dimension.AUTO);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(200.0f, nodeLayout.size().width, "width of node");
@@ -353,29 +373,33 @@ public class BlockflexTest {
     void blockflexMarginYCollapseThroughBlockedByFlexBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
-        node0Style.display = Display.BLOCK;
-        node0Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
-        node0Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
+        node0Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
+        node0Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style node1Style = new Style();
-        node1Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.length(10.0f));
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.length(10.0f));
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style node2Style = new Style();
-        node2Style.display = Display.BLOCK;
-        node2Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
-        node2Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
+        TaffyStyle node2Style = new TaffyStyle();
+        node2Style.direction = TaffyDirection.LTR;
+        node2Style.display = TaffyDisplay.BLOCK;
+        node2Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
+        node2Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
         NodeId node2 = tree.newLeaf(node2Style);
 
-        Style nodeStyle = new Style();
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1, node2);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -404,33 +428,37 @@ public class BlockflexTest {
     void blockflexMarginYCollapseThroughBlockedByFlexContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.BLOCK;
-        node0Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
-        node0Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
+        node0Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
+        node0Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
         NodeId node0 = tree.newLeaf(node0Style);
 
-        Style node1Style = new Style();
+        TaffyStyle node1Style = new TaffyStyle();
         node1Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node1Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.length(10.0f));
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.length(10.0f));
         NodeId node1 = tree.newLeaf(node1Style);
 
-        Style node2Style = new Style();
+        TaffyStyle node2Style = new TaffyStyle();
         node2Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node2Style.display = Display.BLOCK;
-        node2Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
-        node2Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
+        node2Style.direction = TaffyDirection.LTR;
+        node2Style.display = TaffyDisplay.BLOCK;
+        node2Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
+        node2Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
         NodeId node2 = tree.newLeaf(node2Style);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1, node2);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -459,26 +487,30 @@ public class BlockflexTest {
     void blockflexMarginYFirstChildCollapseBlockedByFlexBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node000Style = new Style();
-        node000Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
+        TaffyStyle node000Style = new TaffyStyle();
+        node000Style.direction = TaffyDirection.LTR;
+        node000Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
         NodeId node000 = tree.newLeaf(node000Style);
 
-        Style node00Style = new Style();
-        node00Style.display = Display.BLOCK;
-        node00Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.display = TaffyDisplay.BLOCK;
+        node00Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
         NodeId node00 = tree.newWithChildren(node00Style, node000);
 
-        Style node0Style = new Style();
-        node0Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style nodeStyle = new Style();
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -507,30 +539,34 @@ public class BlockflexTest {
     void blockflexMarginYFirstChildCollapseBlockedByFlexContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node000Style = new Style();
+        TaffyStyle node000Style = new TaffyStyle();
         node000Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node000Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
+        node000Style.direction = TaffyDirection.LTR;
+        node000Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
         NodeId node000 = tree.newLeaf(node000Style);
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00Style.display = Display.BLOCK;
-        node00Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.display = TaffyDisplay.BLOCK;
+        node00Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
         NodeId node00 = tree.newWithChildren(node00Style, node000);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f), LengthPercentageAuto.ZERO);
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -559,26 +595,30 @@ public class BlockflexTest {
     void blockflexMarginYLastChildCollapseBlockedByFlexBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node000Style = new Style();
-        node000Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
+        TaffyStyle node000Style = new TaffyStyle();
+        node000Style.direction = TaffyDirection.LTR;
+        node000Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
         NodeId node000 = tree.newLeaf(node000Style);
 
-        Style node00Style = new Style();
-        node00Style.display = Display.BLOCK;
-        node00Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
+        TaffyStyle node00Style = new TaffyStyle();
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.display = TaffyDisplay.BLOCK;
+        node00Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
         NodeId node00 = tree.newWithChildren(node00Style, node000);
 
-        Style node0Style = new Style();
-        node0Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style nodeStyle = new Style();
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -607,30 +647,34 @@ public class BlockflexTest {
     void blockflexMarginYLastChildCollapseBlockedByFlexContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node000Style = new Style();
+        TaffyStyle node000Style = new TaffyStyle();
         node000Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node000Style.size = new Size<>(Dimension.AUTO, Dimension.length(10.0f));
+        node000Style.direction = TaffyDirection.LTR;
+        node000Style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10.0f));
         NodeId node000 = tree.newLeaf(node000Style);
 
-        Style node00Style = new Style();
+        TaffyStyle node00Style = new TaffyStyle();
         node00Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node00Style.display = Display.BLOCK;
-        node00Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
+        node00Style.direction = TaffyDirection.LTR;
+        node00Style.display = TaffyDisplay.BLOCK;
+        node00Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
         NodeId node00 = tree.newWithChildren(node00Style, node000);
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.margin = new Rect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.margin = new TaffyRect<>(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10.0f));
         NodeId node0 = tree.newWithChildren(node0Style, node00);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.display = Display.BLOCK;
-        nodeStyle.size = new Size<>(Dimension.length(50.0f), Dimension.AUTO);
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.display = TaffyDisplay.BLOCK;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(50.0f), TaffyDimension.AUTO);
         NodeId node = tree.newWithChildren(nodeStyle, node0);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(50.0f, nodeLayout.size().width, "width of node");
@@ -659,25 +703,28 @@ public class BlockflexTest {
     void blockflexOverflowHiddenBorderBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
-        node0Style.display = Display.BLOCK;
+        TaffyStyle node0Style = new TaffyStyle();
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
         node0Style.flexGrow = 1.0f;
-        node0Style.overflow = new Point<>(Overflow.HIDDEN, Overflow.HIDDEN);
+        node0Style.overflow = new TaffyPoint<>(Overflow.HIDDEN, Overflow.HIDDEN);
         MeasureFunc node0Measure = ahemTextMeasure("HHHH\u200BHH", false);
         NodeId node0 = tree.newLeafWithMeasure(node0Style, node0Measure);
 
-        Style node1Style = new Style();
-        node1Style.display = Display.BLOCK;
+        TaffyStyle node1Style = new TaffyStyle();
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
         node1Style.flexGrow = 1.0f;
         MeasureFunc node1Measure = ahemTextMeasure("HHHH\u200BHH", false);
         NodeId node1 = tree.newLeafWithMeasure(node1Style, node1Measure);
 
-        Style nodeStyle = new Style();
-        nodeStyle.size = new Size<>(Dimension.length(20.0f), Dimension.length(50.0f));
+        TaffyStyle nodeStyle = new TaffyStyle();
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(50.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(20.0f, nodeLayout.size().width, "width of node");
@@ -701,28 +748,31 @@ public class BlockflexTest {
     void blockflexOverflowHiddenContentBox() {
         TaffyTree tree = new TaffyTree();
 
-        Style node0Style = new Style();
+        TaffyStyle node0Style = new TaffyStyle();
         node0Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node0Style.display = Display.BLOCK;
+        node0Style.direction = TaffyDirection.LTR;
+        node0Style.display = TaffyDisplay.BLOCK;
         node0Style.flexGrow = 1.0f;
-        node0Style.overflow = new Point<>(Overflow.HIDDEN, Overflow.HIDDEN);
+        node0Style.overflow = new TaffyPoint<>(Overflow.HIDDEN, Overflow.HIDDEN);
         MeasureFunc node0Measure = ahemTextMeasure("HHHH\u200BHH", false);
         NodeId node0 = tree.newLeafWithMeasure(node0Style, node0Measure);
 
-        Style node1Style = new Style();
+        TaffyStyle node1Style = new TaffyStyle();
         node1Style.boxSizing = BoxSizing.CONTENT_BOX;
-        node1Style.display = Display.BLOCK;
+        node1Style.direction = TaffyDirection.LTR;
+        node1Style.display = TaffyDisplay.BLOCK;
         node1Style.flexGrow = 1.0f;
         MeasureFunc node1Measure = ahemTextMeasure("HHHH\u200BHH", false);
         NodeId node1 = tree.newLeafWithMeasure(node1Style, node1Measure);
 
-        Style nodeStyle = new Style();
+        TaffyStyle nodeStyle = new TaffyStyle();
         nodeStyle.boxSizing = BoxSizing.CONTENT_BOX;
-        nodeStyle.size = new Size<>(Dimension.length(20.0f), Dimension.length(50.0f));
+        nodeStyle.direction = TaffyDirection.LTR;
+        nodeStyle.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(50.0f));
         NodeId node = tree.newWithChildren(nodeStyle, node0, node1);
 
 
-        tree.computeLayout(node, Size.maxContent());
+        tree.computeLayout(node, TaffySize.maxContent());
 
         Layout nodeLayout = tree.getLayout(node);
         assertEquals(20.0f, nodeLayout.size().width, "width of node");

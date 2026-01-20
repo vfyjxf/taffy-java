@@ -1,20 +1,19 @@
 package dev.vfyjxf.taffy.benchmark;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Line;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
-import dev.vfyjxf.taffy.style.*;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
-import dev.vfyjxf.taffy.style.Dimension;
-import dev.vfyjxf.taffy.style.Display;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.FlexWrap;
 import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.LengthPercentage;
-import dev.vfyjxf.taffy.style.Style;
+import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -72,7 +71,7 @@ public class RealisticBenchmark {
     @Benchmark
     public void webPageLayout(WebPageState state, Blackhole bh) {
         // Typical browser viewport
-        state.tree.computeLayout(state.root, Size.of(
+        state.tree.computeLayout(state.root, TaffySize.of(
             AvailableSpace.definite(1920f),
             AvailableSpace.definite(1080f)
         ));
@@ -100,7 +99,7 @@ public class RealisticBenchmark {
     @Benchmark
     public void virtualList(VirtualListState state, Blackhole bh) {
         // Mobile viewport width, unconstrained height
-        state.tree.computeLayout(state.root, Size.of(
+        state.tree.computeLayout(state.root, TaffySize.of(
             AvailableSpace.definite(375f),
             AvailableSpace.maxContent()
         ));
@@ -127,7 +126,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void dashboardGrid(DashboardState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.of(
+        state.tree.computeLayout(state.root, TaffySize.of(
             AvailableSpace.definite(1440f),
             AvailableSpace.definite(900f)
         ));
@@ -154,7 +153,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void formLayout(FormState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.of(
+        state.tree.computeLayout(state.root, TaffySize.of(
             AvailableSpace.definite(600f),
             AvailableSpace.maxContent()
         ));
@@ -184,7 +183,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void nestedCards(NestedCardsState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.of(
+        state.tree.computeLayout(state.root, TaffySize.of(
             AvailableSpace.definite(1200f),
             AvailableSpace.maxContent()
         ));
@@ -217,7 +216,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void chatUI(ChatUIState state, Blackhole bh) {
-        state.tree.computeLayoutWithMeasure(state.root, Size.of(
+        state.tree.computeLayoutWithMeasure(state.root, TaffySize.of(
             AvailableSpace.definite(375f),
             AvailableSpace.maxContent()
         ), null);
@@ -250,7 +249,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void ecommerceGrid(EcommerceState state, Blackhole bh) {
-        state.tree.computeLayoutWithMeasure(state.root, Size.of(
+        state.tree.computeLayoutWithMeasure(state.root, TaffySize.of(
             AvailableSpace.definite(1200f),
             AvailableSpace.maxContent()
         ), null);
@@ -289,7 +288,7 @@ public class RealisticBenchmark {
     @Benchmark
     public void responsiveMultiSize(ResponsiveState state, Blackhole bh) {
         for (float[] vp : state.viewports) {
-            state.tree.computeLayout(state.root, Size.of(
+            state.tree.computeLayout(state.root, TaffySize.of(
                 AvailableSpace.definite(vp[0]),
                 AvailableSpace.definite(vp[1])
             ));
@@ -320,7 +319,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void dataTable(DataTableState state, Blackhole bh) {
-        state.tree.computeLayout(state.root, Size.of(
+        state.tree.computeLayout(state.root, TaffySize.of(
             AvailableSpace.definite(1400f),
             AvailableSpace.maxContent()
         ));
@@ -353,7 +352,7 @@ public class RealisticBenchmark {
 
     @Benchmark
     public void mobileAppScreen(MobileAppState state, Blackhole bh) {
-        state.tree.computeLayoutWithMeasure(state.root, Size.of(
+        state.tree.computeLayoutWithMeasure(state.root, TaffySize.of(
             AvailableSpace.definite(375f),
             AvailableSpace.definite(812f)
         ), null);
@@ -364,18 +363,18 @@ public class RealisticBenchmark {
 
     private static NodeId buildWebPage(TaffyTree tree, int contentSections) {
         // Root: column flex container
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.COLUMN;
-        rootStyle.size = new Size<>(Dimension.percent(1f), Dimension.percent(1f));
+        rootStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.percent(1f));
 
         // Header
-        Style headerStyle = new Style();
-        headerStyle.display = Display.FLEX;
+        TaffyStyle headerStyle = new TaffyStyle();
+        headerStyle.display = TaffyDisplay.FLEX;
         headerStyle.flexDirection = FlexDirection.ROW;
-        headerStyle.size = new Size<>(Dimension.percent(1f), Dimension.length(60f));
-        headerStyle.padding = Rect.all(LengthPercentage.length(16f));
-        headerStyle.gap = new Size<>(LengthPercentage.length(16f), LengthPercentage.length(0f));
+        headerStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.length(60f));
+        headerStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
+        headerStyle.gap = new TaffySize<>(LengthPercentage.length(16f), LengthPercentage.length(0f));
         
         NodeId logo = tree.newLeaf(createBoxStyle(120f, 40f));
         NodeId[] navItems = new NodeId[5];
@@ -386,18 +385,18 @@ public class RealisticBenchmark {
         NodeId header = tree.newWithChildren(headerStyle, new NodeId[]{logo, nav});
 
         // Body: sidebar + main
-        Style bodyStyle = new Style();
-        bodyStyle.display = Display.FLEX;
+        TaffyStyle bodyStyle = new TaffyStyle();
+        bodyStyle.display = TaffyDisplay.FLEX;
         bodyStyle.flexDirection = FlexDirection.ROW;
         bodyStyle.flexGrow = 1f;
 
         // Sidebar
-        Style sidebarStyle = new Style();
-        sidebarStyle.display = Display.FLEX;
+        TaffyStyle sidebarStyle = new TaffyStyle();
+        sidebarStyle.display = TaffyDisplay.FLEX;
         sidebarStyle.flexDirection = FlexDirection.COLUMN;
-        sidebarStyle.size = new Size<>(Dimension.length(250f), Dimension.AUTO);
-        sidebarStyle.padding = Rect.all(LengthPercentage.length(16f));
-        sidebarStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
+        sidebarStyle.size = new TaffySize<>(TaffyDimension.length(250f), TaffyDimension.AUTO);
+        sidebarStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
+        sidebarStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
         
         NodeId[] sidebarItems = new NodeId[8];
         for (int i = 0; i < 8; i++) {
@@ -406,12 +405,12 @@ public class RealisticBenchmark {
         NodeId sidebar = tree.newWithChildren(sidebarStyle, sidebarItems);
 
         // Main content
-        Style mainStyle = new Style();
-        mainStyle.display = Display.FLEX;
+        TaffyStyle mainStyle = new TaffyStyle();
+        mainStyle.display = TaffyDisplay.FLEX;
         mainStyle.flexDirection = FlexDirection.COLUMN;
         mainStyle.flexGrow = 1f;
-        mainStyle.padding = Rect.all(LengthPercentage.length(24f));
-        mainStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(24f));
+        mainStyle.padding = TaffyRect.all(LengthPercentage.length(24f));
+        mainStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(24f));
 
         NodeId[] sections = new NodeId[contentSections];
         Random rng = new Random(SEED);
@@ -423,12 +422,12 @@ public class RealisticBenchmark {
         NodeId body = tree.newWithChildren(bodyStyle, new NodeId[]{sidebar, main});
 
         // Footer
-        Style footerStyle = new Style();
-        footerStyle.display = Display.FLEX;
+        TaffyStyle footerStyle = new TaffyStyle();
+        footerStyle.display = TaffyDisplay.FLEX;
         footerStyle.flexDirection = FlexDirection.ROW;
         footerStyle.justifyContent = AlignContent.SPACE_BETWEEN;
-        footerStyle.size = new Size<>(Dimension.percent(1f), Dimension.length(80f));
-        footerStyle.padding = Rect.all(LengthPercentage.length(16f));
+        footerStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.length(80f));
+        footerStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
 
         NodeId[] footerCols = new NodeId[4];
         for (int i = 0; i < 4; i++) {
@@ -440,11 +439,11 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildContentSection(TaffyTree tree, Random rng) {
-        Style sectionStyle = new Style();
-        sectionStyle.display = Display.FLEX;
+        TaffyStyle sectionStyle = new TaffyStyle();
+        sectionStyle.display = TaffyDisplay.FLEX;
         sectionStyle.flexDirection = FlexDirection.COLUMN;
-        sectionStyle.padding = Rect.all(LengthPercentage.length(16f));
-        sectionStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(12f));
+        sectionStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
+        sectionStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(12f));
 
         // Title
         NodeId title = tree.newLeaf(createBoxStyle(Float.NaN, 32f));
@@ -460,8 +459,8 @@ public class RealisticBenchmark {
             for (int j = 0; j < colCount; j++) {
                 cols[j] = tree.newLeaf(createBoxStyle(Float.NaN, 40f + rng.nextFloat() * 60f));
             }
-            Style rowStyle = createFlexRowStyle();
-            rowStyle.gap = new Size<>(LengthPercentage.length(12f), LengthPercentage.length(0f));
+            TaffyStyle rowStyle = createFlexRowStyle();
+            rowStyle.gap = new TaffySize<>(LengthPercentage.length(12f), LengthPercentage.length(0f));
             rows[i + 1] = tree.newWithChildren(rowStyle, cols);
         }
 
@@ -469,11 +468,11 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildVirtualList(TaffyTree tree, int itemCount) {
-        Style listStyle = new Style();
-        listStyle.display = Display.FLEX;
+        TaffyStyle listStyle = new TaffyStyle();
+        listStyle.display = TaffyDisplay.FLEX;
         listStyle.flexDirection = FlexDirection.COLUMN;
-        listStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
-        listStyle.padding = Rect.all(LengthPercentage.length(12f));
+        listStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
+        listStyle.padding = TaffyRect.all(LengthPercentage.length(12f));
 
         Random rng = new Random(SEED);
         NodeId[] items = new NodeId[itemCount];
@@ -486,21 +485,21 @@ public class RealisticBenchmark {
 
     private static NodeId buildListItem(TaffyTree tree, Random rng) {
         // List item: avatar | content | action
-        Style itemStyle = new Style();
-        itemStyle.display = Display.FLEX;
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.display = TaffyDisplay.FLEX;
         itemStyle.flexDirection = FlexDirection.ROW;
         itemStyle.alignItems = AlignItems.CENTER;
-        itemStyle.padding = Rect.all(LengthPercentage.length(12f));
-        itemStyle.gap = new Size<>(LengthPercentage.length(12f), LengthPercentage.length(0f));
+        itemStyle.padding = TaffyRect.all(LengthPercentage.length(12f));
+        itemStyle.gap = new TaffySize<>(LengthPercentage.length(12f), LengthPercentage.length(0f));
 
         NodeId avatar = tree.newLeaf(createBoxStyle(48f, 48f));
 
         // Content: title + subtitle
-        Style contentStyle = new Style();
-        contentStyle.display = Display.FLEX;
+        TaffyStyle contentStyle = new TaffyStyle();
+        contentStyle.display = TaffyDisplay.FLEX;
         contentStyle.flexDirection = FlexDirection.COLUMN;
         contentStyle.flexGrow = 1f;
-        contentStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(4f));
+        contentStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(4f));
 
         NodeId title = tree.newLeaf(createBoxStyle(Float.NaN, 20f));
         NodeId subtitle = tree.newLeaf(createBoxStyle(Float.NaN, 16f));
@@ -512,10 +511,10 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildDashboard(TaffyTree tree, int cardCount) {
-        Style gridStyle = new Style();
-        gridStyle.display = Display.GRID;
-        gridStyle.padding = Rect.all(LengthPercentage.length(24f));
-        gridStyle.gap = new Size<>(LengthPercentage.length(16f), LengthPercentage.length(16f));
+        TaffyStyle gridStyle = new TaffyStyle();
+        gridStyle.display = TaffyDisplay.GRID;
+        gridStyle.padding = TaffyRect.all(LengthPercentage.length(24f));
+        gridStyle.gap = new TaffySize<>(LengthPercentage.length(16f), LengthPercentage.length(16f));
 
         // 6-column grid
         List<TrackSizingFunction> cols = new ArrayList<>();
@@ -539,17 +538,17 @@ public class RealisticBenchmark {
 
     private static NodeId buildDashboardCard(TaffyTree tree, Random rng) {
         // Card spans 1-2 columns and 1-2 rows
-        Style cardStyle = new Style();
-        cardStyle.display = Display.FLEX;
+        TaffyStyle cardStyle = new TaffyStyle();
+        cardStyle.display = TaffyDisplay.FLEX;
         cardStyle.flexDirection = FlexDirection.COLUMN;
-        cardStyle.padding = Rect.all(LengthPercentage.length(16f));
-        cardStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(12f));
+        cardStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
+        cardStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(12f));
 
         // Random spanning
         int colSpan = rng.nextFloat() < 0.3f ? 2 : 1;
         int rowSpan = rng.nextFloat() < 0.2f ? 2 : 1;
-        cardStyle.gridColumn = new Line<>(GridPlacement.auto(), GridPlacement.span(colSpan));
-        cardStyle.gridRow = new Line<>(GridPlacement.auto(), GridPlacement.span(rowSpan));
+        cardStyle.gridColumn = new TaffyLine<>(GridPlacement.auto(), GridPlacement.span(colSpan));
+        cardStyle.gridRow = new TaffyLine<>(GridPlacement.auto(), GridPlacement.span(rowSpan));
 
         NodeId header = tree.newLeaf(createBoxStyle(Float.NaN, 24f));
         NodeId content = tree.newLeaf(createBoxStyle(Float.NaN, 80f + rng.nextFloat() * 120f));
@@ -559,11 +558,11 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildForm(TaffyTree tree, int fieldCount) {
-        Style formStyle = new Style();
-        formStyle.display = Display.FLEX;
+        TaffyStyle formStyle = new TaffyStyle();
+        formStyle.display = TaffyDisplay.FLEX;
         formStyle.flexDirection = FlexDirection.COLUMN;
-        formStyle.padding = Rect.all(LengthPercentage.length(24f));
-        formStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(16f));
+        formStyle.padding = TaffyRect.all(LengthPercentage.length(24f));
+        formStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(16f));
 
         Random rng = new Random(SEED);
         NodeId[] fields = new NodeId[fieldCount];
@@ -576,10 +575,10 @@ public class RealisticBenchmark {
 
     private static NodeId buildFormField(TaffyTree tree, Random rng) {
         // Field: label + input (+ optional help text)
-        Style fieldStyle = new Style();
-        fieldStyle.display = Display.FLEX;
+        TaffyStyle fieldStyle = new TaffyStyle();
+        fieldStyle.display = TaffyDisplay.FLEX;
         fieldStyle.flexDirection = FlexDirection.COLUMN;
-        fieldStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(4f));
+        fieldStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(4f));
 
         NodeId label = tree.newLeaf(createBoxStyle(Float.NaN, 20f));
         NodeId input = tree.newLeaf(createBoxStyle(Float.NaN, 40f));
@@ -597,19 +596,19 @@ public class RealisticBenchmark {
             return tree.newLeaf(createBoxStyle(Float.NaN, 40f));
         }
 
-        Style cardStyle = new Style();
-        cardStyle.display = Display.FLEX;
+        TaffyStyle cardStyle = new TaffyStyle();
+        cardStyle.display = TaffyDisplay.FLEX;
         cardStyle.flexDirection = FlexDirection.COLUMN;
-        cardStyle.padding = Rect.all(LengthPercentage.length(16f));
-        cardStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(12f));
+        cardStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
+        cardStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(12f));
 
         NodeId header = tree.newLeaf(createBoxStyle(Float.NaN, 24f));
         
-        Style contentStyle = new Style();
-        contentStyle.display = Display.FLEX;
+        TaffyStyle contentStyle = new TaffyStyle();
+        contentStyle.display = TaffyDisplay.FLEX;
         contentStyle.flexDirection = FlexDirection.ROW;
         contentStyle.flexWrap = FlexWrap.WRAP;
-        contentStyle.gap = new Size<>(LengthPercentage.length(12f), LengthPercentage.length(12f));
+        contentStyle.gap = new TaffySize<>(LengthPercentage.length(12f), LengthPercentage.length(12f));
 
         NodeId[] children = new NodeId[cardsPerLevel];
         for (int i = 0; i < cardsPerLevel; i++) {
@@ -621,11 +620,11 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildChatUI(TaffyTree tree, int messageCount, MeasureFunc measureFunc) {
-        Style chatStyle = new Style();
-        chatStyle.display = Display.FLEX;
+        TaffyStyle chatStyle = new TaffyStyle();
+        chatStyle.display = TaffyDisplay.FLEX;
         chatStyle.flexDirection = FlexDirection.COLUMN;
-        chatStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
-        chatStyle.padding = Rect.all(LengthPercentage.length(12f));
+        chatStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
+        chatStyle.padding = TaffyRect.all(LengthPercentage.length(12f));
 
         Random rng = new Random(SEED);
         NodeId[] messages = new NodeId[messageCount];
@@ -637,25 +636,25 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildChatMessage(TaffyTree tree, Random rng, boolean isOwn, MeasureFunc measureFunc) {
-        Style messageStyle = new Style();
-        messageStyle.display = Display.FLEX;
+        TaffyStyle messageStyle = new TaffyStyle();
+        messageStyle.display = TaffyDisplay.FLEX;
         messageStyle.flexDirection = FlexDirection.ROW;
         messageStyle.justifyContent = isOwn ? AlignContent.FLEX_END : AlignContent.FLEX_START;
-        messageStyle.padding = Rect.of(
+        messageStyle.padding = TaffyRect.of(
             LengthPercentage.length(isOwn ? 48f : 0f),
             LengthPercentage.length(isOwn ? 0f : 48f),
             LengthPercentage.length(0f),
             LengthPercentage.length(0f)
         );
 
-        Style bubbleStyle = new Style();
-        bubbleStyle.display = Display.FLEX;
+        TaffyStyle bubbleStyle = new TaffyStyle();
+        bubbleStyle.display = TaffyDisplay.FLEX;
         bubbleStyle.flexDirection = FlexDirection.COLUMN;
-        bubbleStyle.padding = Rect.all(LengthPercentage.length(12f));
-        bubbleStyle.maxSize = new Size<>(Dimension.percent(0.8f), Dimension.AUTO);
+        bubbleStyle.padding = TaffyRect.all(LengthPercentage.length(12f));
+        bubbleStyle.maxSize = new TaffySize<>(TaffyDimension.percent(0.8f), TaffyDimension.AUTO);
 
         // Text content (measured)
-        Style textStyle = new Style();
+        TaffyStyle textStyle = new TaffyStyle();
         textStyle.flexShrink = 1f;
         NodeId text = tree.newLeafWithMeasure(textStyle, measureFunc);
 
@@ -667,10 +666,10 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildEcommerceGrid(TaffyTree tree, int productCount, MeasureFunc measureFunc) {
-        Style gridStyle = new Style();
-        gridStyle.display = Display.GRID;
-        gridStyle.padding = Rect.all(LengthPercentage.length(24f));
-        gridStyle.gap = new Size<>(LengthPercentage.length(24f), LengthPercentage.length(24f));
+        TaffyStyle gridStyle = new TaffyStyle();
+        gridStyle.display = TaffyDisplay.GRID;
+        gridStyle.padding = TaffyRect.all(LengthPercentage.length(24f));
+        gridStyle.gap = new TaffySize<>(LengthPercentage.length(24f), LengthPercentage.length(24f));
 
         // Responsive columns
         List<TrackSizingFunction> cols = new ArrayList<>();
@@ -689,25 +688,25 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildProductCard(TaffyTree tree, Random rng, MeasureFunc measureFunc) {
-        Style cardStyle = new Style();
-        cardStyle.display = Display.FLEX;
+        TaffyStyle cardStyle = new TaffyStyle();
+        cardStyle.display = TaffyDisplay.FLEX;
         cardStyle.flexDirection = FlexDirection.COLUMN;
 
         // Image
         NodeId image = tree.newLeaf(createBoxStyle(Float.NaN, 200f));
 
         // Content
-        Style contentStyle = new Style();
-        contentStyle.display = Display.FLEX;
+        TaffyStyle contentStyle = new TaffyStyle();
+        contentStyle.display = TaffyDisplay.FLEX;
         contentStyle.flexDirection = FlexDirection.COLUMN;
-        contentStyle.padding = Rect.all(LengthPercentage.length(12f));
-        contentStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
+        contentStyle.padding = TaffyRect.all(LengthPercentage.length(12f));
+        contentStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
 
         // Title (measured text)
-        NodeId title = tree.newLeafWithMeasure(new Style(), measureFunc);
+        NodeId title = tree.newLeafWithMeasure(new TaffyStyle(), measureFunc);
         
         // Price row
-        Style priceRowStyle = createFlexRowStyle();
+        TaffyStyle priceRowStyle = createFlexRowStyle();
         priceRowStyle.justifyContent = AlignContent.SPACE_BETWEEN;
         NodeId price = tree.newLeaf(createBoxStyle(80f, 24f));
         NodeId rating = tree.newLeaf(createBoxStyle(60f, 20f));
@@ -723,12 +722,12 @@ public class RealisticBenchmark {
 
     private static NodeId buildResponsiveLayout(TaffyTree tree, int componentCount) {
         // Flex container with wrap
-        Style containerStyle = new Style();
-        containerStyle.display = Display.FLEX;
+        TaffyStyle containerStyle = new TaffyStyle();
+        containerStyle.display = TaffyDisplay.FLEX;
         containerStyle.flexDirection = FlexDirection.ROW;
         containerStyle.flexWrap = FlexWrap.WRAP;
-        containerStyle.gap = new Size<>(LengthPercentage.length(16f), LengthPercentage.length(16f));
-        containerStyle.padding = Rect.all(LengthPercentage.length(16f));
+        containerStyle.gap = new TaffySize<>(LengthPercentage.length(16f), LengthPercentage.length(16f));
+        containerStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
 
         Random rng = new Random(SEED);
         NodeId[] components = new NodeId[componentCount];
@@ -740,16 +739,16 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildResponsiveComponent(TaffyTree tree, Random rng) {
-        Style style = new Style();
-        style.display = Display.FLEX;
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.FLEX;
         style.flexDirection = FlexDirection.COLUMN;
-        style.flexBasis = Dimension.length(280f);
+        style.flexBasis = TaffyDimension.length(280f);
         style.flexGrow = 1f;
         style.flexShrink = 1f;
-        style.minSize = new Size<>(Dimension.length(200f), Dimension.AUTO);
-        style.maxSize = new Size<>(Dimension.length(400f), Dimension.AUTO);
-        style.padding = Rect.all(LengthPercentage.length(16f));
-        style.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
+        style.minSize = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        style.maxSize = new TaffySize<>(TaffyDimension.length(400f), TaffyDimension.AUTO);
+        style.padding = TaffyRect.all(LengthPercentage.length(16f));
+        style.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
 
         int childCount = 2 + rng.nextInt(3);
         NodeId[] children = new NodeId[childCount];
@@ -761,8 +760,8 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildDataTable(TaffyTree tree, int rows, int columns) {
-        Style tableStyle = new Style();
-        tableStyle.display = Display.GRID;
+        TaffyStyle tableStyle = new TaffyStyle();
+        tableStyle.display = TaffyDisplay.GRID;
 
         // Column definitions
         List<TrackSizingFunction> cols = new ArrayList<>();
@@ -778,9 +777,9 @@ public class RealisticBenchmark {
         int cellCount = rows * columns;
         NodeId[] cells = new NodeId[cellCount];
         for (int i = 0; i < cellCount; i++) {
-            Style cellStyle = new Style();
-            cellStyle.padding = Rect.all(LengthPercentage.length(8f));
-            cellStyle.minSize = new Size<>(Dimension.AUTO, Dimension.length(40f));
+            TaffyStyle cellStyle = new TaffyStyle();
+            cellStyle.padding = TaffyRect.all(LengthPercentage.length(8f));
+            cellStyle.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(40f));
             cells[i] = tree.newLeaf(cellStyle);
         }
 
@@ -788,19 +787,19 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildMobileApp(TaffyTree tree, int contentItems, MeasureFunc measureFunc) {
-        Style appStyle = new Style();
-        appStyle.display = Display.FLEX;
+        TaffyStyle appStyle = new TaffyStyle();
+        appStyle.display = TaffyDisplay.FLEX;
         appStyle.flexDirection = FlexDirection.COLUMN;
-        appStyle.size = new Size<>(Dimension.percent(1f), Dimension.percent(1f));
+        appStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.percent(1f));
 
         // Navigation bar
-        Style navStyle = new Style();
-        navStyle.display = Display.FLEX;
+        TaffyStyle navStyle = new TaffyStyle();
+        navStyle.display = TaffyDisplay.FLEX;
         navStyle.flexDirection = FlexDirection.ROW;
         navStyle.justifyContent = AlignContent.SPACE_BETWEEN;
         navStyle.alignItems = AlignItems.CENTER;
-        navStyle.size = new Size<>(Dimension.percent(1f), Dimension.length(44f));
-        navStyle.padding = Rect.of(
+        navStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.length(44f));
+        navStyle.padding = TaffyRect.of(
             LengthPercentage.length(16f),
             LengthPercentage.length(16f),
             LengthPercentage.length(8f),
@@ -813,12 +812,12 @@ public class RealisticBenchmark {
         NodeId navBar = tree.newWithChildren(navStyle, new NodeId[]{backBtn, title, menuBtn});
 
         // Content area
-        Style contentStyle = new Style();
-        contentStyle.display = Display.FLEX;
+        TaffyStyle contentStyle = new TaffyStyle();
+        contentStyle.display = TaffyDisplay.FLEX;
         contentStyle.flexDirection = FlexDirection.COLUMN;
         contentStyle.flexGrow = 1f;
-        contentStyle.padding = Rect.all(LengthPercentage.length(16f));
-        contentStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(16f));
+        contentStyle.padding = TaffyRect.all(LengthPercentage.length(16f));
+        contentStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(16f));
 
         Random rng = new Random(SEED);
         NodeId[] items = new NodeId[contentItems];
@@ -828,13 +827,13 @@ public class RealisticBenchmark {
         NodeId content = tree.newWithChildren(contentStyle, items);
 
         // Tab bar
-        Style tabBarStyle = new Style();
-        tabBarStyle.display = Display.FLEX;
+        TaffyStyle tabBarStyle = new TaffyStyle();
+        tabBarStyle.display = TaffyDisplay.FLEX;
         tabBarStyle.flexDirection = FlexDirection.ROW;
         tabBarStyle.justifyContent = AlignContent.SPACE_AROUND;
         tabBarStyle.alignItems = AlignItems.CENTER;
-        tabBarStyle.size = new Size<>(Dimension.percent(1f), Dimension.length(49f));
-        tabBarStyle.padding = Rect.of(
+        tabBarStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.length(49f));
+        tabBarStyle.padding = TaffyRect.of(
             LengthPercentage.length(8f),
             LengthPercentage.length(8f),
             LengthPercentage.length(8f),
@@ -851,16 +850,16 @@ public class RealisticBenchmark {
     }
 
     private static NodeId buildMobileContentItem(TaffyTree tree, Random rng, MeasureFunc measureFunc) {
-        Style itemStyle = new Style();
-        itemStyle.display = Display.FLEX;
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.display = TaffyDisplay.FLEX;
         itemStyle.flexDirection = FlexDirection.COLUMN;
-        itemStyle.padding = Rect.all(LengthPercentage.length(12f));
-        itemStyle.gap = new Size<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
+        itemStyle.padding = TaffyRect.all(LengthPercentage.length(12f));
+        itemStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(8f));
 
         NodeId header = tree.newLeaf(createBoxStyle(Float.NaN, 20f));
-        NodeId body = tree.newLeafWithMeasure(new Style(), measureFunc);
+        NodeId body = tree.newLeafWithMeasure(new TaffyStyle(), measureFunc);
         
-        Style footerStyle = createFlexRowStyle();
+        TaffyStyle footerStyle = createFlexRowStyle();
         footerStyle.justifyContent = AlignContent.SPACE_BETWEEN;
         NodeId likes = tree.newLeaf(createBoxStyle(60f, 20f));
         NodeId share = tree.newLeaf(createBoxStyle(60f, 20f));
@@ -871,18 +870,18 @@ public class RealisticBenchmark {
 
     // ==================== Helper Methods ====================
 
-    private static Style createBoxStyle(float width, float height) {
-        Style style = new Style();
-        style.size = new Size<>(
-            Float.isNaN(width) ? Dimension.AUTO : Dimension.length(width),
-            Float.isNaN(height) ? Dimension.AUTO : Dimension.length(height)
+    private static TaffyStyle createBoxStyle(float width, float height) {
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(
+            Float.isNaN(width) ? TaffyDimension.AUTO : TaffyDimension.length(width),
+            Float.isNaN(height) ? TaffyDimension.AUTO : TaffyDimension.length(height)
         );
         return style;
     }
 
-    private static Style createFlexRowStyle() {
-        Style style = new Style();
-        style.display = Display.FLEX;
+    private static TaffyStyle createFlexRowStyle() {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.FLEX;
         style.flexDirection = FlexDirection.ROW;
         style.alignItems = AlignItems.CENTER;
         return style;
@@ -896,7 +895,7 @@ public class RealisticBenchmark {
         private static final int[] WORD_LENGTHS = {3, 5, 7, 4, 6, 8, 3, 5, 4, 6, 7, 5, 4, 8, 3, 6};
 
         @Override
-        public FloatSize measure(FloatSize knownDimensions, Size<AvailableSpace> availableSpace) {
+        public FloatSize measure(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpace) {
             if (!Float.isNaN(knownDimensions.width) && !Float.isNaN(knownDimensions.height)) {
                 return new FloatSize(knownDimensions.width, knownDimensions.height);
             }

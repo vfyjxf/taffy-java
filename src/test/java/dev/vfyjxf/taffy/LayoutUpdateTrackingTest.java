@@ -1,8 +1,8 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
-import dev.vfyjxf.taffy.geometry.Rect;
-import dev.vfyjxf.taffy.geometry.Size;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.*;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
@@ -106,27 +106,27 @@ public class LayoutUpdateTrackingTest {
 
         // --- Build a deliberately complex tree ---
         // Leaf A: fixed size
-        Style leafAStyle = new Style();
-        leafAStyle.size = new Size<>(Dimension.length(40f), Dimension.length(10f));
+        TaffyStyle leafAStyle = new TaffyStyle();
+        leafAStyle.size = new TaffySize<>(TaffyDimension.length(40f), TaffyDimension.length(10f));
         NodeId leafA = tree.newLeaf(leafAStyle);
 
         // Leaf B: measured leaf (size depends on measure func)
-        Style leafBStyle = new Style();
-        leafBStyle.flexGrow = 1f;
+        TaffyStyle leafBStyle = new TaffyStyle();
+        leafBStyle.flexGrow = 1f; leafBStyle.flexShrink = 1.0f; leafBStyle.flexBasis = TaffyDimension.AUTO;
         NodeId leafB = tree.newLeafWithMeasure(leafBStyle, fixedMeasure(25f, 12f));
 
         // Leaf C: will be toggled display none later
-        Style leafCStyle = new Style();
-        leafCStyle.size = new Size<>(Dimension.length(15f), Dimension.length(15f));
+        TaffyStyle leafCStyle = new TaffyStyle();
+        leafCStyle.size = new TaffySize<>(TaffyDimension.length(15f), TaffyDimension.length(15f));
         NodeId leafC = tree.newLeaf(leafCStyle);
 
         // Flex row container with wrap
-        Style flexRowStyle = new Style();
-        flexRowStyle.display = Display.FLEX;
+        TaffyStyle flexRowStyle = new TaffyStyle();
+        flexRowStyle.display = TaffyDisplay.FLEX;
         flexRowStyle.flexDirection = FlexDirection.ROW;
         flexRowStyle.flexWrap = FlexWrap.WRAP;
-        flexRowStyle.gap = new Size<>(LengthPercentage.length(3f), LengthPercentage.length(2f));
-        flexRowStyle.padding = new Rect<>(
+        flexRowStyle.gap = new TaffySize<>(LengthPercentage.length(3f), LengthPercentage.length(2f));
+        flexRowStyle.padding = new TaffyRect<>(
             LengthPercentage.length(1f),
             LengthPercentage.length(1f),
             LengthPercentage.length(1f),
@@ -135,9 +135,9 @@ public class LayoutUpdateTrackingTest {
         NodeId flexRow = tree.newWithChildren(flexRowStyle, leafA, leafB, leafC);
 
         // Nested block container under root
-        Style blockStyle = new Style();
-        blockStyle.display = Display.BLOCK;
-        blockStyle.padding = new Rect<>(
+        TaffyStyle blockStyle = new TaffyStyle();
+        blockStyle.display = TaffyDisplay.BLOCK;
+        blockStyle.padding = new TaffyRect<>(
             LengthPercentage.length(2f),
             LengthPercentage.length(4f),
             LengthPercentage.length(6f),
@@ -146,12 +146,12 @@ public class LayoutUpdateTrackingTest {
         NodeId block = tree.newWithChildren(blockStyle, flexRow);
 
         // Root flex column
-        Style rootStyle = new Style();
-        rootStyle.display = Display.FLEX;
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = TaffyDisplay.FLEX;
         rootStyle.flexDirection = FlexDirection.COLUMN;
         rootStyle.alignItems = AlignItems.STRETCH;
-        rootStyle.size = new Size<>(Dimension.length(200f), Dimension.length(120f));
-        rootStyle.padding = new Rect<>(
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(120f));
+        rootStyle.padding = new TaffyRect<>(
             LengthPercentage.length(5f),
             LengthPercentage.length(5f),
             LengthPercentage.length(5f),
@@ -159,7 +159,7 @@ public class LayoutUpdateTrackingTest {
         );
         NodeId root = tree.newWithChildren(rootStyle, block);
 
-        Size<AvailableSpace> available = new Size<>(AvailableSpace.definite(200f), AvailableSpace.definite(120f));
+        TaffySize<AvailableSpace> available = new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.definite(120f));
 
         // Collect nodes once; we will re-collect after structural changes.
         List<NodeId> nodes = collectSubtree(tree, root);
@@ -189,8 +189,8 @@ public class LayoutUpdateTrackingTest {
 
         // --- Wave 2: change an ancestor padding (should move descendants relative to that ancestor) ---
         Map<NodeId, LayoutPair> before2 = snapshotLayouts(tree, nodes);
-        Style newBlockStyle = tree.getStyle(block).copy();
-        newBlockStyle.padding = new Rect<>(
+        TaffyStyle newBlockStyle = tree.getStyle(block).copy();
+        newBlockStyle.padding = new TaffyRect<>(
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
             LengthPercentage.length(10f),
@@ -207,8 +207,8 @@ public class LayoutUpdateTrackingTest {
 
         // --- Wave 3: toggle a leaf to display none (hidden layout propagation) ---
         Map<NodeId, LayoutPair> before3 = snapshotLayouts(tree, nodes);
-        Style hidden = tree.getStyle(leafC).copy();
-        hidden.display = Display.NONE;
+        TaffyStyle hidden = tree.getStyle(leafC).copy();
+        hidden.display = TaffyDisplay.NONE;
         tree.setStyle(leafC, hidden);
         tree.computeLayout(root, available);
         Map<NodeId, LayoutPair> after3 = snapshotLayouts(tree, nodes);
@@ -220,7 +220,7 @@ public class LayoutUpdateTrackingTest {
 
         // --- Wave 4: change flex direction on flexRow to force reflow ---
         Map<NodeId, LayoutPair> before4 = snapshotLayouts(tree, nodes);
-        Style newFlexRow = tree.getStyle(flexRow).copy();
+        TaffyStyle newFlexRow = tree.getStyle(flexRow).copy();
         newFlexRow.flexDirection = FlexDirection.ROW_REVERSE;
         tree.setStyle(flexRow, newFlexRow);
         tree.computeLayout(root, available);
@@ -232,7 +232,7 @@ public class LayoutUpdateTrackingTest {
         acknowledgeAll(tree, nodes);
 
         // --- Wave 5: structural change (add a new measured leaf into flexRow) ---
-        NodeId leafD = tree.newLeafWithMeasure(new Style(), fixedMeasure(33f, 7f));
+        NodeId leafD = tree.newLeafWithMeasure(new TaffyStyle(), fixedMeasure(33f, 7f));
         Map<NodeId, LayoutPair> before5 = snapshotLayouts(tree, nodes);
         tree.addChild(flexRow, leafD);
         tree.computeLayout(root, available);
