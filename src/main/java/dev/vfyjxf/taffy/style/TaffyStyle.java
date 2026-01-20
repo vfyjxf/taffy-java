@@ -113,6 +113,16 @@ public final class TaffyStyle {
     
     // === Flexbox Item Properties ===
 
+    /**
+     * Yoga-style flex shorthand. When set (not NaN), this overrides flexGrow/flexShrink/flexBasis:
+     * <ul>
+     *   <li>flex >= 0: flexGrow = flex, flexShrink = 1, flexBasis = 0</li>
+     *   <li>flex < 0: flexGrow = 0, flexShrink = -flex, flexBasis = 0</li>
+     * </ul>
+     * When NaN (default), the individual flexGrow/flexShrink/flexBasis values are used.
+     */
+    public float flex = Float.NaN;
+
     /** The relative rate at which this item grows when it is expanding to fill space */
     public float flexGrow = 0.0f;
 
@@ -125,11 +135,42 @@ public final class TaffyStyle {
     // === Flex Shorthand Methods ===
     
     /**
+     * Gets the effective flex-grow value, considering the flex shorthand.
+     */
+    public float getEffectiveFlexGrow() {
+        if (!Float.isNaN(flex)) {
+            return flex >= 0 ? flex : 0.0f;
+        }
+        return flexGrow;
+    }
+
+    /**
+     * Gets the effective flex-shrink value, considering the flex shorthand.
+     */
+    public float getEffectiveFlexShrink() {
+        if (!Float.isNaN(flex)) {
+            return flex >= 0 ? 1.0f : -flex;
+        }
+        return flexShrink;
+    }
+
+    /**
+     * Gets the effective flex-basis value, considering the flex shorthand.
+     */
+    public TaffyDimension getEffectiveFlexBasis() {
+        if (!Float.isNaN(flex)) {
+            return TaffyDimension.ZERO;
+        }
+        return flexBasis;
+    }
+    
+    /**
      * CSS flex shorthand: flex: none
      * Equivalent to flex: 0 0 auto
      * The item is sized according to its width/height properties, fully inflexible.
      */
     public TaffyStyle flexNone() {
+        this.flex = Float.NaN;
         this.flexGrow = 0.0f;
         this.flexShrink = 0.0f;
         this.flexBasis = TaffyDimension.AUTO;
@@ -142,6 +183,7 @@ public final class TaffyStyle {
      * The item is sized according to its width/height properties, but grows/shrinks to fill available space.
      */
     public TaffyStyle flexAuto() {
+        this.flex = Float.NaN;
         this.flexGrow = 1.0f;
         this.flexShrink = 1.0f;
         this.flexBasis = TaffyDimension.AUTO;
@@ -154,6 +196,7 @@ public final class TaffyStyle {
      * The item is sized according to its width/height properties, can shrink but won't grow.
      */
     public TaffyStyle flexInitial() {
+        this.flex = Float.NaN;
         this.flexGrow = 0.0f;
         this.flexShrink = 1.0f;
         this.flexBasis = TaffyDimension.AUTO;
@@ -167,6 +210,7 @@ public final class TaffyStyle {
      * @param grow the flex-grow value
      */
     public TaffyStyle flex(float grow) {
+        this.flex = Float.NaN;
         this.flexGrow = grow;
         this.flexShrink = 1.0f;
         this.flexBasis = TaffyDimension.ZERO;
@@ -180,6 +224,7 @@ public final class TaffyStyle {
      * @param shrink the flex-shrink value
      */
     public TaffyStyle flex(float grow, float shrink) {
+        this.flex = Float.NaN;
         this.flexGrow = grow;
         this.flexShrink = shrink;
         this.flexBasis = TaffyDimension.ZERO;
@@ -193,6 +238,7 @@ public final class TaffyStyle {
      * @param basis the flex-basis value
      */
     public TaffyStyle flex(float grow, float shrink, TaffyDimension basis) {
+        this.flex = Float.NaN;
         this.flexGrow = grow;
         this.flexShrink = shrink;
         this.flexBasis = basis;
@@ -206,9 +252,32 @@ public final class TaffyStyle {
      * @param basisLength the flex-basis as a length value in pixels
      */
     public TaffyStyle flex(float grow, float shrink, float basisLength) {
+        this.flex = Float.NaN;
         this.flexGrow = grow;
         this.flexShrink = shrink;
         this.flexBasis = TaffyDimension.length(basisLength);
+        return this;
+    }
+    
+    /**
+     * Yoga-style flex setter. Sets the flex shorthand value which overrides individual flex properties.
+     * <ul>
+     *   <li>value >= 0: flexGrow = value, flexShrink = 1, flexBasis = 0</li>
+     *   <li>value < 0: flexGrow = 0, flexShrink = -value, flexBasis = 0</li>
+     *   <li>NaN: use individual flexGrow/flexShrink/flexBasis values</li>
+     * </ul>
+     * @param value the flex value, or NaN to disable the shorthand
+     */
+    public TaffyStyle setFlex(float value) {
+        this.flex = value;
+        return this;
+    }
+    
+    /**
+     * Clears the Yoga-style flex shorthand, reverting to individual flexGrow/flexShrink/flexBasis values.
+     */
+    public TaffyStyle clearFlex() {
+        this.flex = Float.NaN;
         return this;
     }
     
@@ -387,9 +456,14 @@ public final class TaffyStyle {
     public TextAlign getTextAlign() { return textAlign; }
     public FlexDirection getFlexDirection() { return flexDirection; }
     public FlexWrap getFlexWrap() { return flexWrap; }
-    public TaffyDimension getFlexBasis() { return flexBasis; }
-    public float getFlexGrow() { return flexGrow; }
-    public float getFlexShrink() { return flexShrink; }
+    /** Returns the raw flex field value (may be NaN if not set) */
+    public float getFlex() { return flex; }
+    /** Returns the effective flex-basis, considering the flex shorthand */
+    public TaffyDimension getFlexBasis() { return getEffectiveFlexBasis(); }
+    /** Returns the effective flex-grow, considering the flex shorthand */
+    public float getFlexGrow() { return getEffectiveFlexGrow(); }
+    /** Returns the effective flex-shrink, considering the flex shorthand */
+    public float getFlexShrink() { return getEffectiveFlexShrink(); }
     public List<TrackSizingFunction> getGridTemplateRows() { return gridTemplateRows; }
     public List<TrackSizingFunction> getGridTemplateColumns() { return gridTemplateColumns; }
     public List<TrackSizingFunction> getGridAutoRows() { return gridAutoRows; }

@@ -360,34 +360,76 @@ public class TaffyTreeApiTest {
     }
 
     @Test
-    @DisplayName("has_unconsumed_layout_tracks_layout_changes")
-    void hasUnconsumedLayoutTracksLayoutChanges() {
+    @DisplayName("has_new_layout_tracks_layout_computation")
+    void hasNewLayoutTracksLayoutComputation() {
         TaffyTree tree = new TaffyTree();
 
         TaffyStyle style = new TaffyStyle();
         style.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
         NodeId node = tree.newLeaf(style);
 
-        // Initial state: no computed layout to consume
-        assertFalse(tree.hasUnconsumedLayout(node));
+        // Initial state: no computed layout
+        assertFalse(tree.hasNewLayout(node));
+        assertFalse(tree.hasUnconsumedLayout(node)); // deprecated alias
 
         tree.computeLayout(node, TaffySize.maxContent());
-        assertTrue(tree.hasUnconsumedLayout(node));
+        assertTrue(tree.hasNewLayout(node));
 
         tree.acknowledgeLayout(node);
-        assertFalse(tree.hasUnconsumedLayout(node));
+        assertFalse(tree.hasNewLayout(node));
 
-        // Recomputing without changes should not flip the flag back to true
+        // Recomputing WILL flip the flag (Yoga-style behavior)
         tree.computeLayout(node, TaffySize.maxContent());
-        assertFalse(tree.hasUnconsumedLayout(node));
+        assertTrue(tree.hasNewLayout(node));
 
-        // Changing style should produce a layout change
-        TaffyStyle newStyle = new TaffyStyle();
-        newStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(200f));
-        tree.setStyle(node, newStyle);
+        // Acknowledge again
+        tree.acknowledgeLayout(node);
+        assertFalse(tree.hasNewLayout(node));
+    }
 
-        tree.computeLayout(node, TaffySize.maxContent());
-        assertTrue(tree.hasUnconsumedLayout(node));
+    @Test
+    @DisplayName("dirty_descendant_propagates_up")
+    void dirtyDescendantPropagatesUp() {
+        TaffyTree tree = new TaffyTree();
+
+        NodeId grandChild = tree.newLeaf(new TaffyStyle());
+        NodeId child = tree.newWithChildren(new TaffyStyle(), grandChild);
+        NodeId root = tree.newWithChildren(new TaffyStyle(), child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // All nodes have new layout
+        assertTrue(tree.hasNewLayout(root));
+        assertTrue(tree.hasNewLayout(child));
+        assertTrue(tree.hasNewLayout(grandChild));
+
+        // Parent nodes have dirty descendants
+        assertTrue(tree.hasDirtyDescendant(root));
+        assertTrue(tree.hasDirtyDescendant(child));
+        assertFalse(tree.hasDirtyDescendant(grandChild)); // leaf has no descendants
+
+        // needsVisit should return true for all
+        assertTrue(tree.needsVisit(root));
+        assertTrue(tree.needsVisit(child));
+        assertTrue(tree.needsVisit(grandChild));
+
+        // Acknowledge grandChild
+        tree.acknowledgeLayout(grandChild);
+        assertFalse(tree.hasNewLayout(grandChild));
+        
+        // Parent still has dirty descendants (itself and child)
+        assertTrue(tree.hasDirtyDescendant(root));
+        assertTrue(tree.hasDirtyDescendant(child));
+
+        // Acknowledge child  
+        tree.acknowledgeLayout(child);
+        assertFalse(tree.hasNewLayout(child));
+        
+        // Use acknowledgeSubtree to clear both flags at once for root
+        tree.acknowledgeSubtree(root);
+        assertFalse(tree.hasNewLayout(root));
+        assertFalse(tree.hasDirtyDescendant(root));
+        assertFalse(tree.needsVisit(root));
     }
 
     @Test

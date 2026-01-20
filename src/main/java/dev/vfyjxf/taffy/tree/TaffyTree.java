@@ -26,9 +26,6 @@ public class TaffyTree {
     /** Counter for generating unique node IDs */
     private final AtomicLong nodeIdCounter = new AtomicLong(0);
 
-    /** Monotonic counter for layout updates (used by hasUnconsumedLayout/acknowledgeLayout) */
-    private final AtomicLong layoutVersionCounter = new AtomicLong(0);
-
     /** NodeData storage by node ID - using fastutil for faster primitive key access */
     private final Long2ObjectOpenHashMap<NodeData> nodes;
 
@@ -463,18 +460,61 @@ public class TaffyTree {
         return data != null ? data.getUnroundedLayout() : null;
     }
 
+    // === Layout Change Tracking (Yoga-style dirty propagation) ===
+
     /**
-     * Returns true if this node's layout has changed since it was last acknowledged.
+     * Returns true if this node has a new layout that hasn't been acknowledged.
      * <p>
-     * This is conceptually similar to Yoga's hasNewLayout, but more explicit about the
-     * consumer/acknowledgement semantics.
+     * Similar to Yoga's hasNewLayout - set after layout computation, cleared by acknowledgeLayout().
+     * Unlike the previous version-based approach, this is set regardless of whether the layout
+     * actually changed, allowing users to walk the tree efficiently from root.
+     * 
+     * @deprecated Use {@link #hasNewLayout(NodeId)} instead for clearer naming.
      */
+    @Deprecated
     public boolean hasUnconsumedLayout(NodeId node) {
+        return hasNewLayout(node);
+    }
+
+    /**
+     * Returns true if this node has a new layout that hasn't been acknowledged.
+     * <p>
+     * Similar to Yoga's hasNewLayout - set after layout computation, cleared by acknowledgeLayout().
+     */
+    public boolean hasNewLayout(NodeId node) {
         NodeData data = nodes.get(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
-        return data.hasUnconsumedLayout();
+        return data.hasNewLayout();
+    }
+
+    /**
+     * Returns true if any descendant of this node has a new layout.
+     * <p>
+     * This allows efficient tree walking from root - you can skip entire subtrees
+     * where no layout changes occurred.
+     */
+    public boolean hasDirtyDescendant(NodeId node) {
+        NodeData data = nodes.get(node.getId());
+        if (data == null) {
+            throw TaffyException.invalidInputNode(node);
+        }
+        return data.hasDirtyDescendant();
+    }
+
+    /**
+     * Returns true if this node or any of its descendants has a new layout.
+     * <p>
+     * Convenience method for tree walking - returns true if you need to visit
+     * this node or any of its children.
+     */
+    public boolean needsVisit(NodeId node) {
+        NodeData data = nodes.get(node.getId());
+        if (data == null) {
+            throw TaffyException.invalidInputNode(node);
+        }
+        return data.needsVisit();
     }
 
     /**
@@ -489,19 +529,53 @@ public class TaffyTree {
     }
 
     /**
+     * Acknowledges layout for this node and clears dirty descendant flag.
+     * <p>
+     * Call this after you have processed this node AND all its descendants.
+     * This is useful for bottom-up acknowledgement during tree traversal.
+     */
+    public void acknowledgeSubtree(NodeId node) {
+        NodeData data = nodes.get(node.getId());
+        if (data == null) {
+            throw TaffyException.invalidInputNode(node);
+        }
+        data.acknowledgeLayout();
+        data.clearDirtyDescendant();
+    }
+
+    /**
+     * Marks a node as having a new layout and propagates dirty flag up to ancestors.
+     */
+    private void markNodeLayoutUpdated(NodeId node) {
+        NodeData data = nodes.get(node.getId());
+        if (data == null) return;
+        
+        data.markNewLayout();
+        
+        // Propagate dirty descendant flag up to ancestors
+        NodeId parent = parents.get(node.getId());
+        while (parent != null) {
+            NodeData parentData = nodes.get(parent.getId());
+            if (parentData == null) break;
+            
+            // If already marked, all ancestors are already marked too
+            if (parentData.markDirtyDescendant()) {
+                break;
+            }
+            parent = parents.get(parent.getId());
+        }
+    }
+
+    /**
      * Sets the final (rounded) layout of a node.
      */
     public void setLayout(NodeId node, Layout layout) {
         NodeData data = nodes.get(node.getId());
         if (data != null) {
-            Layout previous = data.getFinalLayout();
-            if (previous == null || !previous.equals(layout)) {
-                data.setFinalLayout(layout);
-                // When rounding is enabled, the public-facing layout is the rounded/final layout.
-                // We therefore treat changes to final layout as the canonical signal for consumers.
-                if (useRounding) {
-                    data.markLayoutUpdated(layoutVersionCounter.incrementAndGet());
-                }
+            data.setFinalLayout(layout);
+            // When rounding is enabled, mark after setting final layout
+            if (useRounding) {
+                markNodeLayoutUpdated(node);
             }
         }
     }
@@ -512,14 +586,10 @@ public class TaffyTree {
     public void setUnroundedLayout(NodeId node, Layout layout) {
         NodeData data = nodes.get(node.getId());
         if (data != null) {
-            Layout previous = data.getUnroundedLayout();
-            if (previous == null || !previous.equals(layout)) {
-                data.setUnroundedLayout(layout);
-                // When rounding is disabled, the public-facing layout is the unrounded layout.
-                // Only then should unrounded changes drive hasUnconsumedLayout.
-                if (!useRounding) {
-                    data.markLayoutUpdated(layoutVersionCounter.incrementAndGet());
-                }
+            data.setUnroundedLayout(layout);
+            // When rounding is disabled, mark after setting unrounded layout
+            if (!useRounding) {
+                markNodeLayoutUpdated(node);
             }
         }
     }

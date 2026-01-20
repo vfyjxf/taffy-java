@@ -9,6 +9,7 @@ import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.util.MeasureFunc;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
@@ -16,13 +17,18 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Stress-tests layout update tracking (hasUnconsumedLayout/acknowledgeLayout)
- * on a deliberately complex tree with multiple update waves.
+ * Tests for Yoga-style layout update tracking with dirty propagation.
+ * <p>
+ * The new semantics are:
+ * <ul>
+ *   <li>{@code hasNewLayout(node)} - true if this node was laid out since last acknowledgement</li>
+ *   <li>{@code hasDirtyDescendant(node)} - true if any descendant has a new layout</li>
+ *   <li>{@code needsVisit(node)} - true if node or any descendant needs attention</li>
+ * </ul>
+ * <p>
+ * This allows efficient tree walking from root - skip subtrees where needsVisit() is false.
  */
 public class LayoutUpdateTrackingTest {
-
-    private record LayoutPair(Layout unrounded, Layout roundedOrSelected) {
-    }
 
     private static List<NodeId> collectSubtree(TaffyTree tree, NodeId root) {
         List<NodeId> out = new ArrayList<>();
@@ -32,50 +38,11 @@ public class LayoutUpdateTrackingTest {
             NodeId n = stack.pop();
             out.add(n);
             List<NodeId> children = tree.getChildren(n);
-            // reverse for stable-ish order
             for (int i = children.size() - 1; i >= 0; i--) {
                 stack.push(children.get(i));
             }
         }
         return out;
-    }
-
-    private static Map<NodeId, LayoutPair> snapshotLayouts(TaffyTree tree, List<NodeId> nodes) {
-        Map<NodeId, LayoutPair> snap = new LinkedHashMap<>();
-        for (NodeId n : nodes) {
-            Layout unrounded = tree.getUnroundedLayout(n);
-            Layout rounded = tree.getLayout(n);
-            // Both APIs should always return non-null for in-tree nodes, but be defensive.
-            snap.put(n, new LayoutPair(unrounded, rounded));
-        }
-        return snap;
-    }
-
-    private static Set<NodeId> diffLayouts(Map<NodeId, LayoutPair> before, Map<NodeId, LayoutPair> after) {
-        Set<NodeId> changed = new HashSet<>();
-        for (Map.Entry<NodeId, LayoutPair> e : before.entrySet()) {
-            NodeId node = e.getKey();
-            LayoutPair b = e.getValue();
-            LayoutPair a = after.get(node);
-            if (a == null) {
-                // Node disappeared from subtree
-                changed.add(node);
-                continue;
-            }
-            // hasUnconsumedLayout is bumped when either unrounded or final layout changes.
-            boolean unroundedChanged = !Objects.equals(b.unrounded(), a.unrounded());
-            boolean roundedChanged = !Objects.equals(b.roundedOrSelected(), a.roundedOrSelected());
-            if (unroundedChanged || roundedChanged) {
-                changed.add(node);
-            }
-        }
-        // New nodes in after
-        for (NodeId node : after.keySet()) {
-            if (!before.containsKey(node)) {
-                changed.add(node);
-            }
-        }
-        return changed;
     }
 
     private static void acknowledgeAll(TaffyTree tree, List<NodeId> nodes) {
@@ -84,10 +51,10 @@ public class LayoutUpdateTrackingTest {
         }
     }
 
-    private static void assertFlagsMatchDiff(TaffyTree tree, List<NodeId> nodes, Set<NodeId> changed) {
-        for (NodeId n : nodes) {
-            boolean expected = changed.contains(n);
-            assertEquals(expected, tree.hasUnconsumedLayout(n), "Mismatch for node=" + n);
+    private static void acknowledgeSubtreeAll(TaffyTree tree, List<NodeId> nodes) {
+        // Acknowledge in reverse order (children first) for proper dirty descendant clearing
+        for (int i = nodes.size() - 1; i >= 0; i--) {
+            tree.acknowledgeSubtree(nodes.get(i));
         }
     }
 
@@ -98,164 +65,341 @@ public class LayoutUpdateTrackingTest {
         );
     }
 
-    @Test
-    @DisplayName("layout_update_tracking_on_complex_tree_with_multiple_update_waves")
-    void layoutUpdateTrackingOnComplexTreeWithMultipleUpdateWaves() {
-        TaffyTree tree = new TaffyTree();
-        // Keep default rounding enabled: this is the common external API mode.
+    @Nested
+    @DisplayName("Basic dirty propagation")
+    class BasicDirtyPropagation {
 
-        // --- Build a deliberately complex tree ---
-        // Leaf A: fixed size
-        TaffyStyle leafAStyle = new TaffyStyle();
-        leafAStyle.size = new TaffySize<>(TaffyDimension.length(40f), TaffyDimension.length(10f));
-        NodeId leafA = tree.newLeaf(leafAStyle);
+        @Test
+        @DisplayName("initial layout marks all nodes as having new layout")
+        void initialLayoutMarksAllNodes() {
+            TaffyTree tree = new TaffyTree();
 
-        // Leaf B: measured leaf (size depends on measure func)
-        TaffyStyle leafBStyle = new TaffyStyle();
-        leafBStyle.flexGrow = 1f; leafBStyle.flexShrink = 1.0f; leafBStyle.flexBasis = TaffyDimension.AUTO;
-        NodeId leafB = tree.newLeafWithMeasure(leafBStyle, fixedMeasure(25f, 12f));
+            NodeId leaf = tree.newLeaf(new TaffyStyle());
+            NodeId child = tree.newWithChildren(new TaffyStyle(), leaf);
+            NodeId root = tree.newWithChildren(new TaffyStyle(), child);
 
-        // Leaf C: will be toggled display none later
-        TaffyStyle leafCStyle = new TaffyStyle();
-        leafCStyle.size = new TaffySize<>(TaffyDimension.length(15f), TaffyDimension.length(15f));
-        NodeId leafC = tree.newLeaf(leafCStyle);
+            // Before compute - no new layout flags
+            assertFalse(tree.hasNewLayout(root));
+            assertFalse(tree.hasNewLayout(child));
+            assertFalse(tree.hasNewLayout(leaf));
 
-        // Flex row container with wrap
-        TaffyStyle flexRowStyle = new TaffyStyle();
-        flexRowStyle.display = TaffyDisplay.FLEX;
-        flexRowStyle.flexDirection = FlexDirection.ROW;
-        flexRowStyle.flexWrap = FlexWrap.WRAP;
-        flexRowStyle.gap = new TaffySize<>(LengthPercentage.length(3f), LengthPercentage.length(2f));
-        flexRowStyle.padding = new TaffyRect<>(
-            LengthPercentage.length(1f),
-            LengthPercentage.length(1f),
-            LengthPercentage.length(1f),
-            LengthPercentage.length(1f)
-        );
-        NodeId flexRow = tree.newWithChildren(flexRowStyle, leafA, leafB, leafC);
+            tree.computeLayout(root, TaffySize.maxContent());
 
-        // Nested block container under root
-        TaffyStyle blockStyle = new TaffyStyle();
-        blockStyle.display = TaffyDisplay.BLOCK;
-        blockStyle.padding = new TaffyRect<>(
-            LengthPercentage.length(2f),
-            LengthPercentage.length(4f),
-            LengthPercentage.length(6f),
-            LengthPercentage.length(8f)
-        );
-        NodeId block = tree.newWithChildren(blockStyle, flexRow);
+            // After compute - all nodes have new layout
+            assertTrue(tree.hasNewLayout(root));
+            assertTrue(tree.hasNewLayout(child));
+            assertTrue(tree.hasNewLayout(leaf));
 
-        // Root flex column
-        TaffyStyle rootStyle = new TaffyStyle();
-        rootStyle.display = TaffyDisplay.FLEX;
-        rootStyle.flexDirection = FlexDirection.COLUMN;
-        rootStyle.alignItems = AlignItems.STRETCH;
-        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(120f));
-        rootStyle.padding = new TaffyRect<>(
-            LengthPercentage.length(5f),
-            LengthPercentage.length(5f),
-            LengthPercentage.length(5f),
-            LengthPercentage.length(5f)
-        );
-        NodeId root = tree.newWithChildren(rootStyle, block);
-
-        TaffySize<AvailableSpace> available = new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.definite(120f));
-
-        // Collect nodes once; we will re-collect after structural changes.
-        List<NodeId> nodes = collectSubtree(tree, root);
-
-        // --- Wave 0: initial compute should create "unconsumed" layouts across the subtree ---
-        Map<NodeId, LayoutPair> before0 = snapshotLayouts(tree, nodes);
-        tree.computeLayout(root, available);
-        Map<NodeId, LayoutPair> after0 = snapshotLayouts(tree, nodes);
-        Set<NodeId> changed0 = diffLayouts(before0, after0);
-        assertTrue(changed0.contains(root), "Expected root layout to be updated on first compute");
-        assertFlagsMatchDiff(tree, nodes, changed0);
-
-        acknowledgeAll(tree, nodes);
-        for (NodeId n : nodes) {
-            assertFalse(tree.hasUnconsumedLayout(n), "Expected ack to clear flag for node=" + n);
+            // Dirty descendant propagation
+            assertTrue(tree.hasDirtyDescendant(root));
+            assertTrue(tree.hasDirtyDescendant(child));
+            assertFalse(tree.hasDirtyDescendant(leaf)); // leaf has no descendants
         }
 
-        // --- Wave 1: recompute without changes should not flip any flags ---
-        Map<NodeId, LayoutPair> before1 = snapshotLayouts(tree, nodes);
-        tree.computeLayout(root, available);
-        Map<NodeId, LayoutPair> after1 = snapshotLayouts(tree, nodes);
-        Set<NodeId> changed1 = diffLayouts(before1, after1);
-        assertTrue(changed1.isEmpty(), "Expected no layout changes on identical recompute");
-        assertFlagsMatchDiff(tree, nodes, changed1);
+        @Test
+        @DisplayName("recompute without changes still marks nodes")
+        void recomputeWithoutChangesStillMarks() {
+            TaffyTree tree = new TaffyTree();
 
-        acknowledgeAll(tree, nodes);
+            TaffyStyle style = new TaffyStyle();
+            style.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
+            NodeId node = tree.newLeaf(style);
 
-        // --- Wave 2: change an ancestor padding (should move descendants relative to that ancestor) ---
-        Map<NodeId, LayoutPair> before2 = snapshotLayouts(tree, nodes);
-        TaffyStyle newBlockStyle = tree.getStyle(block).copy();
-        newBlockStyle.padding = new TaffyRect<>(
-            LengthPercentage.length(10f),
-            LengthPercentage.length(10f),
-            LengthPercentage.length(10f),
-            LengthPercentage.length(10f)
-        );
-        tree.setStyle(block, newBlockStyle);
-        tree.computeLayout(root, available);
-        Map<NodeId, LayoutPair> after2 = snapshotLayouts(tree, nodes);
-        Set<NodeId> changed2 = diffLayouts(before2, after2);
-        assertFalse(changed2.isEmpty(), "Expected some layout changes after ancestor padding update");
-        assertFlagsMatchDiff(tree, nodes, changed2);
+            tree.computeLayout(node, TaffySize.maxContent());
+            tree.acknowledgeLayout(node);
+            assertFalse(tree.hasNewLayout(node));
 
-        acknowledgeAll(tree, nodes);
+            // Recompute - should still mark as having new layout (Yoga-style behavior)
+            tree.computeLayout(node, TaffySize.maxContent());
+            assertTrue(tree.hasNewLayout(node));
+        }
 
-        // --- Wave 3: toggle a leaf to display none (hidden layout propagation) ---
-        Map<NodeId, LayoutPair> before3 = snapshotLayouts(tree, nodes);
-        TaffyStyle hidden = tree.getStyle(leafC).copy();
-        hidden.display = TaffyDisplay.NONE;
-        tree.setStyle(leafC, hidden);
-        tree.computeLayout(root, available);
-        Map<NodeId, LayoutPair> after3 = snapshotLayouts(tree, nodes);
-        Set<NodeId> changed3 = diffLayouts(before3, after3);
-        assertTrue(changed3.contains(leafC), "Expected leafC to change layout when hidden");
-        assertFlagsMatchDiff(tree, nodes, changed3);
+        @Test
+        @DisplayName("acknowledge clears new layout flag")
+        void acknowledgeClearsNewLayoutFlag() {
+            TaffyTree tree = new TaffyTree();
+            NodeId node = tree.newLeaf(new TaffyStyle());
 
-        acknowledgeAll(tree, nodes);
+            tree.computeLayout(node, TaffySize.maxContent());
+            assertTrue(tree.hasNewLayout(node));
 
-        // --- Wave 4: change flex direction on flexRow to force reflow ---
-        Map<NodeId, LayoutPair> before4 = snapshotLayouts(tree, nodes);
-        TaffyStyle newFlexRow = tree.getStyle(flexRow).copy();
-        newFlexRow.flexDirection = FlexDirection.ROW_REVERSE;
-        tree.setStyle(flexRow, newFlexRow);
-        tree.computeLayout(root, available);
-        Map<NodeId, LayoutPair> after4 = snapshotLayouts(tree, nodes);
-        Set<NodeId> changed4 = diffLayouts(before4, after4);
-        assertFalse(changed4.isEmpty(), "Expected reflow changes after flexDirection update");
-        assertFlagsMatchDiff(tree, nodes, changed4);
+            tree.acknowledgeLayout(node);
+            assertFalse(tree.hasNewLayout(node));
+        }
 
-        acknowledgeAll(tree, nodes);
+        @Test
+        @DisplayName("acknowledgeSubtree clears both flags")
+        void acknowledgeSubtreeClearsBothFlags() {
+            TaffyTree tree = new TaffyTree();
+            
+            NodeId leaf = tree.newLeaf(new TaffyStyle());
+            NodeId root = tree.newWithChildren(new TaffyStyle(), leaf);
 
-        // --- Wave 5: structural change (add a new measured leaf into flexRow) ---
-        NodeId leafD = tree.newLeafWithMeasure(new TaffyStyle(), fixedMeasure(33f, 7f));
-        Map<NodeId, LayoutPair> before5 = snapshotLayouts(tree, nodes);
-        tree.addChild(flexRow, leafD);
-        tree.computeLayout(root, available);
+            tree.computeLayout(root, TaffySize.maxContent());
 
-        // Recollect nodes because subtree grew.
-        nodes = collectSubtree(tree, root);
-        Map<NodeId, LayoutPair> after5 = snapshotLayouts(tree, nodes);
-        // before snapshot didn't include new node; diffLayouts accounts for new nodes.
-        Set<NodeId> changed5 = diffLayouts(before5, after5);
-        assertTrue(changed5.contains(leafD), "Expected new leafD to have layout and be flagged");
-        assertFlagsMatchDiff(tree, nodes, changed5);
+            assertTrue(tree.hasNewLayout(root));
+            assertTrue(tree.hasDirtyDescendant(root));
 
-        acknowledgeAll(tree, nodes);
+            tree.acknowledgeSubtree(root);
 
-        // --- Wave 6: update measure func on leafB (size change should propagate) ---
-        Map<NodeId, LayoutPair> before6 = snapshotLayouts(tree, nodes);
-        tree.setMeasureFunc(leafB, fixedMeasure(60f, 12f));
-        tree.computeLayout(root, available);
-        Map<NodeId, LayoutPair> after6 = snapshotLayouts(tree, nodes);
-        Set<NodeId> changed6 = diffLayouts(before6, after6);
-        // NOTE: Changing measure func does not guarantee a visible layout change.
-        // For example, flex sizing can override intrinsic width. We only require that
-        // hasUnconsumedLayout matches whether the produced layout actually changed.
-        assertFlagsMatchDiff(tree, nodes, changed6);
+            assertFalse(tree.hasNewLayout(root));
+            assertFalse(tree.hasDirtyDescendant(root));
+        }
+    }
+
+    @Nested
+    @DisplayName("needsVisit for efficient tree walking")
+    class NeedsVisitTests {
+
+        @Test
+        @DisplayName("needsVisit returns true when node has new layout")
+        void needsVisitTrueWhenHasNewLayout() {
+            TaffyTree tree = new TaffyTree();
+            NodeId node = tree.newLeaf(new TaffyStyle());
+
+            tree.computeLayout(node, TaffySize.maxContent());
+
+            assertTrue(tree.hasNewLayout(node));
+            assertTrue(tree.needsVisit(node));
+        }
+
+        @Test
+        @DisplayName("needsVisit returns true when has dirty descendant")
+        void needsVisitTrueWhenHasDirtyDescendant() {
+            TaffyTree tree = new TaffyTree();
+            
+            NodeId leaf = tree.newLeaf(new TaffyStyle());
+            NodeId root = tree.newWithChildren(new TaffyStyle(), leaf);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+            tree.acknowledgeLayout(root); // Clear root's hasNewLayout but not dirty descendant
+
+            assertFalse(tree.hasNewLayout(root));
+            assertTrue(tree.hasDirtyDescendant(root));
+            assertTrue(tree.needsVisit(root)); // Still needs visit because of descendant
+        }
+
+        @Test
+        @DisplayName("needsVisit returns false when fully acknowledged")
+        void needsVisitFalseWhenFullyAcknowledged() {
+            TaffyTree tree = new TaffyTree();
+            
+            NodeId leaf = tree.newLeaf(new TaffyStyle());
+            NodeId root = tree.newWithChildren(new TaffyStyle(), leaf);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Acknowledge from bottom up
+            tree.acknowledgeSubtree(leaf);
+            tree.acknowledgeSubtree(root);
+
+            assertFalse(tree.needsVisit(root));
+            assertFalse(tree.needsVisit(leaf));
+        }
+    }
+
+    @Nested
+    @DisplayName("Efficient tree walking pattern")
+    class TreeWalkingPattern {
+
+        @Test
+        @DisplayName("can skip unchanged subtrees")
+        void canSkipUnchangedSubtrees() {
+            TaffyTree tree = new TaffyTree();
+
+            // Build tree: root -> [branch1 -> leaf1, branch2 -> leaf2]
+            NodeId leaf1 = tree.newLeaf(new TaffyStyle());
+            NodeId branch1 = tree.newWithChildren(new TaffyStyle(), leaf1);
+            NodeId leaf2 = tree.newLeaf(new TaffyStyle());
+            NodeId branch2 = tree.newWithChildren(new TaffyStyle(), leaf2);
+            NodeId root = tree.newWithChildren(new TaffyStyle(), branch1, branch2);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Acknowledge entire tree
+            List<NodeId> allNodes = collectSubtree(tree, root);
+            acknowledgeSubtreeAll(tree, allNodes);
+
+            // Verify all clean
+            for (NodeId n : allNodes) {
+                assertFalse(tree.needsVisit(n), "Node should not need visit: " + n);
+            }
+
+            // Now modify only branch1's style
+            TaffyStyle newStyle = tree.getStyle(branch1).copy();
+            newStyle.size = new TaffySize<>(TaffyDimension.length(50f), TaffyDimension.length(50f));
+            tree.setStyle(branch1, newStyle);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Root needs visit (has dirty descendant)
+            assertTrue(tree.needsVisit(root));
+            
+            // Branch1 subtree was affected
+            assertTrue(tree.needsVisit(branch1));
+            assertTrue(tree.hasNewLayout(branch1));
+            
+            // Branch2 subtree may also be recomputed (depending on layout algorithm),
+            // but we can verify the pattern works for selective acknowledgement
+        }
+
+        @Test
+        @DisplayName("demonstrates efficient walk pattern")
+        void demonstratesEfficientWalkPattern() {
+            TaffyTree tree = new TaffyTree();
+
+            // Build a deeper tree
+            TaffyStyle leafStyle = new TaffyStyle();
+            leafStyle.size = new TaffySize<>(TaffyDimension.length(20f), TaffyDimension.length(20f));
+            
+            NodeId leaf1 = tree.newLeaf(leafStyle);
+            NodeId leaf2 = tree.newLeaf(leafStyle);
+            NodeId leaf3 = tree.newLeaf(leafStyle);
+            NodeId leaf4 = tree.newLeaf(leafStyle);
+            
+            NodeId branch1 = tree.newWithChildren(new TaffyStyle(), leaf1, leaf2);
+            NodeId branch2 = tree.newWithChildren(new TaffyStyle(), leaf3, leaf4);
+            NodeId root = tree.newWithChildren(new TaffyStyle(), branch1, branch2);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Simulate efficient walk pattern:
+            // 1. Start at root
+            // 2. If needsVisit is false, skip entire subtree
+            // 3. If hasNewLayout, process node
+            // 4. Recurse to children
+            // 5. Call acknowledgeSubtree when done with node
+
+            List<NodeId> visited = new ArrayList<>();
+            efficientWalk(tree, root, visited);
+
+            // All nodes should have been visited
+            assertEquals(7, visited.size());
+
+            // After walk, nothing needs visit
+            assertFalse(tree.needsVisit(root));
+        }
+
+        private void efficientWalk(TaffyTree tree, NodeId node, List<NodeId> visited) {
+            if (!tree.needsVisit(node)) {
+                return; // Skip this subtree entirely
+            }
+
+            visited.add(node);
+
+            // Process children first (for bottom-up acknowledgement)
+            for (NodeId child : tree.getChildren(node)) {
+                efficientWalk(tree, child, visited);
+            }
+
+            // Acknowledge this node after processing children
+            tree.acknowledgeSubtree(node);
+        }
+    }
+
+    @Nested
+    @DisplayName("Complex tree scenarios")
+    class ComplexTreeScenarios {
+
+        @Test
+        @DisplayName("layout tracking with multiple update waves")
+        void layoutTrackingWithMultipleUpdateWaves() {
+            TaffyTree tree = new TaffyTree();
+
+            // Build complex tree
+            TaffyStyle leafAStyle = new TaffyStyle();
+            leafAStyle.size = new TaffySize<>(TaffyDimension.length(40f), TaffyDimension.length(10f));
+            NodeId leafA = tree.newLeaf(leafAStyle);
+
+            TaffyStyle leafBStyle = new TaffyStyle();
+            leafBStyle.flexGrow = 1f;
+            leafBStyle.flexShrink = 1.0f;
+            leafBStyle.flexBasis = TaffyDimension.AUTO;
+            NodeId leafB = tree.newLeafWithMeasure(leafBStyle, fixedMeasure(25f, 12f));
+
+            NodeId leafC = tree.newLeaf(new TaffyStyle());
+
+            TaffyStyle flexRowStyle = new TaffyStyle();
+            flexRowStyle.display = TaffyDisplay.FLEX;
+            flexRowStyle.flexDirection = FlexDirection.ROW;
+            NodeId flexRow = tree.newWithChildren(flexRowStyle, leafA, leafB, leafC);
+
+            TaffyStyle rootStyle = new TaffyStyle();
+            rootStyle.display = TaffyDisplay.FLEX;
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(120f));
+            NodeId root = tree.newWithChildren(rootStyle, flexRow);
+
+            TaffySize<AvailableSpace> available = new TaffySize<>(
+                AvailableSpace.definite(200f), 
+                AvailableSpace.definite(120f)
+            );
+
+            List<NodeId> nodes = collectSubtree(tree, root);
+
+            // Wave 0: initial compute
+            tree.computeLayout(root, available);
+            
+            // All nodes should have new layout
+            for (NodeId n : nodes) {
+                assertTrue(tree.hasNewLayout(n), "Node should have new layout after first compute: " + n);
+            }
+            
+            // Root should have dirty descendants
+            assertTrue(tree.hasDirtyDescendant(root));
+
+            acknowledgeSubtreeAll(tree, nodes);
+            
+            // All clean
+            for (NodeId n : nodes) {
+                assertFalse(tree.needsVisit(n), "Node should not need visit after ack: " + n);
+            }
+
+            // Wave 1: recompute without changes
+            tree.computeLayout(root, available);
+            
+            // All nodes marked again (Yoga-style)
+            for (NodeId n : nodes) {
+                assertTrue(tree.hasNewLayout(n), "Node should have new layout on recompute: " + n);
+            }
+
+            acknowledgeSubtreeAll(tree, nodes);
+
+            // Wave 2: change style on one node
+            TaffyStyle newLeafAStyle = tree.getStyle(leafA).copy();
+            newLeafAStyle.size = new TaffySize<>(TaffyDimension.length(80f), TaffyDimension.length(20f));
+            tree.setStyle(leafA, newLeafAStyle);
+
+            tree.computeLayout(root, available);
+
+            // At minimum, the modified node and its ancestors should need visit
+            assertTrue(tree.needsVisit(root));
+            assertTrue(tree.hasNewLayout(leafA));
+        }
+
+        @Test
+        @DisplayName("structural changes update tracking correctly")
+        void structuralChangesUpdateTrackingCorrectly() {
+            TaffyTree tree = new TaffyTree();
+
+            NodeId leaf1 = tree.newLeaf(new TaffyStyle());
+            NodeId root = tree.newWithChildren(new TaffyStyle(), leaf1);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+            acknowledgeSubtreeAll(tree, collectSubtree(tree, root));
+
+            assertFalse(tree.needsVisit(root));
+
+            // Add a new child
+            NodeId leaf2 = tree.newLeaf(new TaffyStyle());
+            tree.addChild(root, leaf2);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // New node should have new layout
+            assertTrue(tree.hasNewLayout(leaf2));
+            
+            // Root should need visit due to recompute
+            assertTrue(tree.needsVisit(root));
+        }
     }
 }

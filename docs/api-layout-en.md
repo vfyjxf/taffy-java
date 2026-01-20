@@ -34,7 +34,7 @@ tree.computeLayout(root, new Size<>(
 ));
 ```
 
-If an axis is allowed to grow “unbounded”, pass `AvailableSpace.maxContent()` for that axis.
+If an axis is allowed to grow "unbounded", pass `AvailableSpace.maxContent()` for that axis.
 
 ### Reading layout results
 
@@ -44,14 +44,19 @@ Results are written back to each node:
 - `Layout.size()`
 - resolved margin/border/padding values
 
-#### Incremental consumption: `hasUnconsumedLayout` / `acknowledgeLayout`
+#### Incremental consumption: Yoga-style dirty propagation
 
-Some render integrations need a reliable signal for “did this node’s layout actually change since the last time the renderer consumed it”, to avoid redundant updates.
+Taffy-Java uses a Yoga-style dirty propagation system that allows efficient tree traversal:
 
-- `hasUnconsumedLayout(node)`: returns `true` if the node’s layout changed since the last acknowledgement
-- `acknowledgeLayout(node)`: mark the current layout as consumed
+- `hasNewLayout(node)`: returns `true` if this node was laid out since last acknowledgement
+- `hasDirtyDescendant(node)`: returns `true` if any descendant has a new layout
+- `needsVisit(node)`: returns `true` if this node or any descendant needs attention
+- `acknowledgeLayout(node)`: mark this node's layout as consumed
+- `acknowledgeSubtree(node)`: mark this node's layout as consumed AND clear dirty descendant flag
 
-Typical pattern: only push updates for nodes that changed.
+> **NOTE**: `hasUnconsumedLayout(node)` is still available but deprecated - use `hasNewLayout(node)` instead.
+
+**Efficient tree walking pattern:**
 
 ```java
 tree.computeLayout(root, new Size<>(
@@ -59,21 +64,42 @@ tree.computeLayout(root, new Size<>(
   AvailableSpace.definite(viewportHeight)
 ));
 
-for (NodeId n : tree.getAllNodes()) {
-  if (!tree.hasUnconsumedLayout(n)) continue;
-  Layout l = tree.getLayout(n);
-  // ... push l into the renderer (transform/size/clipping/etc.)
-  tree.acknowledgeLayout(n);
+// Start from root and walk only dirty subtrees
+void processLayout(TaffyTree tree, NodeId node) {
+    if (!tree.needsVisit(node)) {
+        return; // Skip this entire subtree - no changes
+    }
+    
+    // Process this node if it has a new layout
+    if (tree.hasNewLayout(node)) {
+        Layout l = tree.getLayout(node);
+        // ... push l into the renderer (transform/size/clipping/etc.)
+    }
+    
+    // Recurse to children
+    for (NodeId child : tree.getChildren(node)) {
+        processLayout(tree, child);
+    }
+    
+    // Acknowledge after processing children (bottom-up)
+    tree.acknowledgeSubtree(node);
 }
+
+processLayout(tree, root);
 ```
 
-> **NOTE**
->
-> Change detection depends on rounding: when rounding is enabled, changes are tracked on the final (rounded) layout; when disabled, changes are tracked on the unrounded layout.
+This pattern allows you to:
+1. Skip entire unchanged subtrees (when `needsVisit()` returns false)
+2. Process only nodes with new layouts
+3. Use bottom-up acknowledgement for proper dirty flag clearing
 
 > **NOTE**
 >
-> `Layout.location()` is commonly interpreted as “child border-box relative to parent border-box”. For absolute render coordinates, accumulate locations up the parent chain.
+> Unlike a version-based approach, `hasNewLayout()` is set for ALL nodes that are laid out during `computeLayout()`, regardless of whether their layout actually changed. This matches Yoga's behavior and allows reliable tree walking without binding.
+
+> **NOTE**
+>
+> `Layout.location()` is commonly interpreted as "child border-box relative to parent border-box". For absolute render coordinates, accumulate locations up the parent chain.
 
 ```java
 float absX = 0f, absY = 0f;
