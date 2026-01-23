@@ -4,9 +4,9 @@ import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
-import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 
 /**
  * Utility class for resolving CSS dimension values against parent/context sizes.
@@ -106,8 +106,8 @@ public final class Resolve {
     /**
      * Apply aspect ratio to a size if one dimension is missing.
      */
-    public static FloatSize maybeApplyAspectRatio(FloatSize size, Float aspectRatio) {
-        if (aspectRatio == null) return size;
+    public static FloatSize maybeApplyAspectRatio(FloatSize size, float aspectRatio) {
+        if (Float.isNaN(aspectRatio)) return size;
         if (!Float.isNaN(size.width) && Float.isNaN(size.height)) {
             return new FloatSize(size.width, size.width / aspectRatio);
         }
@@ -142,8 +142,8 @@ public final class Resolve {
      */
     public static FloatSize maybeClampSize(FloatSize size, FloatSize min, FloatSize max) {
         return new FloatSize(
-            TaffyMath.maybeClamp(size.width, min != null ? min.width : null, max != null ? max.width : null),
-            TaffyMath.maybeClamp(size.height, min != null ? min.height : null, max != null ? max.height : null)
+            TaffyMath.maybeClamp(size.width, min != null ? min.width : Float.NaN, max != null ? max.width : Float.NaN),
+            TaffyMath.maybeClamp(size.height, min != null ? min.height : Float.NaN, max != null ? max.height : Float.NaN)
         );
     }
 

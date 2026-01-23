@@ -245,7 +245,7 @@ public final class GridTestAdapter {
                 ? style.gridTemplateColumnsWithRepeat
                 : style.gridTemplateRowsWithRepeat;
 
-        if (withRepeat != null) {
+        if (withRepeat != null && !withRepeat.isEmpty()) {
             return withRepeat;
         }
 

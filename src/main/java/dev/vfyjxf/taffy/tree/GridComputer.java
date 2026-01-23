@@ -365,7 +365,7 @@ public class GridComputer {
             // Per CSS Grid spec: If item has aspectRatio and no explicit height, 
             // vertical alignment defaults to START (not STRETCH).
             boolean shouldStretchHeight = (alignSelf == AlignItems.STRETCH);
-            if (aspectRatio != null && Float.isNaN(inherentSize.height)) {
+            if (aspectRatio != null && !Float.isNaN(aspectRatio) && Float.isNaN(inherentSize.height)) {
                 // When aspectRatio is set and height is not explicit, default is START not STRETCH
                 shouldStretchHeight = false;
             }
@@ -1179,11 +1179,17 @@ public class GridComputer {
             // Final placement (placeItems) re-reads raw values to apply aspectRatio rules.
             AlignItems parentAlignItems = containerStyle.getAlignItems();
             AlignItems parentJustifyItems = containerStyle.justifyItems;
-            AlignItems resolvedAlignItems = parentAlignItems != null ? parentAlignItems : AlignItems.STRETCH;
-            AlignItems resolvedJustifyItems = parentJustifyItems != null ? parentJustifyItems : AlignItems.STRETCH;
+            AlignItems resolvedAlignItems = (parentAlignItems != null && parentAlignItems != AlignItems.AUTO)
+                                            ? parentAlignItems
+                                            : AlignItems.STRETCH;
+            AlignItems resolvedJustifyItems = (parentJustifyItems != null && parentJustifyItems != AlignItems.AUTO)
+                                              ? parentJustifyItems
+                                              : AlignItems.STRETCH;
 
-            item.alignSelf = childStyle.getAlignSelf() != null ? childStyle.getAlignSelf() : resolvedAlignItems;
-            item.justifySelf = childStyle.justifySelf != null ? childStyle.justifySelf : resolvedJustifyItems;
+            AlignItems rawAlignSelf = childStyle.getAlignSelf();
+            AlignItems rawJustifySelf = childStyle.justifySelf;
+            item.alignSelf = (rawAlignSelf != null && rawAlignSelf != AlignItems.AUTO) ? rawAlignSelf : resolvedAlignItems;
+            item.justifySelf = (rawJustifySelf != null && rawJustifySelf != AlignItems.AUTO) ? rawJustifySelf : resolvedJustifyItems;
 
             // Grid placement - properly handle LINE, SPAN, NAMED_LINE, NAMED_SPAN, and AUTO
             GridPlacement colStart = childStyle.getGridColumnStart();
@@ -1555,7 +1561,7 @@ public class GridComputer {
      */
     private void collapseEmptyAutoFitColumns(FloatList columnSizes, TaffyStyle style, List<GridItem> items,
                                              FloatSize nodeInnerSize, float gap, TrackCounts colCounts) {
-        if (style.gridTemplateColumnsWithRepeat == null) {
+        if (style.gridTemplateColumnsWithRepeat == null || style.gridTemplateColumnsWithRepeat.isEmpty()) {
             return;
         }
 
@@ -1594,7 +1600,7 @@ public class GridComputer {
      * Get the expanded grid template columns, handling auto-fill/auto-fit if present.
      */
     private List<TrackSizingFunction> getExpandedTemplateColumns(TaffyStyle style, float containerWidth, float gap) {
-        if (style.gridTemplateColumnsWithRepeat != null) {
+        if (style.gridTemplateColumnsWithRepeat != null && !style.gridTemplateColumnsWithRepeat.isEmpty()) {
             return expandAutoRepetition(style.gridTemplateColumnsWithRepeat, containerWidth, gap);
         }
         return style.getGridTemplateColumns();
@@ -1604,7 +1610,7 @@ public class GridComputer {
      * Get the expanded grid template rows, handling auto-fill/auto-fit if present.
      */
     private List<TrackSizingFunction> getExpandedTemplateRows(TaffyStyle style, float containerHeight, float gap) {
-        if (style.gridTemplateRowsWithRepeat != null) {
+        if (style.gridTemplateRowsWithRepeat != null && !style.gridTemplateRowsWithRepeat.isEmpty()) {
             return expandAutoRepetition(style.gridTemplateRowsWithRepeat, containerHeight, gap);
         }
         return style.getGridTemplateRows();
@@ -1747,8 +1753,8 @@ public class GridComputer {
         }
 
         // Step 2: Place items with definite SECONDARY axis position only
-        // For row flow: secondary=row → items with definite row but auto column
-        // For column flow: secondary=column → items with definite column but auto row
+        // For row flow: secondary=row -> items with definite row but auto column
+        // For column flow: secondary=column -> items with definite column but auto row
         for (GridItem item : items) {
             if (item.columnStart != null && item.rowStart != null) {
                 continue; // Already placed in step 1
@@ -2654,18 +2660,18 @@ public class GridComputer {
                     // Per CSS Grid spec:
                     // - If max is resolvable: size = max(minContribution, maxLimit)
                     // - If max is NOT resolvable (e.g., percent in indefinite container):
-                    //   growth_limit = ∞, so track behaves like auto with no upper limit.
+                    //   growth_limit = infinity, so track behaves like auto with no upper limit.
                     //   Use max-content size for max-content sizing mode.
                     if (!Float.isNaN(maxLimit)) {
                         size = Math.max(minContribution, maxLimit);
                     } else {
-                        // Max is not resolvable - growth_limit = ∞
+                        // Max is not resolvable - growth_limit = infinity
                         // Per Rust: track behaves as auto with infinite growth limit
                         // For max-content sizing: use max-content size (maxContentSize)
                         // For min-content sizing: use min contribution
                         // Since we're in max-content sizing mode (indefinite container), use max-content
                         size = maxContentSize;
-                        growthLimits.set(i, Float.MAX_VALUE);  // Explicitly set growth limit to ∞
+                        growthLimits.set(i, Float.MAX_VALUE);  // Explicitly set growth limit to infinity
                     }
                 } else {
                     // Auto track: base size is min-content
@@ -3157,8 +3163,8 @@ public class GridComputer {
                     // Key difference from PHASE 1: stretch_auto_tracks recalculates free space from scratch
                     // using axis_available_space_for_expansion (which is inner_node_size when definite).
                     // This is NOT the remaining space from PHASE 1 - it's a fresh calculation.
-                    AlignContent justifyContent = style.justifyContent;  // null means default = STRETCH for Grid
-                    boolean shouldStretch = (justifyContent == null || justifyContent == AlignContent.STRETCH);
+                    AlignContent justifyContent = style.justifyContent;  // AUTO/null means default = STRETCH for Grid
+                    boolean shouldStretch = (justifyContent == null || justifyContent == AlignContent.AUTO || justifyContent == AlignContent.STRETCH);
                     if (!Float.isNaN(nodeInnerSize.width) && shouldStretch) {
                         // Recalculate free space for stretch (not using remainingSpace from PHASE 1)
                         float stretchUsedSpace = 0;
@@ -3203,8 +3209,8 @@ public class GridComputer {
         } else {
             // When available space is indefinite (effectiveAvailableWidth < 0),
             // Per CSS Grid spec and Rust's compute_free_space():
-            // - MinContent: free_space = 0 → do NOT expand tracks
-            // - MaxContent: free_space = INFINITY → expand tracks to growth_limit
+            // - MinContent: free_space = 0 -> do NOT expand tracks
+            // - MaxContent: free_space = INFINITY -> expand tracks to growth_limit
             // - Truly indefinite (no constraint): treat like MaxContent
             //
             // Only expand to growth_limit when:
@@ -3499,7 +3505,7 @@ public class GridComputer {
         for (int i = 0; i < items.size(); i++) {
             itemRows[i] = getItemRowWithCounts(items.get(i), i, numColumns, rowCounts);
         }
-        
+
         // Build row-to-items index map for O(1) lookup instead of O(items) scanning per row
         // This reduces calculateAutoRowHeight from O(items*rows) to O(items+rows)
         IntList[] itemIndicesByRow = new IntList[numRows];
@@ -3829,7 +3835,7 @@ public class GridComputer {
 
     private float calculateAutoRowHeight(List<GridItem> items, FloatList columnSizes, FloatSize nodeInnerSize, TrackCounts colCounts, float columnGap, IntList rowItemIndices) {
         float maxRowHeight = 0;
-        
+
         // Only iterate over items that belong to this row (O(items_in_row) instead of O(all_items))
         for (int idx = 0; idx < rowItemIndices.size(); idx++) {
             int i = rowItemIndices.getInt(idx);
@@ -4107,19 +4113,19 @@ public class GridComputer {
             AlignItems childJustifySelf = childStyle.justifySelf;
 
             AlignItems alignY = childAlignSelf;
-            if (alignY == null) {
+            if (alignY == null || alignY == AlignItems.AUTO) {
                 alignY = defaultAlignItems;
             }
-            if (alignY == null) {
+            if (alignY == null || alignY == AlignItems.AUTO) {
                 // Per CSS Grid spec: If height is set OR aspect-ratio is set, default is START, otherwise STRETCH
-                alignY = (!Float.isNaN(item.size.height) || item.aspectRatio != null) ? AlignItems.START : AlignItems.STRETCH;
+                alignY = (!Float.isNaN(item.size.height) || (item.aspectRatio != null && !Float.isNaN(item.aspectRatio))) ? AlignItems.START : AlignItems.STRETCH;
             }
 
             AlignItems alignX = childJustifySelf;
-            if (alignX == null) {
+            if (alignX == null || alignX == AlignItems.AUTO) {
                 alignX = defaultJustifyItems;
             }
-            if (alignX == null) {
+            if (alignX == null || alignX == AlignItems.AUTO) {
                 // Per CSS Grid spec: If width is set, default is START, otherwise STRETCH
                 alignX = (!Float.isNaN(item.size.width)) ? AlignItems.START : AlignItems.STRETCH;
             }
@@ -4164,7 +4170,7 @@ public class GridComputer {
             // Reapply aspect ratio after width is determined
             // If aspect_ratio is set and height is not explicitly set, calculate height from width
             float heightFromAspectRatio = NaN;
-            if (item.aspectRatio != null && Float.isNaN(item.size.height)) {
+            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(item.size.height)) {
                 heightFromAspectRatio = width / item.aspectRatio;
             }
 
@@ -4191,7 +4197,7 @@ public class GridComputer {
             }
 
             // Reapply aspect ratio after height is determined (for cases where width is not set but height is)
-            if (item.aspectRatio != null && Float.isNaN(item.size.width) && !Float.isNaN(item.size.height)) {
+            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(item.size.width) && !Float.isNaN(item.size.height)) {
                 width = height * item.aspectRatio;
             }
 
@@ -4431,7 +4437,7 @@ public class GridComputer {
 
             // Reapply aspect ratio after width is determined from inset
             // If aspect_ratio is set, and we now have width but no height, calculate height from width
-            if (aspectRatio != null && !Float.isNaN(knownDimensions.width) && Float.isNaN(knownDimensions.height)) {
+            if (aspectRatio != null && !Float.isNaN(aspectRatio) && !Float.isNaN(knownDimensions.width) && Float.isNaN(knownDimensions.height)) {
                 knownDimensions = new FloatSize(
                     knownDimensions.width,
                     knownDimensions.width / aspectRatio
@@ -4447,7 +4453,7 @@ public class GridComputer {
             }
 
             // Reapply aspect ratio after height is determined from inset (for width calculation)
-            if (aspectRatio != null && !Float.isNaN(knownDimensions.height) && Float.isNaN(knownDimensions.width)) {
+            if (aspectRatio != null && !Float.isNaN(aspectRatio) && !Float.isNaN(knownDimensions.height) && Float.isNaN(knownDimensions.width)) {
                 knownDimensions = new FloatSize(
                     knownDimensions.height * aspectRatio,
                     knownDimensions.height
@@ -4885,7 +4891,7 @@ public class GridComputer {
     }
 
     private static FloatSize maybeApplyAspectRatio(FloatSize size, Float aspectRatio) {
-        if (aspectRatio == null) return size;
+        if (aspectRatio == null || Float.isNaN(aspectRatio)) return size;
         if (!Float.isNaN(size.width) && Float.isNaN(size.height)) {
             return new FloatSize(size.width, size.width / aspectRatio);
         }
@@ -5272,7 +5278,7 @@ public class GridComputer {
         Float aspectRatio = item.aspectRatio;
 
         // Apply aspect ratio (already done in maybeApplyAspectRatio above, but do again in case stretch applies)
-        if (aspectRatio != null && aspectRatio > 0) {
+        if (aspectRatio != null && !Float.isNaN(aspectRatio) && aspectRatio > 0) {
             if (!Float.isNaN(width) && Float.isNaN(height)) {
                 // width is known, derive height
                 height = width / aspectRatio;
@@ -5293,7 +5299,7 @@ public class GridComputer {
             // In our implementation, margins are already resolved to 0 if they were auto
             width = gridAreaMinusMarginsWidth;
             // Reapply aspect ratio
-            if (aspectRatio != null && aspectRatio > 0 && !Float.isNaN(width) && Float.isNaN(height)) {
+            if (aspectRatio != null && !Float.isNaN(aspectRatio) && aspectRatio > 0 && !Float.isNaN(width) && Float.isNaN(height)) {
                 height = width / aspectRatio;
             }
         }
@@ -5303,7 +5309,7 @@ public class GridComputer {
         // This prevents the aspectRatio from incorrectly calculating width from stretched height.
         // See: https://www.w3.org/TR/css-grid-1/#grid-item-sizing
         boolean shouldStretchHeight = item.alignSelf == AlignItems.STRETCH;
-        if (aspectRatio != null && Float.isNaN(inherentSize.height)) {
+        if (aspectRatio != null && !Float.isNaN(aspectRatio) && Float.isNaN(inherentSize.height)) {
             // When aspectRatio is set and height is not explicit, default is START not STRETCH
             shouldStretchHeight = false;
         }
@@ -5311,7 +5317,7 @@ public class GridComputer {
         if (Float.isNaN(height) && shouldStretchHeight) {
             height = gridAreaMinusMarginsHeight;
             // Reapply aspect ratio
-            if (aspectRatio != null && aspectRatio > 0 && !Float.isNaN(height) && Float.isNaN(width)) {
+            if (aspectRatio != null && !Float.isNaN(aspectRatio) && aspectRatio > 0 && !Float.isNaN(height) && Float.isNaN(width)) {
                 width = height * aspectRatio;
             }
         }

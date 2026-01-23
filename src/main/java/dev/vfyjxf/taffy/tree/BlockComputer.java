@@ -137,7 +137,7 @@ public class BlockComputer {
             style.getOverflow().x.isScrollContainer() ||
             style.getOverflow().y.isScrollContainer() ||
             style.getPosition() == TaffyPosition.ABSOLUTE ||
-            style.getAspectRatio() != null ||
+            (!Float.isNaN(style.getAspectRatio())) ||
             padding.top > 0 ||
             padding.bottom > 0 ||
             border.top > 0 ||
@@ -420,11 +420,11 @@ public class BlockComputer {
 
         // Check RTL once at the start
         boolean isRtl = direction != null && direction.isRtl();
-        
+
         for (BlockItem item : items) {
             if (item.position == TaffyPosition.ABSOLUTE) {
                 // In RTL, static position starts from right
-                float staticX = isRtl 
+                float staticX = isRtl
                     ? (containerOuterWidth - contentBoxInset.right)
                     : contentBoxInset.left;
                 item.staticPosition = new FloatPoint(staticX, yOffsetForAbsolute);
@@ -505,9 +505,9 @@ public class BlockComputer {
 
             item.computedSize = finalSize;
             item.canBeCollapsedThrough = itemOutput.marginsCanCollapseThrough();
-            
+
             // Update static position for RTL
-            float staticX = isRtl 
+            float staticX = isRtl
                 ? (containerOuterWidth - contentBoxInset.right)
                 : contentBoxInset.left;
             item.staticPosition = new FloatPoint(
@@ -516,17 +516,17 @@ public class BlockComputer {
             );
 
             float y = committedYOffset + insetOffsetY + yMarginOffset;
-            
+
             // Calculate x position based on direction
             float itemOuterWidth = finalSize.width + resolvedMargin.left + resolvedMargin.right;
             float freeSpace = containerInnerWidth - itemOuterWidth;
             float x;
-            
+
             if (isRtl) {
                 // RTL: Default alignment is to the right (START in RTL)
                 // Calculate x so item aligns to right edge by default
                 x = contentBoxInset.left + freeSpace + resolvedMargin.left + insetOffsetX;
-                
+
                 // Apply text alignment adjustments for RTL
                 if (itemOuterWidth < containerInnerWidth) {
                     switch (textAlign) {
@@ -547,7 +547,7 @@ public class BlockComputer {
             } else {
                 // LTR: Default alignment is to the left
                 x = contentBoxInset.left + insetOffsetX + resolvedMargin.left;
-                
+
                 // Apply text alignment adjustments for LTR
                 if (itemOuterWidth < containerInnerWidth) {
                     switch (textAlign) {

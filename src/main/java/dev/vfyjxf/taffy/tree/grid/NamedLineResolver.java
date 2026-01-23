@@ -116,7 +116,7 @@ public final class NamedLineResolver {
     /**
      * Resolve named lines in a row placement to numeric lines.
      * @param placement The row placement (start and end)
-     * @return Line with resolved GridPlacements (NAMED_LINE → LINE, NAMED_SPAN resolved against anchor)
+     * @return Line with resolved GridPlacements (NAMED_LINE -> LINE, NAMED_SPAN resolved against anchor)
      */
     public TaffyLine<GridPlacement> resolveRowNames(TaffyLine<GridPlacement> placement) {
         return resolveLineNames(placement, Axis.ROW);
@@ -125,7 +125,7 @@ public final class NamedLineResolver {
     /**
      * Resolve named lines in a column placement to numeric lines.
      * @param placement The column placement (start and end)
-     * @return Line with resolved GridPlacements (NAMED_LINE → LINE, NAMED_SPAN resolved against anchor)
+     * @return Line with resolved GridPlacements (NAMED_LINE -> LINE, NAMED_SPAN resolved against anchor)
      */
     public TaffyLine<GridPlacement> resolveColumnNames(TaffyLine<GridPlacement> placement) {
         return resolveLineNames(placement, Axis.COLUMN);

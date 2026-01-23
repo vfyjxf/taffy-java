@@ -8,6 +8,13 @@ package dev.vfyjxf.taffy.style;
  * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/align-items">MDN - align-items</a>
  */
 public enum AlignItems {
+    /**
+     * Unspecified/auto value used as a non-null sentinel.
+     * <p>
+     * The effective behavior depends on the algorithm context (e.g. defaulting to STRETCH).
+     */
+    AUTO,
+
     /** Items are packed toward the start of the axis */
     START,
     

@@ -358,7 +358,7 @@ public class LayoutComputer {
             overflow.x.isScrollContainer() ||
             overflow.y.isScrollContainer() ||
             style.getPosition() == TaffyPosition.ABSOLUTE ||
-            style.getAspectRatio() != null ||
+            ( !Float.isNaN(style.getAspectRatio())) ||
             padding.top > 0 ||
             padding.bottom > 0 ||
             border.top > 0 ||
@@ -475,7 +475,7 @@ public class LayoutComputer {
 
         // Apply aspect-ratio: height = max(clamped_height, width / aspect_ratio)
         // This matches Rust: height: f32_max(clamped_size.height, aspect_ratio.map(|ratio| clamped_size.width / ratio).unwrap_or(0.0))
-        if (aspectRatio != null) {
+        if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
             float aspectHeight = width / aspectRatio;
             height = Math.max(height, aspectHeight);
         }

@@ -177,6 +177,7 @@ public final class TaffyMath {
      */
     public static Float applyAspectRatioWidth(Float height, Float aspectRatio) {
         if (height == null || aspectRatio == null) return null;
+        if (Float.isNaN(height) || Float.isNaN(aspectRatio)) return null;
         return height * aspectRatio;
     }
 
@@ -185,6 +186,7 @@ public final class TaffyMath {
      */
     public static Float applyAspectRatioHeight(Float width, Float aspectRatio) {
         if (width == null || aspectRatio == null) return null;
+        if (Float.isNaN(width) || Float.isNaN(aspectRatio)) return null;
         return width / aspectRatio;
     }
 }

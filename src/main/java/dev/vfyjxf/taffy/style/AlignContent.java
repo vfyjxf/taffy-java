@@ -8,6 +8,13 @@ package dev.vfyjxf.taffy.style;
  * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/align-content">MDN - align-content</a>
  */
 public enum AlignContent {
+    /**
+     * Unspecified/auto value used as a non-null sentinel.
+     * <p>
+     * The effective behavior depends on the algorithm context (e.g. grid defaults to STRETCH).
+     */
+    AUTO,
+
     /** Items are packed toward the start of the axis */
     START,
     

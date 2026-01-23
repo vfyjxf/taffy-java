@@ -21,13 +21,14 @@ public enum AlignSelf {
      * Creates an AlignSelf from an AlignItems value.
      */
     public static AlignSelf fromAlignItems(AlignItems alignItems) {
-        if (alignItems == null) return STRETCH;
+        if (alignItems == null || alignItems == AlignItems.AUTO) return STRETCH;
         return switch (alignItems) {
             case FLEX_START, START -> FLEX_START;
             case FLEX_END, END -> FLEX_END;
             case CENTER -> CENTER;
             case BASELINE -> BASELINE;
             case STRETCH -> STRETCH;
+            case AUTO -> STRETCH; // defensive (handled above)
         };
     }
 
