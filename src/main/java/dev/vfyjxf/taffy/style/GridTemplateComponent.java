@@ -1,5 +1,7 @@
 package dev.vfyjxf.taffy.style;
 
+import java.util.Objects;
+
 /**
  * Represents a component in a grid-template-rows or grid-template-columns definition.
  * Can be either a single TrackSizingFunction or a repeat() function.
@@ -99,5 +101,23 @@ public class GridTemplateComponent {
         } else {
             return repeat != null && repeat.hasFixedComponent();
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        GridTemplateComponent that = (GridTemplateComponent) o;
+        if (type != that.type) return false;
+        if (!Objects.equals(single, that.single)) return false;
+        return Objects.equals(repeat, that.repeat);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = type.hashCode();
+        result = 31 * result + (single != null ? single.hashCode() : 0);
+        result = 31 * result + (repeat != null ? repeat.hashCode() : 0);
+        return result;
     }
 }

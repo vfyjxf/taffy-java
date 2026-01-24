@@ -1,5 +1,7 @@
 package dev.vfyjxf.taffy.style;
 
+import java.util.Objects;
+
 /**
  * Represents a track sizing function for grid layout.
  * Can be fixed, min/max content, flexible (fr), auto, or minmax().
@@ -48,6 +50,18 @@ public final class TrackSizingFunction {
 
     private TrackSizingFunction(Type type, LengthPercentage lengthValue, float flexValue,
                                 TrackSizingFunction minFunc, TrackSizingFunction maxFunc) {
+        // Per CSS Grid spec, minmax() arguments cannot be another minmax().
+        // See: https://www.w3.org/TR/css-grid-1/#valdef-grid-template-columns-minmax
+        // minmax( [ <length> | <percentage> | min-content | max-content | auto ],
+        //         [ <length> | <percentage> | <flex> | min-content | max-content | auto ] )
+        if (type == Type.MINMAX) {
+            if (minFunc != null && minFunc.type == Type.MINMAX) {
+                throw new IllegalArgumentException("minmax() min argument cannot be another minmax()");
+            }
+            if (maxFunc != null && maxFunc.type == Type.MINMAX) {
+                throw new IllegalArgumentException("minmax() max argument cannot be another minmax()");
+            }
+        }
         this.type = type;
         this.lengthValue = lengthValue;
         this.flexValue = flexValue;
@@ -119,7 +133,12 @@ public final class TrackSizingFunction {
     }
 
     /**
-     * Creates a minmax track
+     * Creates a minmax track.
+     *
+     * @param min the minimum track sizing function
+     * @param max the maximum track sizing function
+     * @return a new minmax TrackSizingFunction
+     * @throws IllegalArgumentException if min or max would create a recursive reference
      */
     public static TrackSizingFunction minmax(TrackSizingFunction min, TrackSizingFunction max) {
         return new TrackSizingFunction(Type.MINMAX, null, 0, min, max);
@@ -336,5 +355,27 @@ public final class TrackSizingFunction {
             case FLEX -> flexValue + "fr";
             case MINMAX -> "minmax(" + minFunc + ", " + maxFunc + ")";
         };
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        TrackSizingFunction that = (TrackSizingFunction) o;
+        if (type != that.type) return false;
+        if (Float.compare(that.flexValue, flexValue) != 0) return false;
+        if (!Objects.equals(lengthValue, that.lengthValue)) return false;
+        if (!Objects.equals(minFunc, that.minFunc)) return false;
+        return Objects.equals(maxFunc, that.maxFunc);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = type.hashCode();
+        result = 31 * result + (lengthValue != null ? lengthValue.hashCode() : 0);
+        result = 31 * result + (flexValue != 0.0f ? Float.floatToIntBits(flexValue) : 0);
+        result = 31 * result + (minFunc != null ? minFunc.hashCode() : 0);
+        result = 31 * result + (maxFunc != null ? maxFunc.hashCode() : 0);
+        return result;
     }
 }

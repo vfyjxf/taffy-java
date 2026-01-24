@@ -2,6 +2,7 @@ package dev.vfyjxf.taffy.style;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Represents a repeat() function in grid-template-rows or grid-template-columns.
@@ -108,5 +109,23 @@ public class GridRepetition {
      */
     public boolean hasFixedComponent() {
         return tracks.stream().allMatch(TrackSizingFunction::hasFixedComponent);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        GridRepetition that = (GridRepetition) o;
+        if (type != that.type) return false;
+        if (count != that.count) return false;
+        return Objects.equals(tracks, that.tracks);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = type.hashCode();
+        result = 31 * result + count;
+        result = 31 * result + (tracks != null ? tracks.hashCode() : 0);
+        return result;
     }
 }
