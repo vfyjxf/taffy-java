@@ -5,6 +5,7 @@ import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
+import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
@@ -401,5 +402,54 @@ public class RelayoutTest {
             assertEquals(301.0f, innerLayout.size().width, EPSILON);
             assertEquals(1080.0f, innerLayout.size().height, EPSILON);
         }
+    }
+
+    /**
+     * Measuring an item's content contribution for an intrinsically sized container must not perform its layout:
+     * doing so overwrote its descendants' layouts and its final layout cache entry with the measuring pass, so a
+     * later relayout of the container left a stretched descendant at its measured size.
+     */
+    @Test
+    @DisplayName("relayout_of_intrinsic_container_keeps_stretched_descendant")
+    void relayoutOfIntrinsicContainerKeepsStretchedDescendant() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(9.0f));
+        NodeId leaf = tree.newLeaf(leafStyle);
+
+        TaffyStyle growStyle = new TaffyStyle();
+        growStyle.flexDirection = FlexDirection.COLUMN;
+        growStyle.flexGrow = 1.0f;
+        growStyle.flexBasis = TaffyDimension.length(0.0f);
+        growStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.percent(1.0f));
+        NodeId grow = tree.newWithChildren(growStyle, leaf);
+
+        TaffyStyle rowStyle = new TaffyStyle();
+        rowStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.percent(1.0f));
+        NodeId row = tree.newWithChildren(rowStyle, grow);
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexDirection = FlexDirection.COLUMN;
+        itemStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(14.0f));
+        NodeId item = tree.newWithChildren(itemStyle, row);
+
+        TaffyStyle containerStyle = new TaffyStyle();
+        containerStyle.flexDirection = FlexDirection.COLUMN;
+        containerStyle.minSize = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
+        NodeId container = tree.newWithChildren(containerStyle, item);
+
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+        NodeId root = tree.newWithChildren(rootStyle, container);
+
+        TaffySize<AvailableSpace> maxContent = new TaffySize<>(AvailableSpace.MAX_CONTENT, AvailableSpace.MAX_CONTENT);
+        tree.computeLayout(root, maxContent);
+        assertEquals(100.0f, tree.getLayout(leaf).size().width, EPSILON, "leaf width after first layout");
+
+        tree.markDirty(container);
+        tree.computeLayout(root, maxContent);
+        assertEquals(100.0f, tree.getLayout(grow).size().width, EPSILON, "grow width after relayout");
+        assertEquals(100.0f, tree.getLayout(leaf).size().width, EPSILON, "leaf width after relayout");
     }
 }
