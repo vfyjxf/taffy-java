@@ -1009,7 +1009,9 @@ public class FlexboxComputer {
 
                         FloatSize childKnownDimensions = new FloatSize(knownWidth, knownHeight);
 
-                        LayoutOutput measured = layoutComputer.performChildLayout(
+                        // Measure only, as upstream's measure_child_size does: performing the layout here would
+                        // overwrite the item's descendants and its final layout cache entry with this measuring pass.
+                        FloatSize measured = layoutComputer.measureChildSize(
                             item.nodeId,
                             childKnownDimensions,
                             nodeInnerSize,
@@ -1018,7 +1020,7 @@ public class FlexboxComputer {
                             new TaffyLine<>(false, false)
                         );
 
-                        float measuredMain = isRow ? measured.size().width : measured.size().height;
+                        float measuredMain = isRow ? measured.width : measured.height;
                         float contentMainSize = measuredMain + marginMain;
 
                         // Asymmetric behavior between row and column containers (matches Webkit/Firefox):
