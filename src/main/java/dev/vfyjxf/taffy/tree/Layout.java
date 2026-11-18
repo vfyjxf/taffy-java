@@ -7,21 +7,28 @@ import dev.vfyjxf.taffy.geometry.FloatSize;
 /**
  * The final result of a layout algorithm for a single node.
  *
- * @param order         The relative ordering of the node. Nodes with a higher order should be rendered on top.
- * @param location      The top-left corner of the node
- * @param size          The width and height of the node
- * @param contentSize   The width and height of the content inside the node.
- *                      This may be larger than the size of the node in the case of overflowing content.
- * @param scrollbarSize The size of the scrollbars in each dimension. If there is no scrollbar then the size will be zero.
- * @param border        The size of the borders of the node
- * @param padding       The size of the padding of the node
- * @param margin        The size of the margin of the node
+ * @param order              The relative ordering of the node. Nodes with a higher order should be rendered on top.
+ * @param location           The top-left corner of the node
+ * @param size               The width and height of the node
+ * @param contentSize        The width and height of the content inside the node.
+ *                           This may be larger than the size of the node in the case of overflowing content.
+ *                           Legacy 1.x component kept for compatibility; 2.0 removes it in favour of
+ *                           {@link #scrollableOverflow()}.
+ * @param scrollableOverflow The scrollable overflow rectangle of the node (T1/T2 additive component).
+ *                           Always {@link ScrollableOverflow#ZERO} in 1.2: no layout algorithm populates
+ *                           it yet, and {@link #scrollWidth()}/{@link #scrollHeight()} still derive from
+ *                           {@code contentSize}. P4 wires the algorithms; 2.0 removes {@code contentSize}.
+ * @param scrollbarSize      The size of the scrollbars in each dimension. If there is no scrollbar then the size will be zero.
+ * @param border             The size of the borders of the node
+ * @param padding            The size of the padding of the node
+ * @param margin             The size of the margin of the node
  */
 public record Layout(
     int order,
     FloatPoint location,
     FloatSize size,
     FloatSize contentSize,
+    ScrollableOverflow scrollableOverflow,
     FloatSize scrollbarSize,
     FloatRect border,
     FloatRect padding,
@@ -32,14 +39,48 @@ public record Layout(
      * Creates a new zero-Layout
      */
     public Layout() {
-        this(0, FloatPoint.zero(), FloatSize.zero(), FloatSize.zero(), FloatSize.zero(), FloatRect.zero(), FloatRect.zero(), FloatRect.zero());
+        this(0, FloatPoint.zero(), FloatSize.zero(), FloatSize.zero(), ScrollableOverflow.ZERO,
+             FloatSize.zero(), FloatRect.zero(), FloatRect.zero(), FloatRect.zero());
     }
 
     /**
      * Creates a new zero-Layout with the supplied order value
      */
     public Layout(int order) {
-        this(order, FloatPoint.zero(), FloatSize.zero(), FloatSize.zero(), FloatSize.zero(), FloatRect.zero(), FloatRect.zero(), FloatRect.zero());
+        this(order, FloatPoint.zero(), FloatSize.zero(), FloatSize.zero(), ScrollableOverflow.ZERO,
+             FloatSize.zero(), FloatRect.zero(), FloatRect.zero(), FloatRect.zero());
+    }
+
+    /**
+     * Compatibility constructor matching the 1.1.x layout contract.
+     *
+     * <p>This is an explicit overload (not the canonical constructor) that exists so that old
+     * source code and binaries keep compiling and linking while the new
+     * {@link ScrollableOverflow} component is additive. It delegates to the canonical constructor
+     * with {@link ScrollableOverflow#ZERO}. 2.0 removes the legacy {@code contentSize} component,
+     * this overload and the legacy accessor together.</p>
+     *
+     * @param order         the relative ordering of the node
+     * @param location      the top-left corner of the node
+     * @param size          the width and height of the node
+     * @param contentSize   the width and height of the content inside the node
+     * @param scrollbarSize the size of the scrollbars in each dimension
+     * @param border        the size of the borders of the node
+     * @param padding       the size of the padding of the node
+     * @param margin        the size of the margin of the node
+     */
+    public Layout(
+        int order,
+        FloatPoint location,
+        FloatSize size,
+        FloatSize contentSize,
+        FloatSize scrollbarSize,
+        FloatRect border,
+        FloatRect padding,
+        FloatRect margin
+    ) {
+        this(order, location, size, contentSize, ScrollableOverflow.ZERO,
+             scrollbarSize, border, padding, margin);
     }
 
     /**
@@ -58,6 +99,7 @@ public record Layout(
             location.copy(),
             size.copy(),
             contentSize.copy(),
+            scrollableOverflow.copy(),
             scrollbarSize.copy(),
             border.copy(),
             padding.copy(),
@@ -102,6 +144,9 @@ public record Layout(
 
     /**
      * Return the scroll width of the node.
+     *
+     * <p>Still the legacy 1.x formula based on {@link #contentSize()}; the scrollable-overflow
+     * based formula belongs to P4/SO-01.</p>
      */
     public float scrollWidth() {
         return Math.max(0, contentSize.width + Math.min(scrollbarSize.width, size.width)
@@ -110,6 +155,9 @@ public record Layout(
 
     /**
      * Return the scroll height of the node.
+     *
+     * <p>Still the legacy 1.x formula based on {@link #contentSize()}; the scrollable-overflow
+     * based formula belongs to P4/SO-01.</p>
      */
     public float scrollHeight() {
         return Math.max(0, contentSize.height + Math.min(scrollbarSize.height, size.height)
