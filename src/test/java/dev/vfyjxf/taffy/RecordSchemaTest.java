@@ -152,8 +152,10 @@ class RecordSchemaTest {
         assertTrue(output.marginsCanCollapseThrough());
         assertEquals(ScrollableOverflow.ZERO, output.scrollableOverflow(),
             "the legacy constructor must default the additive overflow component to zero");
-        assertSame(firstBaseline, output.baselines().first(),
+        assertEquals(firstBaseline, output.baselines().first(),
             "the legacy constructor must mirror firstBaselines into baselines.first");
+        assertNotSame(firstBaseline, output.baselines().first(),
+            "Baselines must store a defensive copy of firstBaselines");
         assertTrue(output.baselines().hasFirst());
         assertFalse(output.baselines().hasLast(), "last has no producer in 1.2");
 
@@ -197,7 +199,8 @@ class RecordSchemaTest {
 
         LayoutOutput fromBoth = LayoutOutput.fromSizesAndBaselines(SIZE, CONTENT_SIZE, firstBaseline);
         assertSame(firstBaseline, fromBoth.firstBaselines());
-        assertSame(firstBaseline, fromBoth.baselines().first());
+        assertEquals(firstBaseline, fromBoth.baselines().first());
+        assertNotSame(firstBaseline, fromBoth.baselines().first());
         assertFalse(fromBoth.baselines().hasLast());
         assertEquals(ScrollableOverflow.ZERO, fromBoth.scrollableOverflow());
 
@@ -286,6 +289,93 @@ class RecordSchemaTest {
         assertEquals(2f, overflow.bottom(), 0f);
         assertFalse(overflow.reversedX());
         assertTrue(overflow.reversedY());
+    }
+
+    // === Defensive copies (mutable geometry must not leak) ===
+
+    @Test
+    @DisplayName("ScrollableOverflow accessors return defensive copies")
+    void scrollableOverflowAccessorsReturnDefensiveCopies() {
+        ScrollableOverflow overflow = new ScrollableOverflow(FloatRect.of(-1f, 2f, -3f, 4f), true, false);
+
+        FloatRect leaked = overflow.rect();
+        leaked.left = -99f;
+        leaked.right = 99f;
+        leaked.top = -98f;
+        leaked.bottom = 98f;
+
+        assertEquals(-1f, overflow.left());
+        assertEquals(2f, overflow.right());
+        assertEquals(-3f, overflow.top());
+        assertEquals(4f, overflow.bottom());
+        assertNotSame(overflow.rect(), overflow.rect());
+
+        ScrollableOverflow.ZERO.rect().left = -123f;
+        ScrollableOverflow.ZERO.rect().bottom = 456f;
+        assertEquals(0f, ScrollableOverflow.ZERO.left());
+        assertEquals(0f, ScrollableOverflow.ZERO.bottom());
+        assertEquals(0f, new Layout().scrollableOverflow().left(),
+            "mutating a leaked rectangle must not pollute the shared ZERO constant");
+    }
+
+    @Test
+    @DisplayName("Baselines accessors return defensive copies and NONE cannot be polluted")
+    void baselinesAccessorsReturnDefensiveCopies() {
+        FloatPoint sourceFirst = new FloatPoint(Float.NaN, 4f);
+        FloatPoint sourceLast = new FloatPoint(Float.NaN, 5f);
+        Baselines baselines = new Baselines(sourceFirst, sourceLast);
+
+        sourceFirst.x = 111f;
+        sourceLast.y = 112f;
+        assertTrue(Float.isNaN(baselines.first().x), "the constructor must copy first");
+        assertEquals(4f, baselines.first().y);
+        assertEquals(5f, baselines.last().y);
+
+        FloatPoint leakedFirst = baselines.first();
+        leakedFirst.x = 222f;
+        leakedFirst.y = 223f;
+        assertTrue(Float.isNaN(baselines.first().x));
+        assertEquals(4f, baselines.first().y);
+        assertNotSame(baselines.first(), baselines.first());
+
+        Baselines.NONE.first().x = 333f;
+        Baselines.NONE.last().y = 444f;
+        assertTrue(Float.isNaN(Baselines.NONE.first().x));
+        assertTrue(Float.isNaN(Baselines.NONE.last().y));
+        assertFalse(Baselines.NONE.hasFirst());
+        assertFalse(Baselines.NONE.hasLast());
+    }
+
+    @Test
+    @DisplayName("Layout/LayoutOutput copies and legacy constructors do not share mutable components")
+    void copiesDoNotShareMutableComponentInstances() {
+        Layout legacy = new Layout(
+            1, new FloatPoint(0f, 0f), SIZE, CONTENT_SIZE, SCROLLBAR_SIZE, BORDER, PADDING, MARGIN
+        );
+        assertEquals(ScrollableOverflow.ZERO, legacy.scrollableOverflow());
+        legacy.scrollableOverflow().rect().left = -50f;
+        assertEquals(0f, ScrollableOverflow.ZERO.left(),
+            "the legacy constructor must not expose ZERO's mutable rectangle");
+        assertEquals(0f, legacy.scrollableOverflow().left());
+
+        ScrollableOverflow overflow = new ScrollableOverflow(FloatRect.of(-1f, 2f, -3f, 4f), false, true);
+        Layout layout = new Layout(
+            2, new FloatPoint(3f, 4f), SIZE, CONTENT_SIZE, overflow, SCROLLBAR_SIZE, BORDER, PADDING, MARGIN
+        );
+        Layout copy = layout.copy();
+        assertNotSame(layout.scrollableOverflow(), copy.scrollableOverflow());
+        assertEquals(overflow, copy.scrollableOverflow());
+        copy.scrollableOverflow().rect().left = -77f;
+        assertEquals(-1f, layout.scrollableOverflow().left());
+        assertEquals(-1f, copy.scrollableOverflow().left());
+
+        FloatPoint firstBaseline = new FloatPoint(Float.NaN, 6f);
+        LayoutOutput output = new LayoutOutput(
+            SIZE, CONTENT_SIZE, firstBaseline, CollapsibleMarginSet.ZERO, CollapsibleMarginSet.ZERO, false
+        );
+        firstBaseline.y = 60f;
+        assertEquals(6f, output.baselines().first().y,
+            "the legacy LayoutOutput constructor must defensively copy the first baseline");
     }
 
     // === G9 record schema ===
