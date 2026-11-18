@@ -204,8 +204,15 @@ public class BlockComputer {
         }
 
         // Perform final layout on children
-        FloatRect resolvedPadding = Resolve.resolveRectOrZero(style.getPadding(), containerOuterWidth);
-        FloatRect resolvedBorder = Resolve.resolveRectOrZero(style.getBorder(), containerOuterWidth);
+        //
+        // Percentage padding and borders resolve against the *containing block's* width
+        // (parentSize.width), not the box's own width. The two only differ when the box has a
+        // non-stretch width. Fall back to the box's own width when the parent size is unknown
+        // (e.g. at the root of the layout tree). BK-06 / upstream #1083.
+        float percentageResolutionWidth =
+            !Float.isNaN(parentSize.width) ? parentSize.width : containerOuterWidth;
+        FloatRect resolvedPadding = Resolve.resolveRectOrZero(style.getPadding(), percentageResolutionWidth);
+        FloatRect resolvedBorder = Resolve.resolveRectOrZero(style.getBorder(), percentageResolutionWidth);
         FloatRect contentBoxInset = new FloatRect(
             resolvedPadding.left + resolvedBorder.left + scrollbarGutter.left,
             resolvedPadding.right + resolvedBorder.right + scrollbarGutter.right,
