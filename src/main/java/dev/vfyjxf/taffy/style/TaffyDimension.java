@@ -278,6 +278,73 @@ public final class TaffyDimension {
     }
 
     /**
+     * Returns true if this dimension is one of the four intrinsic sizing keywords whose value is
+     * obtained from content measurement: {@link Type#MIN_CONTENT}, {@link Type#MAX_CONTENT},
+     * {@link Type#FIT_CONTENT} and {@link Type#STRETCH}.
+     *
+     * <p>This is the set modelled by taffy's {@code SizingKeyword} and the set handled by
+     * {@link #resolveIntrinsicKeyword(float, float, float)}. {@link Type#CONTENT} is deliberately
+     * excluded because it is not a sizing keyword: it only exists as {@code flex-basis: content}
+     * and is resolved by the flexbox algorithm from the item's content. Note that the pre-existing
+     * {@link #isIntrinsic()} remains broader and still returns true for {@link Type#CONTENT}; use
+     * this method when selecting the sizing-keyword code path.
+     *
+     * @return true for {@code min-content}, {@code max-content}, {@code fit-content} and
+     *         {@code stretch}; false for every other type, including {@code content}
+     */
+    public boolean isIntrinsicKeyword() {
+        return type == Type.MIN_CONTENT || type == Type.MAX_CONTENT ||
+               type == Type.FIT_CONTENT || type == Type.STRETCH;
+    }
+
+    /**
+     * Resolves a content-based intrinsic sizing keyword against already measured intrinsic sizes.
+     *
+     * <ul>
+     *   <li>{@link Type#MIN_CONTENT} returns {@code minContent}</li>
+     *   <li>{@link Type#MAX_CONTENT} returns {@code maxContent}</li>
+     *   <li>{@link Type#FIT_CONTENT} returns {@code fitContent}</li>
+     * </ul>
+     *
+     * <p>The fit-content size is supplied by the caller because CSS defines it as
+     * {@code min(max-content, max(min-content, stretch-fit))}; the stretch-fit part depends on
+     * the available space and cannot be derived from {@code minContent} and {@code maxContent}
+     * alone.
+     *
+     * <p>{@link Type#STRETCH} and {@link Type#CONTENT} are content-dependent but cannot be
+     * resolved by this helper: stretch resolves against the available space, and content is a
+     * {@code flex-basis} keyword handled by the flexbox algorithm. Both throw
+     * {@link UnsupportedOperationException} rather than returning {@link Float#NaN}, so callers
+     * cannot silently treat them as {@code auto}. The opt-in sizing-keyword resolution that will
+     * give them a real resolver is deferred to 1.3 (decision S5).
+     *
+     * <p>This method is additive and does not change the legacy behavior: {@link #maybeResolve(float)}
+     * still returns {@code NaN} for all intrinsic keywords until the opt-in mode lands.
+     *
+     * @param minContent the measured min-content size, in layout units
+     * @param maxContent the measured max-content size, in layout units
+     * @param fitContent the measured fit-content size (already clamped by the caller), in layout units
+     * @return the size selected by this dimension's keyword
+     * @throws UnsupportedOperationException if this dimension is {@link Type#STRETCH} or
+     *         {@link Type#CONTENT}, whose resolution needs information not available here
+     * @throws IllegalStateException if this dimension is not an intrinsic sizing keyword, i.e.
+     *         {@link #isIntrinsicKeyword()} is false
+     */
+    public float resolveIntrinsicKeyword(float minContent, float maxContent, float fitContent) {
+        return switch (type) {
+            case MIN_CONTENT -> minContent;
+            case MAX_CONTENT -> maxContent;
+            case FIT_CONTENT -> fitContent;
+            case STRETCH, CONTENT -> throw new UnsupportedOperationException(
+                    "Cannot resolve '" + this + "' from measured intrinsic sizes: stretch resolves "
+                    + "against the available space and 'content' is a flex-basis keyword; "
+                    + "opt-in sizing-keyword resolution is deferred until 1.3 (decision S5)");
+            case LENGTH, PERCENT, AUTO, CALC -> throw new IllegalStateException(
+                    "Not an intrinsic sizing keyword: " + type + " (isIntrinsicKeyword() == false)");
+        };
+    }
+
+    /**
      * Returns the length value as an option (NaN if not a length)
      */
     public float intoOption() {
