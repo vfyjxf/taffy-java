@@ -195,6 +195,83 @@ public class LayoutComputer {
     }
 
     /**
+     * Performs the definite-size (second) layout pass of an absolutely positioned child (PA-05).
+     *
+     * <p>The first pass (the caller's {@code measuredOutput}) lays the child out with the known
+     * dimensions derived from the child's own style. An axis left {@code auto} is then sized from
+     * the child's content, and that measured outer size is the child's definite final size.
+     * Percentage sizes in the child's subtree can only resolve against a <em>definite</em>
+     * containing block, so a second pass lays the child out again with that final size as the
+     * known dimensions (both axes definite) and a definite available space. Without it a
+     * {@code height: 50%} descendant of a content-sized absolutely positioned box measured 0
+     * instead of 50% of the final height.
+     *
+     * <p>Only the out-of-flow subtree's layout cache is invalidated between the passes: the first
+     * pass stored entries computed against an indefinite containing block, and
+     * {@link LayoutCache} treats a request whose known size equals the cached computed size as a
+     * hit, which would otherwise short-circuit the definite pass. Ancestor caches and dirty flags
+     * are untouched, and when both axes of the known dimensions were already definite the first
+     * pass is returned unchanged, so boxes with a fully styled size are still laid out once.
+     *
+     * <p>This is not full out-of-flow hoisting (P6): the box is still laid out and positioned by
+     * its containing block's own pass; only the size passed to the child layout is definite.
+     *
+     * @param node            the absolutely positioned child
+     * @param knownDimensions the known dimensions used by the first pass (an axis may be NaN)
+     * @param finalSize       the child's definite final outer size derived from the first pass
+     * @param parentSize      the parent size used by the first pass
+     * @param availableSpace  the available space used by the first pass
+     * @param sizingMode      the sizing mode used by the first pass
+     * @param measuredOutput  the output of the first pass
+     * @return the definite-size pass output, or {@code measuredOutput} when both axes were known
+     */
+    LayoutOutput performDefiniteAbsoluteChildLayout(
+        NodeId node,
+        FloatSize knownDimensions,
+        FloatSize finalSize,
+        FloatSize parentSize,
+        TaffySize<AvailableSpace> availableSpace,
+        SizingMode sizingMode,
+        LayoutOutput measuredOutput) {
+
+        if (!Float.isNaN(knownDimensions.width) && !Float.isNaN(knownDimensions.height)) {
+            // Both axes were definite, so the first pass already was the definite-layout pass.
+            return measuredOutput;
+        }
+
+        clearCacheRecursively(node);
+
+        TaffySize<AvailableSpace> definiteAvailableSpace = new TaffySize<>(
+            availableSpace.width.isDefinite() ? availableSpace.width : AvailableSpace.definite(finalSize.width),
+            availableSpace.height.isDefinite() ? availableSpace.height : AvailableSpace.definite(finalSize.height)
+        );
+
+        return performChildLayout(
+            node,
+            finalSize,
+            parentSize,
+            definiteAvailableSpace,
+            sizingMode,
+            TaffyLine.FALSE
+        );
+    }
+
+    /**
+     * Clears the layout cache of a node and of every descendant.
+     *
+     * <p>Used by {@link #performDefiniteAbsoluteChildLayout} to force the definite-size pass to
+     * recompute the whole out-of-flow subtree instead of reusing cache entries computed against an
+     * indefinite containing block. Only the subtree is cleared: the ancestors' caches stay valid
+     * because their inputs did not change, and their dirty flags are not touched.
+     */
+    private void clearCacheRecursively(NodeId node) {
+        tree.clearCache(node);
+        for (NodeId child : tree.getChildren(node)) {
+            clearCacheRecursively(child);
+        }
+    }
+
+    /**
      * Computes layout for a child, using cache if available.
      */
     public LayoutOutput computeChildLayout(NodeId node, LayoutInput inputs) {
