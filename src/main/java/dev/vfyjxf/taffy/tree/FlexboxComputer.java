@@ -23,6 +23,7 @@ import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
@@ -1669,9 +1670,14 @@ public class FlexboxComputer {
                     new TaffyLine<>(false, false)
                 );
 
-                // Baseline is from the first_baselines.y of child, or default to height
-                float childBaseline = output.firstBaselines() != null ? output.firstBaselines().y : NaN;
+                // A scroll-container item's baseline is clamped to its border box, and a scroll
+                // container without a baseline synthesizes one at its border-box bottom edge
+                // (upstream #995, moved into the shared helper by #1323). A non-scroll item with no
+                // baseline falls back to its border-box height, as upstream does with
+                // child_first_baseline(...).unwrap_or(size.height).
                 float height = output.size().height;
+                float childBaseline = BaselineHelper.childFirstBaseline(
+                    output, item.overflow.y.isScrollContainer());
 
                 // baseline = first_baseline (or height if none) + top margin
                 item.baseline = (!Float.isNaN(childBaseline) ? childBaseline : height) + item.margin.top;
@@ -2652,16 +2658,22 @@ public class FlexboxComputer {
                 // Use the actual output size from child layout
                 FloatSize actualSize = output.size();
 
-                // Update item baseline for container baseline calculation
-                // Per CSS spec: baseline = baseline_offset_cross + inner_baseline
+                // Update item baseline for container baseline calculation.
+                // Per CSS spec: baseline = baseline_offset + inner_baseline. The inner baseline is
+                // clamped to the item's border box when the item is a scroll container; this applies
+                // to row and column containers alike (upstream #995 covered row containers, #1323
+                // added the column direction that used to be skipped here).
+                float innerBaseline = BaselineHelper.childFirstBaseline(
+                    output, item.overflow.y.isScrollContainer());
+                if (Float.isNaN(innerBaseline)) {
+                    innerBaseline = actualSize.height;
+                }
                 if (isRow) {
                     float baselineOffsetCross = crossOffset + item.offsetCross + item.margin.top;
-                    float innerBaseline = output.firstBaselines() != null ? output.firstBaselines().y : NaN;
-                    item.baseline = baselineOffsetCross + (!Float.isNaN(innerBaseline) ? innerBaseline : actualSize.height);
+                    item.baseline = baselineOffsetCross + innerBaseline;
                 } else {
                     float baselineOffsetMain = mainOffset + item.offsetMain + item.margin.top;
-                    float innerBaseline = output.firstBaselines() != null ? output.firstBaselines().y : NaN;
-                    item.baseline = baselineOffsetMain + (!Float.isNaN(innerBaseline) ? innerBaseline : actualSize.height);
+                    item.baseline = baselineOffsetMain + innerBaseline;
                 }
 
                 // Calculate container's first vertical baseline

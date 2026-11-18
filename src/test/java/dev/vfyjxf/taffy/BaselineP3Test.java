@@ -338,4 +338,93 @@ public class BaselineP3Test {
             "a scroll container without a baseline synthesizes one at its border-box bottom edge");
     }
 
+    // ==================================================================
+    // FL-14 / #995 + #1323: flexbox consumes the shared helper
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-14: a row flex container clamps a scroll-container item's baseline")
+    void flexRowClampsScrollContainerItemBaseline() {
+        TaffyTree tree = new TaffyTree();
+        NodeId content = measuredLeaf(tree, 30f, 60f, CONTENT_BASELINE);
+        NodeId itemA = tree.newWithChildren(scrollContainer(30f, 20f), content);
+        NodeId itemB = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexRowBaseline(200f, 100f), itemA, itemB);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // A's clamped baseline is 20, B's synthesized fallback baseline is its 10px height.
+        assertLocation(tree.getLayout(itemA), 0f, 0f, "scroll container item");
+        assertLocation(tree.getLayout(itemB), 30f, 10f, "reference item");
+    }
+
+    @Test
+    @DisplayName("#1323: a column flex container clamps a scroll-container item's baseline")
+    void flexColumnContainerClampsScrollContainerItemBaseline() {
+        TaffyTree tree = new TaffyTree();
+        NodeId content = measuredLeaf(tree, 30f, 30f, CONTENT_BASELINE);
+        NodeId scroll = tree.newWithChildren(scrollContainer(30f, 10f), content);
+        NodeId itemA = tree.newWithChildren(flexColumn(100f, 50f), scroll);
+        NodeId itemB = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexRowBaseline(200f, 100f), itemA, itemB);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // A's baseline is clamp(48, 0, 10) = 10, so the 10px reference item needs no shift.
+        assertLocation(tree.getLayout(itemA), 0f, 0f, "column flex item");
+        assertLocation(tree.getLayout(itemB), 100f, 0f, "reference item");
+    }
+
+    @Test
+    @DisplayName("CR-07: non-scroll flex baseline alignment is unchanged")
+    void flexNonScrollBaselineAlignmentUnchanged() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leafA = measuredLeaf(tree, 50f, 50f, 40f);
+        NodeId itemA = tree.newWithChildren(block(50f, 50f), leafA);
+        NodeId leafB = measuredLeaf(tree, 30f, 30f, 20f);
+        NodeId itemB = tree.newWithChildren(block(30f, 30f), leafB);
+        NodeId root = tree.newWithChildren(flexRowBaseline(200f, 100f), itemA, itemB);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertLocation(tree.getLayout(itemA), 0f, 0f, "larger baseline item");
+        assertLocation(tree.getLayout(itemB), 50f, 20f, "smaller baseline item is shifted down");
+    }
+
+    // ==================================================================
+    // #1108: grid consumes the shared helper
+    // ==================================================================
+
+    @Test
+    @DisplayName("#1108: a grid item that is a scroll container is clamped to its border box")
+    void gridClampsScrollContainerItemBaseline() {
+        TaffyTree tree = new TaffyTree();
+        NodeId contentA = measuredLeaf(tree, 30f, 40f, CONTENT_BASELINE);
+        NodeId itemA = tree.newWithChildren(scrollContainer(60f, 20f), contentA);
+        NodeId contentB = measuredLeaf(tree, 60f, 30f, 30f);
+        NodeId itemB = tree.newWithChildren(block(60f, 60f), contentB);
+        NodeId root = tree.newWithChildren(gridBaseline(120f, 100f, 60f, 60f), itemA, itemB);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // clamp(48, 0, 20) = 20, so A's shim is 30 - 20 = 10; B's baseline is 30.
+        assertLocation(tree.getLayout(itemA), 0f, 10f, "scroll-container grid item");
+        assertLocation(tree.getLayout(itemB), 60f, 0f, "reference grid item");
+    }
+
+    @Test
+    @DisplayName("CR-07: non-scroll grid baseline alignment is unchanged")
+    void gridNonScrollBaselineAlignmentUnchanged() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leafA = measuredLeaf(tree, 50f, 50f, 40f);
+        NodeId itemA = tree.newWithChildren(block(50f, 50f), leafA);
+        NodeId leafB = measuredLeaf(tree, 30f, 30f, 20f);
+        NodeId itemB = tree.newWithChildren(block(30f, 30f), leafB);
+        NodeId root = tree.newWithChildren(gridBaseline(120f, 100f, 60f, 60f), itemA, itemB);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertLocation(tree.getLayout(itemA), 0f, 0f, "larger baseline grid item");
+        assertLocation(tree.getLayout(itemB), 60f, 20f, "smaller baseline grid item is shifted down");
+    }
 }
