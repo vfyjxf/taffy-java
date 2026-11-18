@@ -504,4 +504,57 @@ public class FlexP1Test {
         assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
         assertLocation(tree.getLayout(second), 0f, 100f, "second item position");
     }
+
+    // ==================================================================
+    // FL-07 (#1286 / e4bd9c2): an unresolved percentage flex-basis is a
+    // content measurement; only flex-basis: auto may fall back to the main
+    // size style.
+    //
+    // The upstream fixture (blockflex_indefinite_percentage_flex_basis) cannot
+    // go red/green in Java: its item content measures to the same 100px as the
+    // preferred height, so both the old and the new code produce the same
+    // values. The reduction below isolates the basis fallback itself.
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-07: unresolved percentage flex-basis measures content instead of using the height")
+    void fl07_unresolvedPercentageFlexBasisUsesContent() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexBasis = TaffyDimension.percent(50f); // container main size is indefinite
+        itemStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100f));
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // old: basis falls back to the 100px height -> container 100
+        // new: basis is the (empty) content size 0 -> container 0
+        assertSize(tree.getLayout(root), 0f, 0f, "column container max-content size");
+        assertSize(tree.getLayout(item), 0f, 0f, "item used size");
+    }
+
+    @Test
+    @DisplayName("FL-07: flex-basis auto still falls back to the main size")
+    void fl07_autoFlexBasisFallsBackToMainSize() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexBasis = TaffyDimension.AUTO;
+        itemStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100f));
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 0f, 100f, "column container max-content size");
+        assertSize(tree.getLayout(item), 0f, 100f, "item used size");
+    }
 }

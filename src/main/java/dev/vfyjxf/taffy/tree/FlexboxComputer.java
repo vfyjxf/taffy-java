@@ -676,9 +676,11 @@ public class FlexboxComputer {
             if (!isNaN(resolvedFlexBasis)) {
                 // A. If the item has a definite used flex basis, that's the flex base size.
                 basis = resolvedFlexBasis;
-            } else if (!isNaN(mainSize) && !flexBasis.isContent()) {
+            } else if (!isNaN(mainSize) && flexBasis.isAuto()) {
                 // B/A. If flex basis is auto, and there's a definite main size, use that.
-                // Skip this path for flex-basis: content (always use content measurement).
+                // Only flex-basis: auto may fall back to the main size (#1286): an unresolved
+                // percentage (or any other non-auto basis, e.g. content) is treated as content and
+                // measured below.
                 basis = mainSize;
             } else {
                 // E. Otherwise, size the item into the available space using its used flex basis
