@@ -557,4 +557,66 @@ public class FlexP1Test {
         assertSize(tree.getLayout(root), 0f, 100f, "column container max-content size");
         assertSize(tree.getLayout(item), 0f, 100f, "item used size");
     }
+
+    // ==================================================================
+    // FL-08 (#1363 / 1009534): distributed alignment fallbacks.
+    //   - stretch -> flex-start WITHOUT implicit safe
+    //   - space-between -> flex-start WITH implicit safe (unchanged)
+    //
+    // Upstream fixtures: wrap_reverse_row_align_content_stretch_overflow and
+    // justify_content_row_reverse_stretch_overflow. The two
+    // align_baseline_wrap_reverse_overflow_margin_* fixtures of the same commit
+    // are baseline (B group) cases and are skipped here.
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-08: overflowing wrap-reverse align-content stretch packs lines to the bottom edge")
+    void fl08_wrapReverseAlignContentStretchOverflow() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.flexWrap = FlexWrap.WRAP_REVERSE;
+        rootStyle.alignContent = AlignContent.STRETCH;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(40f), TaffyDimension.length(40f));
+
+        TaffyStyle itemStyle = withSize(40f, 30f);
+        itemStyle.flexShrink = 0f;
+        NodeId first = tree.newLeaf(itemStyle);
+        TaffyStyle secondStyle = withSize(40f, 30f);
+        secondStyle.flexShrink = 0f;
+        NodeId second = tree.newLeaf(secondStyle);
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 40f, 40f, "container size");
+        // free space is -20; stretch falls back to flex-start (no safe), so with wrap-reverse the
+        // first (logical) line sits at y=10 and the second at y=-20.
+        assertLocation(tree.getLayout(first), 0f, 10f, "first item position");
+        assertLocation(tree.getLayout(second), 0f, -20f, "second item position");
+    }
+
+    @Test
+    @DisplayName("FL-08: overflowing row-reverse justify-content stretch packs to the right edge")
+    void fl08_rowReverseJustifyContentStretchOverflow() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW_REVERSE;
+        rootStyle.justifyContent = AlignContent.STRETCH;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(40f), TaffyDimension.length(40f));
+
+        TaffyStyle itemStyle = withSize(47f, 20f);
+        itemStyle.flexShrink = 0f;
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 40f, 40f, "container size");
+        // free space is -7; stretch falls back to flex-start, which is the end (right) edge under
+        // row-reverse, so the item starts at x=-7.
+        assertLocation(tree.getLayout(item), -7f, 0f, "item position");
+    }
 }

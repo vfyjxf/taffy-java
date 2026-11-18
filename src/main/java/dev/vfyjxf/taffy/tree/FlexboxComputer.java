@@ -1908,6 +1908,11 @@ public class FlexboxComputer {
                 // 1. If there is only a single item or negative free space, fallback distributed alignments
                 if (itemCount <= 1 || freeSpace <= 0) {
                     switch (justify) {
+                        case STRETCH:
+                            // FL-08: stretch falls back to plain flex-start (no implicit safe), so it
+                            // packs to the flex-start edge even when the items overflow (row-reverse).
+                            effectiveJustify = JustifyContent.FLEX_START;
+                            break;
                         case SPACE_BETWEEN:
                             effectiveJustify = JustifyContent.FLEX_START;
                             isSafe = true;
@@ -1932,6 +1937,7 @@ public class FlexboxComputer {
                 // RTL coordinate transformation happens in performFinalLayout.
                 switch (effectiveJustify) {
                     case START -> initialOffset = 0;
+                    case STRETCH -> initialOffset = 0; // remains stretch only when it does not overflow
                     case SPACE_BETWEEN -> initialOffset = 0;
                     case FLEX_START -> initialOffset = isReverse ? freeSpace : 0;
                     case END -> initialOffset = freeSpace;
@@ -2160,7 +2166,13 @@ public class FlexboxComputer {
 
         if (numLines <= 1 || freeSpace <= 0) {
             switch (alignContent) {
-                case STRETCH, SPACE_BETWEEN -> {
+                case STRETCH -> {
+                    // FL-08 (#1363): stretch falls back to plain flex-start (the safety modifier is
+                    // preserved, but no implicit safe is added), so an overflowing line packs to the
+                    // flex-start edge -- the bottom edge in a wrap-reverse container.
+                    alignContent = AlignContent.FLEX_START;
+                }
+                case SPACE_BETWEEN -> {
                     alignContent = AlignContent.FLEX_START;
                     isSafe = true;
                 }
