@@ -903,11 +903,16 @@ public class FlexboxComputer {
                     float styleMaxMain = isRow ? item.maxSize.width : item.maxSize.height;
 
                     // The spec seems a bit unclear on this point (my initial reading was that the .maybe_max(style_preferred) should
-                    // not be included here), however this matches both Chrome and Firefox as of 9th March 2023.
+                    // not be included here), however for row containers this matches both Chrome and Firefox as of 9th March 2023.
+                    // For column containers the flex base size alone is the clamping basis (as the spec says): a column item's
+                    // `height` must not inflate the container's max-content size beyond the item's flex-basis.
                     //
                     // Spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
                     // Spec modification: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
-                    float clampingBasis = !Float.isNaN(stylePreferredMain)
+                    // Issue: https://github.com/w3c/csswg-drafts/issues/1435
+                    // Gentest: padding_border_overrides_size_flex_basis_0.html
+                    // Gentest: blockflex_min_content_ignores_own_height_as_percentage_basis.html
+                    float clampingBasis = isRow && !Float.isNaN(stylePreferredMain)
                                           ? Math.max(item.flexBasis, stylePreferredMain)
                                           : item.flexBasis;
 
@@ -1070,7 +1075,8 @@ public class FlexboxComputer {
                     if (!Float.isNaN(styleMaxMain)) maxMainSize = styleMaxMain;
                     if (item.flexGrow == 0f) {
                         float stylePreferredMain = isRow ? item.size.width : item.size.height;
-                        float clampingBasis = !Float.isNaN(stylePreferredMain)
+                        // FL-03: for column containers the clamping basis is the flex base size alone.
+                        float clampingBasis = isRow && !Float.isNaN(stylePreferredMain)
                                               ? Math.max(item.flexBasis, stylePreferredMain)
                                               : item.flexBasis;
                         maxMainSize = Math.min(maxMainSize, clampingBasis);

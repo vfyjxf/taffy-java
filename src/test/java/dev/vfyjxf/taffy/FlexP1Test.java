@@ -189,4 +189,57 @@ public class FlexP1Test {
         assertEquals(10f, rootLayout.size().width, EPS,
             "content contribution clamps to max-width instead of NaN");
     }
+
+    // ==================================================================
+    // FL-03 (#1183 / fc379ea): the intrinsic clamping basis is axis
+    // dependent. Rows use max(flex_basis, style_preferred); columns use
+    // flex_basis only, so a column item's height cannot inflate the
+    // container's max-content size beyond its flex-basis.
+    //
+    // Upstream fixture: blockflex_min_content_ignores_own_height_as_percentage_basis
+    // (the block child's 100% height is not needed for the flex-side fix).
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-03: column clamping basis is flex-basis, not max(flex-basis, height)")
+    void fl03_columnClampingBasisUsesFlexBasisOnly() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.AUTO);
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexBasis = TaffyDimension.length(100f);
+        itemStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(200f));
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // old: clamping basis = max(100, 200) = 200 -> container height 200
+        // new: clamping basis = flex-basis = 100 -> container height 100
+        assertSize(tree.getLayout(root), 100f, 100f, "column container max-content size");
+        assertSize(tree.getLayout(item), 100f, 100f, "column item size");
+    }
+
+    @Test
+    @DisplayName("FL-03: row clamping basis keeps max(flex-basis, width)")
+    void fl03_rowClampingBasisKeepsMaxWithPreferred() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexBasis = TaffyDimension.length(100f);
+        itemStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 200f, 0f, "row container max-content size");
+        assertEquals(100f, tree.getLayout(item).size().width, EPS, "row item keeps its flex-basis target");
+    }
 }
