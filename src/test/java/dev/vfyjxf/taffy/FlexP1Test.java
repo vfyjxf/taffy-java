@@ -17,6 +17,9 @@ import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.util.MeasureFunc;
+
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -618,5 +621,150 @@ public class FlexP1Test {
         // free space is -7; stretch falls back to flex-start, which is the end (right) edge under
         // row-reverse, so the item starts at x=-7.
         assertLocation(tree.getLayout(item), -7f, 0f, "item position");
+    }
+
+    // ==================================================================
+    // FL-09 (#1178 / 1b918ba): available space and stretched content sizes
+    // are floored at zero.
+    //
+    // Upstream fixture: flex_column_stretch_margin_x_exceeds_container_width
+    // and the hand-written negative_available_space test (measure callbacks
+    // must never receive a negative known dimension or available space).
+    // ==================================================================
+
+    private static MeasureFunc noNegativeMeasure(List<String> negativeInputs, float width, float height) {
+        return (known, available) -> {
+            boolean negativeKnown = (!Float.isNaN(known.width) && known.width < 0f)
+                                    || (!Float.isNaN(known.height) && known.height < 0f);
+            boolean negativeAvailable = (available.width.isDefinite() && available.width.getValue() < 0f)
+                                        || (available.height.isDefinite() && available.height.getValue() < 0f);
+            if (negativeKnown || negativeAvailable) {
+                negativeInputs.add("known=" + known + " available=" + available);
+            }
+            return new FloatSize(
+                Float.isNaN(known.width) ? width : known.width,
+                Float.isNaN(known.height) ? height : known.height
+            );
+        };
+    }
+
+    @Test
+    @DisplayName("FL-09: stretched flex item with margins wider than the container gets no negative constraints")
+    void fl09_stretchedItemMarginExceedsContainerWidth() {
+        TaffyTree tree = new TaffyTree();
+        List<String> negativeInputs = new ArrayList<>();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(20f), TaffyDimension.length(100f));
+
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(30f), LengthPercentageAuto.length(10f),
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId leaf = tree.newLeafWithMeasure(leafStyle, noNegativeMeasure(negativeInputs, 0f, 0f));
+        NodeId root = tree.newWithChildren(rootStyle, leaf);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertTrue(negativeInputs.isEmpty(), "leaf received negative layout inputs: " + negativeInputs);
+        assertEquals(0f, tree.getLayout(leaf).size().width, EPS,
+            "stretched width is max(0, inner cross - margins)");
+    }
+
+    @Test
+    @DisplayName("FL-09: definite available space is floored at zero when the scrollbar gutter exceeds the width")
+    void fl09_availableSpaceFlooredAtZero() {
+        TaffyTree tree = new TaffyTree();
+        List<String> negativeInputs = new ArrayList<>();
+        List<Float> availableWidths = new ArrayList<>();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.length(50f));
+        // A 20px vertical scrollbar gutter makes the content box 10px narrower than the box.
+        rootStyle.overflow = new dev.vfyjxf.taffy.geometry.TaffyPoint<>(
+            dev.vfyjxf.taffy.style.Overflow.VISIBLE, dev.vfyjxf.taffy.style.Overflow.SCROLL);
+        rootStyle.scrollbarWidth = 20f;
+
+        MeasureFunc measure = (known, available) -> {
+            if (available.width.isDefinite()) {
+                availableWidths.add(available.width.getValue());
+            }
+            boolean negativeKnown = (!Float.isNaN(known.width) && known.width < 0f)
+                                    || (!Float.isNaN(known.height) && known.height < 0f);
+            boolean negativeAvailable = (available.width.isDefinite() && available.width.getValue() < 0f)
+                                        || (available.height.isDefinite() && available.height.getValue() < 0f);
+            if (negativeKnown || negativeAvailable) {
+                negativeInputs.add("known=" + known + " available=" + available);
+            }
+            return new FloatSize(0f, 0f);
+        };
+        NodeId leaf = tree.newLeafWithMeasure(new TaffyStyle(), measure);
+        NodeId root = tree.newWithChildren(rootStyle, leaf);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertTrue(negativeInputs.isEmpty(), "leaf received negative layout inputs: " + negativeInputs);
+        assertFalse(availableWidths.isEmpty(), "the leaf must be measured");
+        for (float availableWidth : availableWidths) {
+            assertEquals(0f, availableWidth, EPS, "definite available width is floored at zero");
+        }
+    }
+
+    @Test
+    @DisplayName("FL-09: column stretch with over-wide margins matches the upstream fixture")
+    void fl09_columnStretchMarginExceedsContainerWidthFixture() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(20f), TaffyDimension.length(100f));
+
+        TaffyRect<LengthPercentageAuto> overWideMargins = new TaffyRect<>(
+            LengthPercentageAuto.length(30f), LengthPercentageAuto.length(10f),
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+
+        // 1. nested row flex container with two flexible items
+        TaffyStyle nestedStyle = flexBox();
+        nestedStyle.flexDirection = FlexDirection.ROW;
+        nestedStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(20f));
+        nestedStyle.margin = overWideMargins;
+        TaffyStyle flexibleStyle = new TaffyStyle();
+        flexibleStyle.flexGrow = 1f;
+        flexibleStyle.flexBasis = TaffyDimension.length(10f);
+        flexibleStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(20f));
+        NodeId innerA = tree.newLeaf(flexibleStyle);
+        NodeId innerB = tree.newLeaf(flexibleStyle);
+        NodeId nested = tree.newWithChildren(nestedStyle, innerA, innerB);
+
+        // 2. plain leaf
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(20f));
+        leafStyle.margin = overWideMargins;
+        NodeId leaf = tree.newLeaf(leafStyle);
+
+        // 3. wrapping row flex container with two fixed items
+        TaffyStyle wrapStyle = flexBox();
+        wrapStyle.flexDirection = FlexDirection.ROW;
+        wrapStyle.flexWrap = FlexWrap.WRAP;
+        wrapStyle.margin = overWideMargins;
+        NodeId wrapA = tree.newLeaf(withSize(5f, 10f));
+        NodeId wrapB = tree.newLeaf(withSize(5f, 10f));
+        NodeId wrapping = tree.newWithChildren(wrapStyle, wrapA, wrapB);
+
+        NodeId root = tree.newWithChildren(rootStyle, nested, leaf, wrapping);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 20f, 100f, "container size");
+        assertSize(tree.getLayout(nested), 0f, 20f, "nested flex container size");
+        assertLocation(tree.getLayout(nested), 30f, 0f, "nested flex container position");
+        assertSize(tree.getLayout(innerA), 0f, 20f, "nested item size");
+        assertSize(tree.getLayout(leaf), 0f, 20f, "plain leaf size");
+        assertLocation(tree.getLayout(leaf), 30f, 20f, "plain leaf position");
+        assertSize(tree.getLayout(wrapping), 0f, 20f, "wrapping container size");
+        assertLocation(tree.getLayout(wrapping), 30f, 40f, "wrapping container position");
+        assertSize(tree.getLayout(wrapA), 0f, 10f, "wrapped item size");
+        assertSize(tree.getLayout(wrapB), 0f, 10f, "wrapped item size");
     }
 }

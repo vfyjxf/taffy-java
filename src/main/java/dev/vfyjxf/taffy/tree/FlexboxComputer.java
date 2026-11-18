@@ -568,18 +568,19 @@ public class FlexboxComputer {
         float horizontalInset = contentBoxInset.left + contentBoxInset.right;
         float verticalInset = contentBoxInset.top + contentBoxInset.bottom;
 
+        // FL-09 (#1178): available space is floored at zero on both the known and the inherited path.
         AvailableSpace width;
         if (!isNaN(knownDimensions.width)) {
-            width = AvailableSpace.definite(knownDimensions.width - horizontalInset);
+            width = AvailableSpace.definite(Math.max(knownDimensions.width - horizontalInset, 0f));
         } else {
-            width = outerAvailableSpace.width.maybeSub(horizontalInset);
+            width = outerAvailableSpace.width.maybeSub(horizontalInset).maybeMax(0f);
         }
 
         AvailableSpace height;
         if (!isNaN(knownDimensions.height)) {
-            height = AvailableSpace.definite(knownDimensions.height - verticalInset);
+            height = AvailableSpace.definite(Math.max(knownDimensions.height - verticalInset, 0f));
         } else {
-            height = outerAvailableSpace.height.maybeSub(verticalInset);
+            height = outerAvailableSpace.height.maybeSub(verticalInset).maybeMax(0f);
         }
 
         return new TaffySize<>(width, height);
@@ -615,6 +616,8 @@ public class FlexboxComputer {
             if (outerCrossAvail.isDefinite()) {
                 float val = outerCrossAvail.getValue();
                 float clamped = !isNaN(crossAxisParentSize) ? crossAxisParentSize : val;
+                // FL-09: clamp the constraint at zero before applying min/max.
+                clamped = Math.max(clamped, 0f);
                 if (!isNaN(itemMinCross)) clamped = Math.max(clamped, itemMinCross);
                 if (!isNaN(itemMaxCross)) clamped = Math.min(clamped, itemMaxCross);
                 crossAxisAvailableSpace = AvailableSpace.definite(clamped);
@@ -650,7 +653,8 @@ public class FlexboxComputer {
                         float marginCross = isRow
                                             ? (item.margin.top + item.margin.bottom)
                                             : (item.margin.left + item.margin.right);
-                        childKnownCross = crossAvailValue - marginCross;
+                        // FL-09: a stretched item's known cross size is floored at zero.
+                        childKnownCross = Math.max(crossAvailValue - marginCross, 0f);
                     }
                 }
             }
@@ -1006,7 +1010,8 @@ public class FlexboxComputer {
                                     float marginCross = isRow
                                                         ? item.margin.top + item.margin.bottom
                                                         : item.margin.left + item.margin.right;
-                                    crossKnown = cross - marginCross;
+                                    // FL-09: a stretched item's known cross size is floored at zero.
+                                    crossKnown = Math.max(cross - marginCross, 0f);
                                     if (isRow) {
                                         knownHeight = crossKnown;
                                     } else {
@@ -1495,6 +1500,8 @@ public class FlexboxComputer {
             // Clamp available space by min/max if definite
             if (availCross.isDefinite()) {
                 float val = availCross.getValue();
+                // FL-09: clamp the cross constraint at zero before applying min/max.
+                val = Math.max(val, 0f);
                 if (!Float.isNaN(itemMinCross)) val = Math.max(val, itemMinCross);
                 if (!Float.isNaN(itemMaxCross)) val = Math.min(val, itemMaxCross);
                 val = Math.max(val, paddingBorderCross);
@@ -2286,13 +2293,13 @@ public class FlexboxComputer {
                                         ? item.margin.top + item.margin.bottom
                                         : item.margin.left + item.margin.right;
 
-                    float stretchedCrossSize = lineCrossSize - marginCross;
+                    // FL-09: floor the stretched size at zero before applying min/max (upstream order).
+                    float stretchedCrossSize = Math.max(lineCrossSize - marginCross, 0f);
 
                     // Apply min/max constraints
                     float minCross = isRow ? item.minSize.height : item.minSize.width;
                     float maxCross = isRow ? item.maxSize.height : item.maxSize.width;
                     stretchedCrossSize = TaffyMath.clamp(stretchedCrossSize, minCross, maxCross);
-                    stretchedCrossSize = Math.max(stretchedCrossSize, 0);
 
                     // Update target size
                     if (isRow) {
