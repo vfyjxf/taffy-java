@@ -195,6 +195,9 @@ public class TaffyTree {
             if (parentChildren != null) {
                 parentChildren.removeIf(n -> n.equals(node));
             }
+            // CR-04 (#1085): the parent's cached layout was computed with this child present, so it
+            // must be invalidated exactly like removeChildAtIndex does.
+            markDirty(parent);
         }
         
         // Remove parent references from this node's children
@@ -633,8 +636,38 @@ public class TaffyTree {
     // === Cache Management ===
 
     /**
-     * Gets the cache entry for a node.
+     * Gets the cache entry for a node for the given layout inputs (BL-04).
+     *
+     * @param node   the node
+     * @param inputs the inputs of the layout pass
+     * @return the cached output, or {@code null} if there is no usable entry
      */
+    public LayoutOutput getCacheEntry(NodeId node, LayoutInput inputs) {
+        NodeData data = nodes.get(node.getId());
+        if (data == null) return null;
+        return data.getCache().get(inputs);
+    }
+
+    /**
+     * Stores a cache entry for a node for the given layout inputs (BL-04).
+     *
+     * @param node   the node
+     * @param inputs the inputs of the layout pass
+     * @param output the computed result
+     */
+    public void storeCacheEntry(NodeId node, LayoutInput inputs, LayoutOutput output) {
+        NodeData data = nodes.get(node.getId());
+        if (data != null) {
+            data.getCache().store(inputs, output);
+        }
+    }
+
+    /**
+     * Gets the cache entry for a node.
+     *
+     * @deprecated use {@link #getCacheEntry(NodeId, LayoutInput)} instead. Kept until 2.0 (Q3).
+     */
+    @Deprecated
     public LayoutOutput getCacheEntry(NodeId node, FloatSize knownDimensions,
                                       TaffySize<AvailableSpace> availableSpace, RunMode runMode) {
         NodeData data = nodes.get(node.getId());
@@ -644,7 +677,11 @@ public class TaffyTree {
 
     /**
      * Stores a cache entry for a node.
+     *
+     * @deprecated use {@link #storeCacheEntry(NodeId, LayoutInput, LayoutOutput)} instead. Kept
+     * until 2.0 (Q3).
      */
+    @Deprecated
     public void storeCacheEntry(NodeId node, FloatSize knownDimensions,
                                 TaffySize<AvailableSpace> availableSpace, RunMode runMode,
                                 LayoutOutput output) {

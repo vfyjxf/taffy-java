@@ -154,6 +154,10 @@ public class LayoutComputer {
         SizingMode sizingMode,
         TaffyLine<Boolean> verticalMarginsAreCollapsible) {
 
+        // TODO(CR-01): upstream taffy passes the axis that the caller actually needs (block layout
+        // even has a single-axis early-return). This port has no enabled RequestedAxis caller yet
+        // (FL-25), so every layout pass requests BOTH. LayoutCache already keys on the other
+        // inputs; the axis is the remaining unreachable part of CR-01.
         LayoutInput inputs = new LayoutInput(
             RunMode.PERFORM_LAYOUT,
             sizingMode,
@@ -181,6 +185,8 @@ public class LayoutComputer {
         SizingMode sizingMode,
         TaffyLine<Boolean> verticalMarginsAreCollapsible) {
 
+        // TODO(CR-01): the axis is not requested here either; see performChildLayout. When a
+        // single-axis caller exists, pass RequestedAxis.from(axis) and let LayoutCache validate it.
         LayoutInput inputs = new LayoutInput(
             RunMode.COMPUTE_SIZE,
             sizingMode,
@@ -282,12 +288,7 @@ public class LayoutComputer {
         }
 
         // Try cache first
-        LayoutOutput cached = tree.getCacheEntry(
-            node,
-            inputs.knownDimensions(),
-            inputs.availableSpace(),
-            inputs.runMode()
-        );
+        LayoutOutput cached = tree.getCacheEntry(node, inputs);
         if (cached != null) {
             return cached;
         }
@@ -296,13 +297,7 @@ public class LayoutComputer {
         LayoutOutput output = computeLayoutUncached(node, inputs);
 
         // Store in cache
-        tree.storeCacheEntry(
-            node,
-            inputs.knownDimensions(),
-            inputs.availableSpace(),
-            inputs.runMode(),
-            output
-        );
+        tree.storeCacheEntry(node, inputs, output);
 
         return output;
     }
