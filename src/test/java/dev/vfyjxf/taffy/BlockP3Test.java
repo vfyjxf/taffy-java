@@ -23,7 +23,12 @@ import dev.vfyjxf.taffy.tree.TaffyTree;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.StringWriter;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * P3 regression tests for block layout alignment (BK-08, BK-09, BK-17).
@@ -42,6 +47,12 @@ public class BlockP3Test {
     private static TaffyStyle blockStyle() {
         TaffyStyle style = new TaffyStyle();
         style.display = TaffyDisplay.BLOCK;
+        return style;
+    }
+
+    private static TaffyStyle flowRootStyle() {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.FLOW_ROOT;
         return style;
     }
 
@@ -529,5 +540,259 @@ public class BlockP3Test {
         assertLocation(tree.getLayout(middle), 0f, 20f, "middle");
         assertSize(tree.getLayout(middle), 50f, 0f, "middle");
         assertLocation(tree.getLayout(last), 0f, 20f, "last");
+    }
+
+    // === BK-17: display: flow-root ===
+
+    /**
+     * Upstream fixture {@code block_flow_root_margin_non_collapse} (#997): a {@code flow-root}
+     * box always establishes a new block formatting context, so its 20px/30px child margins are
+     * contained by it instead of collapsing with (and escaping through) its own block edges. The
+     * plain block sibling in the same parent shows the old, collapsing behaviour.
+     */
+    @Test
+    @DisplayName("BK-17: FLOW_ROOT contains its children's block margins")
+    void flowRootMarginNonCollapse() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle blockGrandchildStyle = blockStyle();
+        blockGrandchildStyle.position = TaffyPosition.RELATIVE;
+        blockGrandchildStyle.size = size(TaffyDimension.length(40f), TaffyDimension.length(10f));
+        blockGrandchildStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(20f), LengthPercentageAuto.length(30f));
+        NodeId blockGrandchild = tree.newLeaf(blockGrandchildStyle);
+
+        TaffyStyle blockChildStyle = blockStyle();
+        blockChildStyle.position = TaffyPosition.RELATIVE;
+        blockChildStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId blockChild = tree.newWithChildren(blockChildStyle, blockGrandchild);
+
+        TaffyStyle flowRootGrandchildStyle = blockStyle();
+        flowRootGrandchildStyle.position = TaffyPosition.RELATIVE;
+        flowRootGrandchildStyle.size = size(TaffyDimension.length(40f), TaffyDimension.length(10f));
+        flowRootGrandchildStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(20f), LengthPercentageAuto.length(30f));
+        NodeId flowRootGrandchild = tree.newLeaf(flowRootGrandchildStyle);
+
+        TaffyStyle flowRootChildStyle = flowRootStyle();
+        flowRootChildStyle.position = TaffyPosition.RELATIVE;
+        flowRootChildStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId flowRootChild = tree.newWithChildren(flowRootChildStyle, flowRootGrandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, blockChild, flowRootChild);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 200f, 120f, "root");
+        // The block child's 20px top margin collapses with its child's, so it is placed at y=20
+        // and its own box is only 10px tall; the 30px bottom margin escapes below it.
+        assertLocation(tree.getLayout(blockChild), 0f, 20f, "block child");
+        assertSize(tree.getLayout(blockChild), 100f, 10f, "block child");
+        assertLocation(tree.getLayout(blockGrandchild), 0f, 0f, "block grandchild");
+        // The flow-root child contains both margins: 20 + 10 + 30 = 60px tall, placed at y=60.
+        assertLocation(tree.getLayout(flowRootChild), 0f, 60f, "flow-root child");
+        assertSize(tree.getLayout(flowRootChild), 100f, 60f, "flow-root child");
+        assertLocation(tree.getLayout(flowRootGrandchild), 0f, 20f, "flow-root grandchild");
+        assertSize(tree.getLayout(flowRootGrandchild), 40f, 10f, "flow-root grandchild");
+    }
+
+    /**
+     * The observable difference between {@code flow-root} and {@code block} without any float
+     * involvement: a block parent's top margin collapses with its first child's, a flow-root
+     * parent's does not. The child therefore sits at y=0 inside a block parent placed at y=20,
+     * while the flow-root parent starts at y=0 and the child at y=20.
+     */
+    @Test
+    @DisplayName("BK-17: FLOW_ROOT and BLOCK differ observably in margin collapsing")
+    void flowRootDiffersFromBlockByMarginCollapsing() {
+        TaffyTree blockTree = new TaffyTree();
+        TaffyStyle blockParentStyle = blockStyle();
+        blockParentStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId blockChild = blockTree.newLeaf(marginedChildStyle());
+        NodeId blockParent = blockTree.newWithChildren(blockParentStyle, blockChild);
+        NodeId blockRoot = blockTree.newWithChildren(blockRootStyle(), blockParent);
+        blockTree.computeLayout(blockRoot, TaffySize.maxContent());
+
+        // The parent's top margin escapes and carries the child's 20px margin: parent at y=20.
+        assertLocation(blockTree.getLayout(blockParent), 0f, 20f, "block parent");
+        assertSize(blockTree.getLayout(blockParent), 100f, 10f, "block parent");
+        assertLocation(blockTree.getLayout(blockChild), 0f, 0f, "block child");
+
+        TaffyTree flowRootTree = new TaffyTree();
+        TaffyStyle flowRootParentStyle = flowRootStyle();
+        flowRootParentStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId flowRootChild = flowRootTree.newLeaf(marginedChildStyle());
+        NodeId flowRootParent = flowRootTree.newWithChildren(flowRootParentStyle, flowRootChild);
+        NodeId flowRootRoot = flowRootTree.newWithChildren(blockRootStyle(), flowRootParent);
+        flowRootTree.computeLayout(flowRootRoot, TaffySize.maxContent());
+
+        // The new BFC keeps both margins inside: parent at y=0 and 60px tall, child at y=20.
+        assertLocation(flowRootTree.getLayout(flowRootParent), 0f, 0f, "flow-root parent");
+        assertSize(flowRootTree.getLayout(flowRootParent), 100f, 60f, "flow-root parent");
+        assertLocation(flowRootTree.getLayout(flowRootChild), 0f, 20f, "flow-root child");
+        assertSize(flowRootTree.getLayout(flowRootChild), 100f, 10f, "flow-root child");
+    }
+
+    private static TaffyStyle marginedChildStyle() {
+        TaffyStyle childStyle = blockStyle();
+        childStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        childStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(20f), LengthPercentageAuto.length(30f));
+        return childStyle;
+    }
+
+    /**
+     * A zero-height flow-root box does not collapse through (it is not part of its parent's
+     * formatting context), while an identical block box with a zero used height does. Both boxes
+     * have a zero box height, so only the display mode explains the 10px difference.
+     */
+    @Test
+    @DisplayName("BK-17: a zero-height FLOW_ROOT does not collapse through")
+    void flowRootZeroHeightDoesNotCollapseThrough() {
+        TaffyTree flowRootTree = new TaffyTree();
+        NodeId flowRootFirst = flowRootTree.newLeaf(plainChildStyle());
+        NodeId flowRootMiddle = flowRootTree.newLeaf(zeroHeightMiddleStyle(flowRootStyle()));
+        NodeId flowRootLast = flowRootTree.newLeaf(siblingStyle());
+        NodeId flowRootRoot = flowRootTree.newWithChildren(
+            blockRootStyle(), flowRootFirst, flowRootMiddle, flowRootLast);
+        flowRootTree.computeLayout(flowRootRoot, TaffySize.maxContent());
+
+        assertLocation(flowRootTree.getLayout(flowRootFirst), 0f, 0f, "flow-root first");
+        assertLocation(flowRootTree.getLayout(flowRootMiddle), 0f, 20f, "flow-root middle");
+        assertSize(flowRootTree.getLayout(flowRootMiddle), 50f, 0f, "flow-root middle");
+        assertLocation(flowRootTree.getLayout(flowRootLast), 0f, 30f, "flow-root last");
+        assertEquals(40f, flowRootTree.getLayout(flowRootRoot).size().height, EPSILON,
+            "flow-root root height");
+
+        TaffyTree blockTree = new TaffyTree();
+        NodeId blockFirst = blockTree.newLeaf(plainChildStyle());
+        NodeId blockMiddle = blockTree.newLeaf(zeroHeightMiddleStyle(blockStyle()));
+        NodeId blockLast = blockTree.newLeaf(siblingStyle());
+        NodeId blockRoot = blockTree.newWithChildren(blockRootStyle(), blockFirst, blockMiddle, blockLast);
+        blockTree.computeLayout(blockRoot, TaffySize.maxContent());
+
+        assertLocation(blockTree.getLayout(blockFirst), 0f, 0f, "block first");
+
+        assertLocation(blockTree.getLayout(blockMiddle), 0f, 20f, "block middle");
+        assertSize(blockTree.getLayout(blockMiddle), 50f, 0f, "block middle");
+        assertLocation(blockTree.getLayout(blockLast), 0f, 20f, "block last");
+        assertEquals(30f, blockTree.getLayout(blockRoot).size().height, EPSILON,
+            "block root height");
+    }
+
+    private static TaffyStyle plainChildStyle() {
+        TaffyStyle style = blockStyle();
+        style.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        return style;
+    }
+
+    private static TaffyStyle zeroHeightMiddleStyle(TaffyStyle displayStyle) {
+        displayStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(0f));
+        displayStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        return displayStyle;
+    }
+
+    private static TaffyStyle siblingStyle() {
+        TaffyStyle style = blockStyle();
+        style.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        style.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO);
+        return style;
+    }
+
+    private static TaffyStyle blockRootStyle() {
+        TaffyStyle style = blockStyle();
+        style.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        return style;
+    }
+
+    /**
+     * {@code FLOW_ROOT} is laid out with the block layout algorithm: a flow-root root stretches to
+     * the available width exactly like a block root, and its in-flow children stack on the block
+     * axis. The enum value is additive: it is appended after {@link TaffyDisplay#NONE} and the
+     * default display is still {@link TaffyDisplay#FLEX}, while {@code is_block} stays false for
+     * flow-root (upstream documents that distinction for {@code CoreStyle::is_block}).
+     */
+    @Test
+    @DisplayName("BK-17: FLOW_ROOT is an additive display value that uses block layout")
+    void flowRootIsAdditiveAndUsesBlockLayout() {
+        TaffyDisplay[] values = TaffyDisplay.values();
+        assertEquals(5, values.length, "one additive enum constant");
+        assertEquals(TaffyDisplay.BLOCK, values[0]);
+        assertEquals(TaffyDisplay.FLEX, values[1]);
+        assertEquals(TaffyDisplay.GRID, values[2]);
+        assertEquals(TaffyDisplay.NONE, values[3]);
+        assertEquals(TaffyDisplay.FLOW_ROOT, values[4], "FLOW_ROOT is appended after NONE");
+        assertEquals(TaffyDisplay.FLEX, TaffyDisplay.DEFAULT);
+        assertNotEquals(TaffyDisplay.BLOCK, TaffyDisplay.FLOW_ROOT);
+        assertFalse(flowRootStyle().isBlock(), "is_block stays false for flow-root");
+        assertTrue(blockStyle().isBlock(), "is_block is still true for block");
+
+        // Both display modes lay the same tree out with the block algorithm: the root stretches
+        // to the definite available width and the children stack on the block axis.
+        assertBlockLayoutGeometry(twoChildTree(TaffyDisplay.FLOW_ROOT), "flow-root");
+        assertBlockLayoutGeometry(twoChildTree(TaffyDisplay.BLOCK), "block");
+    }
+
+    /**
+     * The tree dump labels a flow-root container {@code FLOW-ROOT} (upstream #997 adds the same
+     * label to {@code PrintTree::get_debug_label}).
+     */
+    @Test
+    @DisplayName("BK-17: the tree dump labels a flow-root container FLOW-ROOT")
+    void flowRootDebugLabel() throws Exception {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle innerStyle = blockStyle();
+        NodeId grandchild = tree.newLeaf(new TaffyStyle());
+        NodeId inner = tree.newWithChildren(innerStyle, grandchild);
+        NodeId root = tree.newWithChildren(flowRootStyle(), inner);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        StringWriter writer = new StringWriter();
+        tree.writeTree(writer, root);
+        String output = writer.toString();
+
+        assertTrue(output.startsWith("[FLOW-ROOT] "), output);
+        assertTrue(output.contains("[BLOCK] "), output);
+        assertTrue(output.contains("[LEAF] "), output);
+    }
+
+    private record TwoChildTree(TaffyTree tree, NodeId root, NodeId first, NodeId second) {}
+
+    private static TwoChildTree twoChildTree(TaffyDisplay display) {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle firstStyle = blockStyle();
+        firstStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle secondStyle = blockStyle();
+        secondStyle.size = size(TaffyDimension.length(50f), TaffyDimension.length(20f));
+        NodeId second = tree.newLeaf(secondStyle);
+
+        TaffyStyle rootStyle = new TaffyStyle();
+        rootStyle.display = display;
+        NodeId root = tree.newWithChildren(rootStyle, first, second);
+
+        return new TwoChildTree(tree, root, first, second);
+    }
+
+    private static void assertBlockLayoutGeometry(TwoChildTree built, String message) {
+        built.tree().computeLayout(built.root(), new TaffySize<>(
+            AvailableSpace.definite(80f), AvailableSpace.maxContent()));
+
+        assertSize(built.tree().getLayout(built.root()), 80f, 30f, message + " root");
+        assertLocation(built.tree().getLayout(built.first()), 0f, 0f, message + " first");
+        assertSize(built.tree().getLayout(built.first()), 80f, 10f, message + " first");
+        assertLocation(built.tree().getLayout(built.second()), 0f, 10f, message + " second");
+        assertSize(built.tree().getLayout(built.second()), 50f, 20f, message + " second");
     }
 }

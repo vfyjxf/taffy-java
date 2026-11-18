@@ -70,8 +70,9 @@ public class LayoutComputer {
 
         TaffyStyle style = tree.getStyle(root);
 
-        // For block nodes, compute known dimensions based on style and available space
-        if (style.getDisplay() == TaffyDisplay.BLOCK) {
+        // For block-level nodes (including flow-root, which uses the block layout algorithm),
+        // compute known dimensions based on style and available space
+        if (isBlockLayout(style.getDisplay())) {
             FloatSize parentSize = availableSpaceToOptionSize(availableSpace);
 
             Float aspectRatio = style.getAspectRatio();
@@ -381,11 +382,29 @@ public class LayoutComputer {
         }
 
         return switch (display) {
-            case BLOCK -> computeBlockLayout(node, inputs, style);
+            // Flow-root lays its children out with the block algorithm too; its difference from
+            // BLOCK is that it establishes a new block formatting context (handled by
+            // BlockComputer). Upstream #997 (BK-17).
+            case BLOCK, FLOW_ROOT -> computeBlockLayout(node, inputs, style);
             case FLEX -> computeFlexboxLayout(node, inputs, style);
             case GRID -> computeGridLayout(node, inputs, style);
             default -> computeLeafLayout(node, inputs, style);
         };
+    }
+
+    /**
+     * Returns whether {@code display} lays its children out with the block layout algorithm.
+     *
+     * <p>{@link TaffyDisplay#FLOW_ROOT} uses the block layout algorithm and differs from
+     * {@link TaffyDisplay#BLOCK} only in establishing a new block formatting context (upstream
+     * #997, BK-17). This helper marks every "is this a block-layout box?" decision site in the
+     * layout entry point; it is deliberately <em>not</em> {@link TaffyStyle#isBlock()}, which
+     * upstream documents as {@code false} for flow-root because it instead answers "does this box
+     * participate in its parent's block formatting context?". The one remaining {@code isBlock()}
+     * use below (the leaf collapse-through test) wants exactly that second meaning.</p>
+     */
+    private static boolean isBlockLayout(TaffyDisplay display) {
+        return display == TaffyDisplay.BLOCK || display == TaffyDisplay.FLOW_ROOT;
     }
 
     /**

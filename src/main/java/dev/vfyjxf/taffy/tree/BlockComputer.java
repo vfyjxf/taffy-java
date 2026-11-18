@@ -11,6 +11,7 @@ import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
 import dev.vfyjxf.taffy.style.TaffyDirection;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
@@ -117,9 +118,19 @@ public class BlockComputer {
         FloatSize maxSize = Resolve.maybeApplyAspectRatio(size, aspectRatio);
         maxSize = maybeAdd(maxSize, boxSizingAdjustment);
 
+        // A `display: flow-root` box always establishes a new block formatting context. The part
+        // of that behaviour this port can express is margin isolation: the box's own margins no
+        // longer adjoin its children's, so nothing collapses with or through its block edges.
+        // (Containing floats and avoiding a sibling's floats are the other two effects of the
+        // new BFC; this port has no float layout yet — see the float work package F1/P7.)
+        // BK-17 / upstream #997 (10004cea).
+        boolean establishesNewBlockFormattingContext =
+            style.getDisplay() == TaffyDisplay.FLOW_ROOT;
+
         // Determine margin collapsing behaviour
         boolean ownMarginsCollapseWithChildrenStart =
             verticalMarginsAreCollapsible.start &&
+            !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
             style.getPosition() == TaffyPosition.RELATIVE &&
@@ -128,6 +139,7 @@ public class BlockComputer {
 
         boolean ownMarginsCollapseWithChildrenEnd =
             verticalMarginsAreCollapsible.end &&
+            !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
             style.getPosition() == TaffyPosition.RELATIVE &&
@@ -138,6 +150,10 @@ public class BlockComputer {
         TaffyLine<Boolean> ownMarginsCollapseWithChildren =
             new TaffyLine<>(ownMarginsCollapseWithChildrenStart, ownMarginsCollapseWithChildrenEnd);
 
+        // `!style.isBlock()` is the "does this box participate in its parent's block formatting
+        // context?" test, not "is this block layout?": flow-root is laid out by this class but is
+        // NOT part of the parent's BFC, so its own margins never collapse through it (upstream
+        // #997 keeps is_block false for flow-root for exactly this reason). BK-17.
         boolean hasStylesPreventingBeingCollapsedThrough =
             !style.isBlock() ||
             style.getOverflow().x.isScrollContainer() ||
