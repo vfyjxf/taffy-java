@@ -24,7 +24,7 @@ The fixes in this batch:
 | PA-03 | RTL | Root node is placed at the inline end (definite available width). |
 | PA-04 | style | `TaffyStyle.copy()` keeps the `flex` shorthand. |
 | PA-06 | block | `display: none` descendants are cleared instead of keeping stale layouts. |
-| PA-05 | abspos | **Pending**: merges after this guide; its row will be added to the allowlist. |
+| PA-05 | abspos | Content-sized abspos boxes get a definite-final-size second pass; percentage descendants resolve against it. |
 
 ## How to compare your output with the allowlist
 

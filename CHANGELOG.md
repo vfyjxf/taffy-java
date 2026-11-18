@@ -30,11 +30,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   out through the hidden path instead of being skipped. Their layout is reset to
   zero and the result is stored in the layout cache, so a hidden → visible
   toggle triggers a correct relayout instead of reusing stale visible values.
-- **PA-05 (abspos) — pending** (merge after this document). Content-sized
-  absolutely positioned boxes still lack the measure → definite-final-size →
-  layout second pass, so percentage-sized descendants do not resolve against the
-  final size. The entry and its allowlist row will be added when the fix merges;
-  do not release 1.2.0 before this item is completed or explicitly deferred.
+- **PA-05 (abspos)** — Content-sized absolutely positioned boxes now run a
+  definite-final-size second pass. After the measure pass derives an auto axis,
+  the child is laid out again with that definite final size, so percentage-sized
+  descendants resolve against the final containing block. A `height: 50%`
+  descendant of a 100px-tall content-sized abspos box now measures 50px instead
+  of 0. The second pass only runs when an axis was content-derived and only
+  invalidates that out-of-flow subtree's cache.
 
 ### Source breaking
 

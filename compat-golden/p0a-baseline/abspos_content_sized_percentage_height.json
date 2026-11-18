@@ -38,7 +38,7 @@
       },
       "contentSize": {
         "width": 100.0000,
-        "height": 100.0000
+        "height": 150.0000
       },
       "scrollWidth": 0.0000,
       "scrollHeight": 0.0000
@@ -74,10 +74,10 @@
       },
       "contentSize": {
         "width": 100.0000,
-        "height": 100.0000
+        "height": 150.0000
       },
       "scrollWidth": 0.0000,
-      "scrollHeight": 0.0000
+      "scrollHeight": 50.0000
     },
     {
       "path": "root/children[0]/children[0]",
@@ -124,7 +124,7 @@
       },
       "size": {
         "width": 100.0000,
-        "height": 0.0000
+        "height": 50.0000
       },
       "margin": {
         "left": 0.0000,
