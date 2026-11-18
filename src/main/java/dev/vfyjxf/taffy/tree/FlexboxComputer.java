@@ -241,7 +241,7 @@ public class FlexboxComputer {
         // Collect items into flex lines (use innerAvailableSpace for wrapping, matching Rust)
         float innerMainSize = isRow ? nodeInnerSize.width : nodeInnerSize.height;
         float mainGap = isRow ? gap.width : gap.height;
-        List<FlexLine> flexLines = collectIntoFlexLines(items, innerAvailableSpace, mainGap, isWrap, flexDirection, minSize, maxSize);
+        List<FlexLine> flexLines = collectIntoFlexLines(items, innerAvailableSpace, mainGap, isWrap, flexDirection, minSize, maxSize, innerMainSize);
 
         // Determine container main size if not already known (needed for flex grow/shrink)
         if (isNaN(innerMainSize)) {
@@ -252,6 +252,7 @@ public class FlexboxComputer {
                 maxSize,
                 mainGap,
                 flexDirection,
+                isWrap,
                 innerAvailableSpace,
                 nodeInnerSize
             );
@@ -567,18 +568,19 @@ public class FlexboxComputer {
         float horizontalInset = contentBoxInset.left + contentBoxInset.right;
         float verticalInset = contentBoxInset.top + contentBoxInset.bottom;
 
+        // FL-09 (#1178): available space is floored at zero on both the known and the inherited path.
         AvailableSpace width;
         if (!isNaN(knownDimensions.width)) {
-            width = AvailableSpace.definite(knownDimensions.width - horizontalInset);
+            width = AvailableSpace.definite(Math.max(knownDimensions.width - horizontalInset, 0f));
         } else {
-            width = outerAvailableSpace.width.maybeSub(horizontalInset);
+            width = outerAvailableSpace.width.maybeSub(horizontalInset).maybeMax(0f);
         }
 
         AvailableSpace height;
         if (!isNaN(knownDimensions.height)) {
-            height = AvailableSpace.definite(knownDimensions.height - verticalInset);
+            height = AvailableSpace.definite(Math.max(knownDimensions.height - verticalInset, 0f));
         } else {
-            height = outerAvailableSpace.height.maybeSub(verticalInset);
+            height = outerAvailableSpace.height.maybeSub(verticalInset).maybeMax(0f);
         }
 
         return new TaffySize<>(width, height);
@@ -614,6 +616,8 @@ public class FlexboxComputer {
             if (outerCrossAvail.isDefinite()) {
                 float val = outerCrossAvail.getValue();
                 float clamped = !isNaN(crossAxisParentSize) ? crossAxisParentSize : val;
+                // FL-09: clamp the constraint at zero before applying min/max.
+                clamped = Math.max(clamped, 0f);
                 if (!isNaN(itemMinCross)) clamped = Math.max(clamped, itemMinCross);
                 if (!isNaN(itemMaxCross)) clamped = Math.min(clamped, itemMaxCross);
                 crossAxisAvailableSpace = AvailableSpace.definite(clamped);
@@ -649,7 +653,8 @@ public class FlexboxComputer {
                         float marginCross = isRow
                                             ? (item.margin.top + item.margin.bottom)
                                             : (item.margin.left + item.margin.right);
-                        childKnownCross = crossAvailValue - marginCross;
+                        // FL-09: a stretched item's known cross size is floored at zero.
+                        childKnownCross = Math.max(crossAvailValue - marginCross, 0f);
                     }
                 }
             }
@@ -675,9 +680,11 @@ public class FlexboxComputer {
             if (!isNaN(resolvedFlexBasis)) {
                 // A. If the item has a definite used flex basis, that's the flex base size.
                 basis = resolvedFlexBasis;
-            } else if (!isNaN(mainSize) && !flexBasis.isContent()) {
+            } else if (!isNaN(mainSize) && flexBasis.isAuto()) {
                 // B/A. If flex basis is auto, and there's a definite main size, use that.
-                // Skip this path for flex-basis: content (always use content measurement).
+                // Only flex-basis: auto may fall back to the main size (#1286): an unresolved
+                // percentage (or any other non-auto basis, e.g. content) is treated as content and
+                // measured below.
                 basis = mainSize;
             } else {
                 // E. Otherwise, size the item into the available space using its used flex basis
@@ -833,6 +840,7 @@ public class FlexboxComputer {
         FloatSize maxSize,
         float mainGap,
         FlexDirection flexDirection,
+        boolean isWrap,
         TaffySize<AvailableSpace> availableSpace,
         FloatSize nodeInnerSize) {
 
@@ -903,11 +911,16 @@ public class FlexboxComputer {
                     float styleMaxMain = isRow ? item.maxSize.width : item.maxSize.height;
 
                     // The spec seems a bit unclear on this point (my initial reading was that the .maybe_max(style_preferred) should
-                    // not be included here), however this matches both Chrome and Firefox as of 9th March 2023.
+                    // not be included here), however for row containers this matches both Chrome and Firefox as of 9th March 2023.
+                    // For column containers the flex base size alone is the clamping basis (as the spec says): a column item's
+                    // `height` must not inflate the container's max-content size beyond the item's flex-basis.
                     //
                     // Spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
                     // Spec modification: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
-                    float clampingBasis = !Float.isNaN(stylePreferredMain)
+                    // Issue: https://github.com/w3c/csswg-drafts/issues/1435
+                    // Gentest: padding_border_overrides_size_flex_basis_0.html
+                    // Gentest: blockflex_min_content_ignores_own_height_as_percentage_basis.html
+                    float clampingBasis = isRow && !Float.isNaN(stylePreferredMain)
                                           ? Math.max(item.flexBasis, stylePreferredMain)
                                           : item.flexBasis;
 
@@ -997,7 +1010,8 @@ public class FlexboxComputer {
                                     float marginCross = isRow
                                                         ? item.margin.top + item.margin.bottom
                                                         : item.margin.left + item.margin.right;
-                                    crossKnown = cross - marginCross;
+                                    // FL-09: a stretched item's known cross size is floored at zero.
+                                    crossKnown = Math.max(cross - marginCross, 0f);
                                     if (isRow) {
                                         knownHeight = crossKnown;
                                     } else {
@@ -1021,27 +1035,32 @@ public class FlexboxComputer {
                         );
 
                         float measuredMain = isRow ? measured.width : measured.height;
-                        float contentMainSize = measuredMain + marginMain;
 
+                        // FL-04 (#1164): floor the inner contribution first, then add the main-axis margin,
+                        // and only then clamp by the style min/max. The margin must not be clamped away.
+                        //
                         // Asymmetric behavior between row and column containers (matches Webkit/Firefox):
                         // - Row containers: use content size clamped by min/max
                         // - Column containers: content size is at least flex-basis
+                        float innerMainSize = measuredMain;
                         if (isRow) {
-                            contentContribution = TaffyMath.maybeClamp(contentMainSize, styleMinMain, styleMaxMain);
+                            contentContribution = TaffyMath.maybeClamp(
+                                innerMainSize + marginMain, styleMinMain, styleMaxMain);
                         } else {
-                            contentContribution = Math.max(contentMainSize, item.flexBasis);
-                            contentContribution = TaffyMath.maybeClamp(contentContribution, styleMinMain, styleMaxMain);
+                            contentContribution = TaffyMath.maybeClamp(
+                                Math.max(innerMainSize, item.flexBasis) + marginMain, styleMinMain, styleMaxMain);
                         }
-                        contentContribution = Math.max(contentContribution, mainContentBoxInset);
                     }
 
                     // Calculate content_flex_fraction
                     // This represents the "flex fraction" needed to size the item to its content contribution
-                    float diff = contentContribution - intrinsicFlexBasis;
+                    // FL-05: contentContribution already includes the main-axis margin, so the flex
+                    // base size comparison must subtract it again (upstream #1335).
+                    float diff = contentContribution - marginMain - intrinsicFlexBasis;
                     if (diff > 0.0f) {
                         item.contentFlexFraction = diff / Math.max(1.0f, item.flexGrow);
                     } else if (diff < 0.0f) {
-                        float scaledShrinkFactor = Math.max(1.0f, item.flexShrink * item.innerFlexBasis);
+                        float scaledShrinkFactor = Math.max(1.0f, item.flexShrink) * item.innerFlexBasis;
                         item.contentFlexFraction = diff / scaledShrinkFactor;
                     } else {
                         item.contentFlexFraction = 0.0f;
@@ -1053,6 +1072,10 @@ public class FlexboxComputer {
                 //   - its flex grow factor (or scaled flex shrink factor, if the chosen max-content flex fraction was negative)
                 //   - the chosen max-content flex fraction
                 float itemMainSizeSum = 0;
+                // A wrapping row container is at least as large as its largest item (which matters when
+                // another item has a negative margin). This matches Chrome; Firefox does not apply this floor.
+                boolean floorByLargestItem = isWrap && isRow;
+                float largestItemSize = 0f;
                 for (FlexItem item : line.items) {
                     float flexFraction = item.contentFlexFraction;
 
@@ -1061,7 +1084,7 @@ public class FlexboxComputer {
                         flexContribution = Math.max(1.0f, item.flexGrow) * flexFraction;
                     } else if (item.contentFlexFraction < 0.0f) {
                         float scaledShrinkFactor = Math.max(1.0f, item.flexShrink) * item.innerFlexBasis;
-                        flexContribution = scaledShrinkFactor * flexFraction;
+                        flexContribution = scaledShrinkFactor == 0.0f ? 0.0f : scaledShrinkFactor * flexFraction;
                     } else {
                         flexContribution = 0.0f;
                     }
@@ -1071,7 +1094,8 @@ public class FlexboxComputer {
                     if (!Float.isNaN(styleMaxMain)) maxMainSize = styleMaxMain;
                     if (item.flexGrow == 0f) {
                         float stylePreferredMain = isRow ? item.size.width : item.size.height;
-                        float clampingBasis = !Float.isNaN(stylePreferredMain)
+                        // FL-03: for column containers the clamping basis is the flex base size alone.
+                        float clampingBasis = isRow && !Float.isNaN(stylePreferredMain)
                                               ? Math.max(item.flexBasis, stylePreferredMain)
                                               : item.flexBasis;
                         maxMainSize = Math.min(maxMainSize, clampingBasis);
@@ -1080,22 +1104,24 @@ public class FlexboxComputer {
                     if (maxMainSize != POSITIVE_INFINITY) {
                         intrinsicFlexBasis = Math.min(intrinsicFlexBasis, maxMainSize);
                     }
-                    float itemSize = intrinsicFlexBasis + flexContribution;
 
-                    // Update item's target sizes (used later in layout)
-                    if (isRow) {
-                        item.outerTargetSize = new FloatSize(itemSize, item.outerTargetSize != null ? item.outerTargetSize.height : Float.NaN);
-                        item.targetSize = new FloatSize(itemSize, item.targetSize != null ? item.targetSize.height : Float.NaN);
-                    } else {
-                        item.outerTargetSize = new FloatSize(item.outerTargetSize != null ? item.outerTargetSize.width : Float.NaN, itemSize);
-                        item.targetSize = new FloatSize(item.targetSize != null ? item.targetSize.width : Float.NaN, itemSize);
+                    // FL-05: the line sum is an outer contribution, so the item margin belongs in it.
+                    // The target sizes are not written back here: the main-axis resolution below owns
+                    // them, and writing intrinsic-sizing values into targetSize leaked into final layout.
+                    float marginMain = isRow
+                                       ? item.margin.left + item.margin.right
+                                       : item.margin.top + item.margin.bottom;
+                    float itemSize = intrinsicFlexBasis + flexContribution + marginMain;
+
+                    if (floorByLargestItem) {
+                        largestItemSize = Math.max(largestItemSize, itemSize);
                     }
 
                     itemMainSizeSum += itemSize;
                 }
 
                 float gapSum = mainGap * Math.max(0, line.items.size() - 1);
-                maxLineSum = Math.max(maxLineSum, itemMainSizeSum + gapSum);
+                maxLineSum = Math.max(maxLineSum, Math.max(largestItemSize, itemMainSizeSum + gapSum));
             }
 
             outerMainSize = maxLineSum + mainContentBoxInset;
@@ -1120,7 +1146,8 @@ public class FlexboxComputer {
         boolean isWrap,
         FlexDirection flexDirection,
         FloatSize minSize,
-        FloatSize maxSize) {
+        FloatSize maxSize,
+        float knownInnerMainSize) {
 
         List<FlexLine> lines = new ArrayList<>();
         boolean isRow = flexDirection.isRow();
@@ -1139,13 +1166,28 @@ public class FlexboxComputer {
         float mainMinSize = isRow ? minSize.width : minSize.height;
         AvailableSpace outerMainAvail = isRow ? availableSpace.width : availableSpace.height;
 
+        // TODO(FL-15/C01): this approximates upstream's `has_definite_main_size` flag. A known main
+        // size derived from the container's own content (e.g. a flex-basis percentage that could not
+        // resolve) is indeterminate here; the real flag arrives with the definiteness work.
+        boolean hasDefiniteMainSize = !Float.isNaN(knownInnerMainSize);
+
         AvailableSpace mainAxisAvailableSpace;
         if (!Float.isNaN(mainMaxSize)) {
             // If max-size is set, use it as the constraint
             float innerVal = outerMainAvail.intoOption();
             float constrainedSize = !Float.isNaN(innerVal) ? innerVal : mainMaxSize;
+            // FL-06 (#1101): when the container's main size is indefinite it is at most max-size,
+            // so max-size (not the available space) is the limit that items wrap against.
+            if (!hasDefiniteMainSize) {
+                constrainedSize = Math.min(constrainedSize, mainMaxSize);
+            }
             if (!Float.isNaN(mainMinSize)) constrainedSize = Math.max(constrainedSize, mainMinSize);
             mainAxisAvailableSpace = AvailableSpace.definite(constrainedSize);
+        } else if (!isRow && !hasDefiniteMainSize && outerMainAvail.isDefinite()) {
+            // FL-06 (#1176): a column container's automatic main size is content-based, so definite
+            // available space handed down by an ancestor does not constrain where its lines wrap.
+            // Automatic widths resolve against available space, so rows do wrap against it.
+            mainAxisAvailableSpace = AvailableSpace.maxContent();
         } else {
             mainAxisAvailableSpace = outerMainAvail;
         }
@@ -1458,6 +1500,8 @@ public class FlexboxComputer {
             // Clamp available space by min/max if definite
             if (availCross.isDefinite()) {
                 float val = availCross.getValue();
+                // FL-09: clamp the cross constraint at zero before applying min/max.
+                val = Math.max(val, 0f);
                 if (!Float.isNaN(itemMinCross)) val = Math.max(val, itemMinCross);
                 if (!Float.isNaN(itemMaxCross)) val = Math.min(val, itemMaxCross);
                 val = Math.max(val, paddingBorderCross);
@@ -1871,6 +1915,11 @@ public class FlexboxComputer {
                 // 1. If there is only a single item or negative free space, fallback distributed alignments
                 if (itemCount <= 1 || freeSpace <= 0) {
                     switch (justify) {
+                        case STRETCH:
+                            // FL-08: stretch falls back to plain flex-start (no implicit safe), so it
+                            // packs to the flex-start edge even when the items overflow (row-reverse).
+                            effectiveJustify = JustifyContent.FLEX_START;
+                            break;
                         case SPACE_BETWEEN:
                             effectiveJustify = JustifyContent.FLEX_START;
                             isSafe = true;
@@ -1895,6 +1944,7 @@ public class FlexboxComputer {
                 // RTL coordinate transformation happens in performFinalLayout.
                 switch (effectiveJustify) {
                     case START -> initialOffset = 0;
+                    case STRETCH -> initialOffset = 0; // remains stretch only when it does not overflow
                     case SPACE_BETWEEN -> initialOffset = 0;
                     case FLEX_START -> initialOffset = isReverse ? freeSpace : 0;
                     case END -> initialOffset = freeSpace;
@@ -2123,7 +2173,13 @@ public class FlexboxComputer {
 
         if (numLines <= 1 || freeSpace <= 0) {
             switch (alignContent) {
-                case STRETCH, SPACE_BETWEEN -> {
+                case STRETCH -> {
+                    // FL-08 (#1363): stretch falls back to plain flex-start (the safety modifier is
+                    // preserved, but no implicit safe is added), so an overflowing line packs to the
+                    // flex-start edge -- the bottom edge in a wrap-reverse container.
+                    alignContent = AlignContent.FLEX_START;
+                }
+                case SPACE_BETWEEN -> {
                     alignContent = AlignContent.FLEX_START;
                     isSafe = true;
                 }
@@ -2237,13 +2293,13 @@ public class FlexboxComputer {
                                         ? item.margin.top + item.margin.bottom
                                         : item.margin.left + item.margin.right;
 
-                    float stretchedCrossSize = lineCrossSize - marginCross;
+                    // FL-09: floor the stretched size at zero before applying min/max (upstream order).
+                    float stretchedCrossSize = Math.max(lineCrossSize - marginCross, 0f);
 
                     // Apply min/max constraints
                     float minCross = isRow ? item.minSize.height : item.minSize.width;
                     float maxCross = isRow ? item.maxSize.height : item.maxSize.width;
                     stretchedCrossSize = TaffyMath.clamp(stretchedCrossSize, minCross, maxCross);
-                    stretchedCrossSize = Math.max(stretchedCrossSize, 0);
 
                     // Update target size
                     if (isRow) {
