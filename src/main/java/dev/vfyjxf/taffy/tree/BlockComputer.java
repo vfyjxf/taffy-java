@@ -252,12 +252,29 @@ public class BlockComputer {
         );
         performAbsoluteLayoutOnChildren(items, finalOuterSize, absolutePositionInset);
 
-        // Layout hidden children
-        for (BlockItem item : items) {
-            TaffyStyle childStyle = tree.getStyle(item.nodeId);
+        // Layout hidden children. Hidden children are filtered out of `items` by
+        // generateItemList, so walk the actual child list (in tree order) to find them.
+        // Only display:none children are laid out here: their stale unrounded/final layout
+        // from an earlier visible pass must be reset to a zeroed layout.
+        // performChildLayout is used (instead of computeChildLayout with LayoutInput.hidden):
+        // on a NONE child it dispatches to computeHiddenLayout with the same semantics, but it
+        // also stores the result in the layout cache. The HIDDEN shortcut skips that store, and
+        // an empty cache makes TaffyTree.markDirty stop propagating to ancestors, so a later
+        // display restore would not trigger a relayout of the child.
+        List<NodeId> children = tree.getChildren(node);
+        for (int order = 0; order < children.size(); order++) {
+            NodeId childId = children.get(order);
+            TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
-                tree.setUnroundedLayout(item.nodeId, Layout.withOrder(item.order));
-                layoutComputer.computeChildLayout(item.nodeId, LayoutInput.hidden());
+                tree.setUnroundedLayout(childId, Layout.withOrder(order));
+                layoutComputer.performChildLayout(
+                    childId,
+                    FloatSize.none(),
+                    FloatSize.none(),
+                    TaffySize.maxContent(),
+                    SizingMode.INHERENT_SIZE,
+                    TaffyLine.FALSE
+                );
             }
         }
 
