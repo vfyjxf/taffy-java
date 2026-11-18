@@ -7,6 +7,9 @@ plugins {
 //    id 'signing'
 }
 
+// API compatibility checking against the last published release (see docs/api-compatibility.md).
+apply plugin: 'dev.vfyjxf.taffy.api-compatibility'
+
 group = 'dev.vfyjxf'
 version = '1.1.4'
 
