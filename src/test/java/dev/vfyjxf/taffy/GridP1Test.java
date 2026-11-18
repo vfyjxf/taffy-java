@@ -135,6 +135,85 @@ class GridP1Test {
         assertEquals(10.0f, tree.getLayout(child).size().width, EPSILON, "child width");
     }
 
+    // ------------------------------------------------------------------
+    // GR-09 (#1226): cache known dimensions between min- and max-content contributions
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("GR-09: intrinsic columns size aspect-ratio items from their known dimensions")
+    void knownDimensionsCacheKeepsAspectRatioSizing() {
+        // The second item's width is derived from its definite height through its aspect ratio, so its
+        // column contribution is computed from the known dimensions of the item (GR-09).
+        // Note: a percentage height here would additionally require the container size to be updated
+        // after the intrinsic-contribution re-run (upstream grid/mod.rs "intrinsic_column_contribution_changed"
+        // block), which this port does not implement yet; see GridP1Test report.
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.justifyContent = dev.vfyjxf.taffy.style.AlignContent.START;
+        rootStyle.gridTemplateColumns = List.of(
+            TrackSizingFunction.auto(), TrackSizingFunction.auto());
+        rootStyle.gridTemplateRows = List.of(TrackSizingFunction.auto());
+
+        TaffyStyle firstStyle = new TaffyStyle();
+        firstStyle.size = new TaffySize<>(TaffyDimension.length(10.0f), TaffyDimension.length(100.0f));
+        firstStyle.gridRow = new TaffyLine<>(GridPlacement.line(1), GridPlacement.line(2));
+        firstStyle.gridColumn = new TaffyLine<>(GridPlacement.line(1), GridPlacement.line(2));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle secondStyle = new TaffyStyle();
+        secondStyle.size = new TaffySize<>(TaffyDimension.auto(), TaffyDimension.length(100.0f));
+        secondStyle.aspectRatio = 2.0f;
+        secondStyle.justifySelf = dev.vfyjxf.taffy.style.AlignItems.START;
+        secondStyle.gridRow = new TaffyLine<>(GridPlacement.line(1), GridPlacement.line(2));
+        secondStyle.gridColumn = new TaffyLine<>(GridPlacement.line(2), GridPlacement.line(3));
+        NodeId second = tree.newLeaf(secondStyle);
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout rootLayout = tree.getLayout(root);
+        assertEquals(210.0f, rootLayout.size().width, EPSILON, "container width");
+        assertEquals(100.0f, rootLayout.size().height, EPSILON, "container height");
+        assertRect(tree.getLayout(first), 0.0f, 0.0f, 10.0f, 100.0f, "first item");
+        // The 100px height with aspect-ratio: 2 gives a 200px width.
+        assertRect(tree.getLayout(second), 10.0f, 0.0f, 200.0f, 100.0f, "second item");
+    }
+
+    @Test
+    @DisplayName("GR-09: intrinsic caches do not leak between layout runs")
+    void knownDimensionsCacheIsPerRun() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.auto());
+        rootStyle.gridTemplateRows = List.of(TrackSizingFunction.auto());
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(30.0f), TaffyDimension.length(40.0f));
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+        assertEquals(30.0f, tree.getLayout(root).size().width, EPSILON, "first run width");
+        assertEquals(40.0f, tree.getLayout(root).size().height, EPSILON, "first run height");
+
+        childStyle.size = new TaffySize<>(TaffyDimension.length(70.0f), TaffyDimension.length(80.0f));
+        tree.setStyle(child, childStyle);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertEquals(70.0f, tree.getLayout(root).size().width, EPSILON, "second run width");
+        assertEquals(80.0f, tree.getLayout(root).size().height, EPSILON, "second run height");
+        assertRect(tree.getLayout(child), 0.0f, 0.0f, 70.0f, 80.0f, "second run child");
+    }
+
+    private static void assertRect(Layout layout, float x, float y, float width, float height, String label) {
+        assertEquals(x, layout.location().x, EPSILON, label + " x");
+        assertEquals(y, layout.location().y, EPSILON, label + " y");
+        assertEquals(width, layout.size().width, EPSILON, label + " width");
+        assertEquals(height, layout.size().height, EPSILON, label + " height");
+    }
+
     private static TaffyStyle gridStyle() {
         TaffyStyle style = new TaffyStyle();
         style.display = TaffyDisplay.GRID;

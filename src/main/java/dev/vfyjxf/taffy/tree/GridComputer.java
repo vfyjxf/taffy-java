@@ -171,6 +171,14 @@ public class GridComputer {
         // Caches for intrinsic size computation. These caches are only valid for a single run of the track-sizing algorithm.
         // Cache for the available_space input to intrinsic sizing computation (for cache invalidation)
         FloatSize availableSpaceCache;
+        // Cache for the known_dimensions input to intrinsic sizing computation, together with the
+        // inputs it was computed for. The min- and max-content contributions of an item are both
+        // computed from the same known_dimensions, so sharing the result halves that work
+        // (GR-09 / upstream #1226). Must be cleared whenever an input changes (baseline_shim, grid
+        // area size, inner node size); see clearKnownDimensionsCache().
+        FloatSize knownDimensionsCacheGridArea;
+        FloatSize knownDimensionsCacheInnerNodeSize;
+        FloatSize knownDimensionsCache;
         // Cache for the min-content contribution
         Float minContentContributionWidth;
         Float minContentContributionHeight;
@@ -264,7 +272,7 @@ public class GridComputer {
             }
 
             // Compute known dimensions with stretch alignment and aspect ratio
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic
             // Both axes: Some(size) -> Definite(size), None -> MinContent
@@ -305,7 +313,7 @@ public class GridComputer {
                 return size.width + marginAxisSums.width;
             }
 
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic
             // Both axes: Some(size) -> Definite(size), None -> MaxContent
@@ -345,7 +353,7 @@ public class GridComputer {
                 return size.height + marginAxisSums.height;
             }
 
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic
             // Both axes: Some(size) -> Definite(size), None -> MaxContent
@@ -366,6 +374,36 @@ public class GridComputer {
             );
 
             return measuredSize.height + marginAxisSums.height;
+        }
+
+        /**
+         * Clear the cached known dimensions. Called explicitly wherever an input of
+         * {@link #computeKnownDimensions(FloatSize, FloatSize)} changes (GR-08/GR-09 explicit
+         * invalidation), matching upstream #1226's {@code known_dimensions_cache = None} sites.
+         */
+        private void clearKnownDimensionsCache() {
+            knownDimensionsCacheGridArea = null;
+            knownDimensionsCacheInnerNodeSize = null;
+            knownDimensionsCache = null;
+        }
+
+        /**
+         * Get the known dimensions for the given grid area size, using the cache when it was computed
+         * for exactly the same inputs. This mirrors upstream's {@code known_dimensions_cached}
+         * (GR-09 / #1226): the min-content and max-content contributions of an item are both computed
+         * from the same known dimensions, so the second contribution can reuse the first one's result.
+         */
+        private FloatSize computeKnownDimensionsCached(FloatSize gridAreaSize, FloatSize innerNodeSize) {
+            if (knownDimensionsCache != null
+                && floatSizeEquals(knownDimensionsCacheGridArea, gridAreaSize)
+                && floatSizeEquals(knownDimensionsCacheInnerNodeSize, innerNodeSize)) {
+                return knownDimensionsCache;
+            }
+            FloatSize knownDimensions = computeKnownDimensions(gridAreaSize, innerNodeSize);
+            knownDimensionsCacheGridArea = gridAreaSize;
+            knownDimensionsCacheInnerNodeSize = innerNodeSize;
+            knownDimensionsCache = knownDimensions;
+            return knownDimensions;
         }
 
         /**
@@ -699,6 +737,7 @@ public class GridComputer {
         // Clear item available_space_cache after initial column sizing (Rust: items.iter_mut().for_each(|item| item.available_space_cache = None))
         for (GridItem item : items) {
             item.availableSpaceCache = null;
+            item.clearKnownDimensionsCache();
         }
 
         // Resolve baseline-aligned item baselines before row sizing (CSS Grid 11.5.1)
@@ -825,6 +864,7 @@ public class GridComputer {
                 item.minContentContributionWidth = null;
                 item.maxContentContributionWidth = null;
                 item.minimumContributionWidth = null;
+                item.clearKnownDimensionsCache();
             }
         }
 
@@ -910,6 +950,7 @@ public class GridComputer {
                     item.minContentContributionHeight = null;
                     item.maxContentContributionHeight = null;
                     item.minimumContributionHeight = null;
+                    item.clearKnownDimensionsCache();
                 }
             }
 
@@ -3663,6 +3704,10 @@ public class GridComputer {
             for (GridItem item : rowItems) {
                 if (!Float.isNaN(item.baseline)) {
                     item.baselineShim = rowMaxBaseline - item.baseline;
+                    // The baseline shim is part of the item's margin sums, which feed into its known
+                    // dimensions, so any cached known dimensions are stale after this point
+                    // (upstream #1226 clears known_dimensions_cache here for the same reason).
+                    item.clearKnownDimensionsCache();
                 }
             }
         }
@@ -5200,6 +5245,20 @@ public class GridComputer {
     /**
      * Compare two nullable Float values for equality with tolerance.
      */
+    /**
+     * Compare two sizes exactly, treating {@code NaN} as equal to {@code NaN}. Used for cache keys,
+     * where a value must be identical rather than approximately equal.
+     */
+    private static boolean floatSizeEquals(FloatSize a, FloatSize b) {
+        if (a == null || b == null) return a == b;
+        return floatEqualsExactly(a.width, b.width) && floatEqualsExactly(a.height, b.height);
+    }
+
+    private static boolean floatEqualsExactly(float a, float b) {
+        if (Float.isNaN(a) || Float.isNaN(b)) return Float.isNaN(a) && Float.isNaN(b);
+        return a == b;
+    }
+
     private static boolean floatEquals(float a, float b) {
         if (Float.isNaN(a) && Float.isNaN(b)) return true;
         if (Float.isNaN(a) || Float.isNaN(b)) return false;
