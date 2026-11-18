@@ -57,6 +57,12 @@ public class BlockComputer {
         FloatSize computedSize;
         FloatPoint staticPosition;
         boolean canBeCollapsedThrough;
+        /**
+         * Pending layout of an in-flow child. Held back from {@code setUnroundedLayout} so that a
+         * measurement pass ({@link RunMode#COMPUTE_SIZE}) can return before any tree state is
+         * written; the final layout commits them in one place. Upstream #971 (BK-01).
+         */
+        Layout finalLayout;
     }
 
     /**
@@ -171,6 +177,30 @@ public class BlockComputer {
             return LayoutOutput.fromOuterSize(styledBasedKnownDimensions);
         }
 
+        // css-sizing-4: a definite width plus an `aspect-ratio` makes the height definite. This
+        // must be resolved *before* the content box size and the item list are derived, otherwise
+        // the children are laid out against an unknown height (so their percentage heights resolve
+        // to nothing and a descendant grid's auto rows collapse), and the container's own height is
+        // only corrected afterwards.
+        //
+        // Only the height is derived: the width of a block-level box comes from the parent's
+        // stretch/known width or from the style, and re-deriving a width from a style height would
+        // override a flex item's flex-resolved main size (the Java generated flex aspect-ratio
+        // fixtures pin that browser behaviour). The derived height is clamped by min/max and by the
+        // padding+border sum, exactly like the intrinsic-height path below.
+        // BK-15(a) / upstream #965 (8609e92f).
+        if (runMode == RunMode.PERFORM_LAYOUT && !Float.isNaN(aspectRatio)
+            && Float.isNaN(styledBasedKnownDimensions.height)
+            && !Float.isNaN(styledBasedKnownDimensions.width)) {
+            // Aspect ratio applies to the content box: convert the border-box width into the
+            // content box before dividing, then convert the derived content height back.
+            float arDerivedHeight = (styledBasedKnownDimensions.width - boxSizingAdjustment.width) / aspectRatio
+                                    + boxSizingAdjustment.height;
+            float arHeight = TaffyMath.clamp(arDerivedHeight, minSize.height, maxSize.height);
+            arHeight = Math.max(arHeight, !Float.isNaN(paddingBorderSize.height) ? paddingBorderSize.height : 0);
+            styledBasedKnownDimensions = new FloatSize(styledBasedKnownDimensions.width, arHeight);
+        }
+
         // Compute container content box size (inner size for resolving child percentages)
         float contentBoxInsetWidth = padding.left + padding.right + border.left + border.right
                                      + scrollbarGutter.left + scrollbarGutter.right;
@@ -204,8 +234,15 @@ public class BlockComputer {
         }
 
         // Perform final layout on children
-        FloatRect resolvedPadding = Resolve.resolveRectOrZero(style.getPadding(), containerOuterWidth);
-        FloatRect resolvedBorder = Resolve.resolveRectOrZero(style.getBorder(), containerOuterWidth);
+        //
+        // Percentage padding and borders resolve against the *containing block's* width
+        // (parentSize.width), not the box's own width. The two only differ when the box has a
+        // non-stretch width. Fall back to the box's own width when the parent size is unknown
+        // (e.g. at the root of the layout tree). BK-06 / upstream #1083.
+        float percentageResolutionWidth =
+            !Float.isNaN(parentSize.width) ? parentSize.width : containerOuterWidth;
+        FloatRect resolvedPadding = Resolve.resolveRectOrZero(style.getPadding(), percentageResolutionWidth);
+        FloatRect resolvedBorder = Resolve.resolveRectOrZero(style.getBorder(), percentageResolutionWidth);
         FloatRect contentBoxInset = new FloatRect(
             resolvedPadding.left + resolvedBorder.left + scrollbarGutter.left,
             resolvedPadding.right + resolvedBorder.right + scrollbarGutter.right,
@@ -215,6 +252,7 @@ public class BlockComputer {
 
         InFlowLayoutResult layoutResult = performFinalLayoutOnChildren(
             items,
+            runMode,
             containerOuterWidth,
             contentBoxInset,
             style.getTextAlign(),
@@ -224,9 +262,12 @@ public class BlockComputer {
 
         float containerOuterHeight = styledBasedKnownDimensions.height;
         if (Float.isNaN(containerOuterHeight)) {
+            // This branch is only reached when the height is auto. In a final layout an
+            // aspect-ratio derived height was already resolved above (so the height is definite
+            // and this branch is skipped); during a measurement the aspect ratio is instead
+            // folded into the content-based height, which is the legacy (content-inclusive)
+            // measurement that flex/grid intrinsic sizing has been verified against.
             float contentHeight = layoutResult.contentHeight;
-            // Apply aspect-ratio: when height is auto and width is known, derive height from AR.
-            // AR applies to the content box, so subtract/add box-sizing adjustment.
             if (!Float.isNaN(aspectRatio) && !Float.isNaN(containerOuterWidth)) {
                 float arDerivedHeight = (containerOuterWidth - boxSizingAdjustment.width) / aspectRatio
                                         + boxSizingAdjustment.height;
@@ -238,8 +279,63 @@ public class BlockComputer {
 
         FloatSize finalOuterSize = new FloatSize(containerOuterWidth, containerOuterHeight);
 
+        // CSS2 §8.3.1: the bottom margin of a block with `height: auto` collapses with its last
+        // in-flow child's bottom margin only if the box's `min-height` is less than the box's
+        // used height. When `min-height` determines the used height, the last child's bottom
+        // margin no longer adjoins the box's bottom edge, so it stays inside the box instead of
+        // collapsing with the box's own bottom margin. (`max-height` has no such effect.)
+        // BK-05 / upstream #1082.
+        boolean heightConstrainedByMinHeight =
+            !Float.isNaN(minSize.height) && minSize.height > 0f && minSize.height >= containerOuterHeight;
+        boolean ownBottomMarginCollapsesWithChildren =
+            ownMarginsCollapseWithChildren.end && !heightConstrainedByMinHeight;
+
+        // Determine whether this node can be collapsed through
+        boolean canBeCollapsedThrough = !hasStylesPreventingBeingCollapsedThrough &&
+                                        layoutResult.allChildrenCanBeCollapsedThrough;
+
+        // Compute output margin sets
+        CollapsibleMarginSet topMargin;
+        if (ownMarginsCollapseWithChildren.start) {
+            topMargin = layoutResult.firstChildTopMarginSet;
+        } else {
+            float marginTop = Resolve.resolveLpaOrZero(style.getMargin().top, parentSize.width);
+            topMargin = CollapsibleMarginSet.fromMargin(marginTop);
+        }
+
+        CollapsibleMarginSet bottomMargin;
+        if (ownBottomMarginCollapsesWithChildren) {
+            bottomMargin = layoutResult.lastChildBottomMarginSet;
+        } else {
+            float marginBottom = Resolve.resolveLpaOrZero(style.getMargin().bottom, parentSize.width);
+            bottomMargin = CollapsibleMarginSet.fromMargin(marginBottom);
+        }
+
+        // Short-circuit if computing size.
+        //
+        // The margin-collapse related outputs are part of the result: a parent block container
+        // relies on its children's top/bottom margin sets to compute its own intrinsic height, and
+        // the collapse-through flag drives its own collapsing. Content size is not known yet (and
+        // is only needed by a full layout), so it stays ZERO.
+        // BK-03 / upstream #976 (b9067e74).
         if (runMode == RunMode.COMPUTE_SIZE) {
-            return LayoutOutput.fromOuterSize(finalOuterSize);
+            return new LayoutOutput(
+                finalOuterSize,
+                FloatSize.zero(),
+                new FloatPoint(NaN, NaN),
+                topMargin,
+                bottomMargin,
+                canBeCollapsedThrough
+            );
+        }
+
+        // Commit the deferred in-flow layouts. This must stay *after* the ComputeSize return
+        // above: measuring a node must never write layout state to the tree.
+        // Upstream #971 (BK-01).
+        for (BlockItem item : items) {
+            if (item.finalLayout != null) {
+                tree.setUnroundedLayout(item.nodeId, item.finalLayout);
+            }
         }
 
         // Layout absolutely positioned children
@@ -279,27 +375,6 @@ public class BlockComputer {
         }
 
         FloatSize contentSize = computeContentSizeFromChildren(node);
-
-        // Determine whether this node can be collapsed through
-        boolean canBeCollapsedThrough = !hasStylesPreventingBeingCollapsedThrough &&
-                                        layoutResult.allChildrenCanBeCollapsedThrough;
-
-        // Compute output margin sets
-        CollapsibleMarginSet topMargin;
-        if (ownMarginsCollapseWithChildren.start) {
-            topMargin = layoutResult.firstChildTopMarginSet;
-        } else {
-            float marginTop = Resolve.resolveLpaOrZero(style.getMargin().top, parentSize.width);
-            topMargin = CollapsibleMarginSet.fromMargin(marginTop);
-        }
-
-        CollapsibleMarginSet bottomMargin;
-        if (ownMarginsCollapseWithChildren.end) {
-            bottomMargin = layoutResult.lastChildBottomMarginSet;
-        } else {
-            float marginBottom = Resolve.resolveLpaOrZero(style.getMargin().bottom, parentSize.width);
-            bottomMargin = CollapsibleMarginSet.fromMargin(marginBottom);
-        }
 
         return new LayoutOutput(
             finalOuterSize,
@@ -422,6 +497,7 @@ public class BlockComputer {
 
     private InFlowLayoutResult performFinalLayoutOnChildren(
         List<BlockItem> items,
+        RunMode runMode,
         float containerOuterWidth,
         FloatRect contentBoxInset,
         TextAlign textAlign,
@@ -431,9 +507,14 @@ public class BlockComputer {
         TaffyTree tree = layoutComputer.getTree();
         float containerInnerWidth = containerOuterWidth - contentBoxInset.left - contentBoxInset.right;
         FloatSize parentSize = new FloatSize(containerOuterWidth, NaN);
+        // Vertical available space in block flow is indefinite, which this port represents as
+        // MaxContent. Passing MinContent made every descendant grid believe it was being sized
+        // under a min-content constraint, in which the track maximisation step has zero free
+        // space, so auto rows containing only scroll-container items collapsed to zero height.
+        // BK-15(b) / upstream #965.
         TaffySize<AvailableSpace> availableSpace = new TaffySize<>(
             AvailableSpace.definite(containerInnerWidth),
-            AvailableSpace.minContent()
+            AvailableSpace.maxContent()
         );
 
         float committedYOffset = contentBoxInset.top;
@@ -456,8 +537,12 @@ public class BlockComputer {
                 continue;
             }
 
-            // Resolve margins
-            FloatRect itemMarginOpt = resolveMarginOptional(item.margin, containerOuterWidth);
+            // Resolve margins.
+            //
+            // Percentage (auto-margin-free) margins resolve against the containing block's
+            // inline size, i.e. this container's *content box* width, not its outer width.
+            // BK-21 / upstream #990 (86d93d95).
+            FloatRect itemMarginOpt = resolveMarginOptional(item.margin, containerInnerWidth);
             FloatRect itemNonAutoMargin = new FloatRect(
                 Float.isNaN(itemMarginOpt.left) ? 0f : itemMarginOpt.left,
                 Float.isNaN(itemMarginOpt.right) ? 0f : itemMarginOpt.right,
@@ -479,6 +564,9 @@ public class BlockComputer {
                 );
             }
 
+            // The parent's run mode is propagated: measuring this container must not make its
+            // children write layout state, and a vertical ComputeSize pass needs the children's
+            // margin-collapse outputs. BK-02 / upstream #972.
             LayoutOutput itemOutput = layoutComputer.performChildLayout(
                 item.nodeId,
                 knownDimensions,
@@ -488,7 +576,8 @@ public class BlockComputer {
                     availableSpace.height
                 ),
                 SizingMode.INHERENT_SIZE,
-                new TaffyLine<>(true, true)
+                new TaffyLine<>(true, true),
+                runMode
             );
 
             FloatSize finalSize = itemOutput.size();
@@ -504,11 +593,16 @@ public class BlockComputer {
             int autoMarginCount = (item.margin.left.isAuto() ? 1 : 0) + (item.margin.right.isAuto() ? 1 : 0);
             float xAxisAutoMarginSize = autoMarginCount > 0 ? freeXSpace / autoMarginCount : 0;
 
+            // Layout.margin reports the child's *own* margins. The collapsed sets above describe
+            // where the box is placed relative to its siblings (a parent/child margin interaction),
+            // not the box's own margin; reporting them leaked the parent's collapsed margin into
+            // the child's margin. Auto margins report 0 here: the resolved auto size is only
+            // consumed by the positioning maths. BK-10 / upstream #1287.
             FloatRect resolvedMargin = new FloatRect(
                 Float.isNaN(itemMarginOpt.left) ? xAxisAutoMarginSize : itemMarginOpt.left,
                 Float.isNaN(itemMarginOpt.right) ? xAxisAutoMarginSize : itemMarginOpt.right,
-                topMarginSet.resolve(),
-                bottomMarginSet.resolve()
+                Float.isNaN(itemMarginOpt.top) ? 0f : itemMarginOpt.top,
+                Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
             );
 
             // Resolve item inset
@@ -519,13 +613,17 @@ public class BlockComputer {
             float insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
             float insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
 
-            // Compute y margin offset with margin collapse
+            // Compute y margin offset with margin collapse.
+            //
+            // This must use the *collapsed* top margin set (the child's collapsed-through margins
+            // combined with the child's own top margin), not Layout.margin, which reports the
+            // child's own margin only (BK-10). Upstream computes this from `top_margin_set`.
             float yMarginOffset;
             if (isCollapsingWithFirstMarginSet && ownMarginsCollapseWithChildren.start) {
                 yMarginOffset = 0f;
             } else {
                 yMarginOffset = activeCollapsibleMarginSet.copy()
-                                                          .collapseWithMargin(resolvedMargin.top).resolve();
+                                                          .collapseWithSet(topMarginSet).resolve();
             }
 
             item.computedSize = finalSize;
@@ -605,7 +703,9 @@ public class BlockComputer {
                 resolvedMargin
             );
 
-            tree.setUnroundedLayout(item.nodeId, layout);
+            // Defer the tree write until the caller has been confirmed to want a final layout
+            // (see the commit loop in compute). Upstream #971 (BK-01).
+            item.finalLayout = layout;
 
             // Update first_child_top_margin_set
             if (isCollapsingWithFirstMarginSet) {
@@ -634,7 +734,13 @@ public class BlockComputer {
         }
 
         CollapsibleMarginSet lastChildBottomMarginSet = activeCollapsibleMarginSet;
-        float bottomYMarginOffset = ownMarginsCollapseWithChildren.end
+        // When the first child's margins collapse through this box and this box has no top
+        // border/padding, they were already folded into the box's own top margin set, so they
+        // must not also be added to its bottom (they are not adjoining the box's bottom edge).
+        // BK-11 / upstream #1397.
+        boolean firstChildMarginSetCollapsedThrough =
+            isCollapsingWithFirstMarginSet && ownMarginsCollapseWithChildren.start;
+        float bottomYMarginOffset = (ownMarginsCollapseWithChildren.end || firstChildMarginSetCollapsedThrough)
                                     ? 0f
                                     : lastChildBottomMarginSet.resolve();
 
@@ -791,10 +897,11 @@ public class BlockComputer {
             float freeSpaceY = absoluteAutoMarginSpaceY - finalSize.height
                                - nonAutoMargin.top - nonAutoMargin.bottom;
 
-            // Calculate auto margin size
-            float autoMarginSizeX = calcAutoMarginSize(marginOpt.left, marginOpt.right, styleSize.width, freeSpaceX);
+            // Calculate auto margin size against the free space left by the *used* (clamped) size.
+            // BK-07 / upstream #1096.
+            float autoMarginSizeX = calcAutoMarginSize(marginOpt.left, marginOpt.right, freeSpaceX);
 
-            float autoMarginSizeY = calcAutoMarginSize(marginOpt.top, marginOpt.bottom, styleSize.height, freeSpaceY);
+            float autoMarginSizeY = calcAutoMarginSize(marginOpt.top, marginOpt.bottom, freeSpaceY);
 
             FloatRect autoMargin = new FloatRect(
                 Float.isNaN(marginOpt.left) ? autoMarginSizeX : 0f,
@@ -849,12 +956,22 @@ public class BlockComputer {
         }
     }
 
-    private static float calcAutoMarginSize(float marginOpt, float marginOpt1, float styleSize, float freeSpace) {
+    /**
+     * Resolves the auto margin size for one axis of an absolutely positioned box.
+     *
+     * <p>Only the free space left by the box's <em>used</em> (clamped) size matters: when both
+     * margins are auto and the box already fills or overflows the space, they resolve to 0;
+     * otherwise the free space is split evenly (a negative value is possible and allowed when the
+     * box is larger than the containing block). Judging this by the box's declared size got
+     * centring wrong whenever {@code max-width}/{@code max-height} clamped it.
+     * BK-07 / upstream #1096.</p>
+     */
+    private static float calcAutoMarginSize(float marginOpt, float marginOpt1, float freeSpace) {
         float autoMarginSizeX;
         {
             int autoMarginCountX = (Float.isNaN(marginOpt) ? 1 : 0) + (Float.isNaN(marginOpt1) ? 1 : 0);
-            // If both margins are auto and size is >= free space, set auto margins to 0
-            if (autoMarginCountX == 2 && (Float.isNaN(styleSize) || styleSize >= freeSpace)) {
+            // If both margins are auto and the box fills the free space, set auto margins to 0
+            if (autoMarginCountX == 2 && freeSpace <= 0f) {
                 autoMarginSizeX = 0f;
             } else if (autoMarginCountX > 0) {
                 // Allow negative margins when child is larger than parent
