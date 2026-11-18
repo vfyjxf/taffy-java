@@ -8,23 +8,21 @@ the upstream Rust [taffy](https://github.com/DioxusLabs/taffy) implementation.
 | Item | Value |
 | --- | --- |
 | Java baseline commit | `b594b52` (2026-09-27) |
-| Upstream source baseline | `fd8f81fc` — "Mixed benchmark fixups (#900)", 2025-11-30 |
-| Equivalent init-time snapshot | `175442d4` (2025-12-20; differs only in CI) |
+| Upstream port baseline (maintainer) | `6d8a3832` (2026-02-19) |
+| Code-fingerprint snapshot | `fd8f81fc` (2025-11-30; 2,060 test names and core types match) |
 | Upstream alignment target | `1abd8eea` (2026-11-13, after v0.15.1) |
-| Upstream commit range | `fd8f81fc..1abd8eea` — 275 commits |
+| Alignment commit range | `6d8a3832..1abd8eea` — 271 commits |
+| Working superset range | `fd8f81fc..1abd8eea` — 275 commits (4 pre-baseline commits kept as port-time gaps) |
 | Published API baseline | `dev.vfyjxf:taffy:1.1.5` (Maven Central) |
 
-The source baseline was identified by matching the Java port against upstream
-Rust commits (test names, style/layout/cache types, fixture categories); see
-`Data/taffy-java/analysis/baseline-confirmation.md` in the workspace. The
-"latest commit on Feb 19" (`6d8a3832`, README-only) is **not** the source
-snapshot: it is 31 days after the initial Java commit and adds CSS float, which
-the Java port never contained.
-
-Commits between `fd8f81fc` and `6d8a3832` (4 commits, including float #866)
-are part of the alignment scope. Commits before `fd8f81fc` are already part of
-the ported snapshot; if Java lacks one of those features it is a port-time gap,
-not a new upstream change.
+The port baseline is recorded as `6d8a3832` (2026-02-19) per the maintainer.
+The Java code fingerprint (2,060 generated test names and core style/layout/
+cache types) matches `fd8f81fc` (2025-11-30); see
+`Data/taffy-java/analysis/baseline-confirmation.md` in the workspace. The four
+commits between `fd8f81fc` and `6d8a3832` — including CSS float `#866` — are
+therefore treated as port-time gaps, and the work list keeps the 275-commit
+superset so nothing is lost. Commits before `fd8f81fc` are part of the ported
+snapshot.
 
 ## Current setup state
 
