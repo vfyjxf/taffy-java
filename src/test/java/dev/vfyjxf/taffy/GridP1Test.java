@@ -525,6 +525,63 @@ class GridP1Test {
         return tree.newLeaf(style);
     }
 
+    // ------------------------------------------------------------------
+    // GR-20 (#1036/#1037): bounded loops and defensive clamps for pathological styles
+    // ------------------------------------------------------------------
+
+    @Test
+    @org.junit.jupiter.api.Timeout(10)
+    @DisplayName("GR-20: non-finite track inputs terminate instead of looping forever")
+    void nonFiniteTrackInputsTerminate() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.gridTemplateColumns = List.of(
+            TrackSizingFunction.fr(1.0f), TrackSizingFunction.fr(1.0f));
+        // Non-finite intrinsic inputs: a fixed track with a NaN length and a NaN item size.
+        rootStyle.gridTemplateRows = List.of(TrackSizingFunction.fixed(Float.NaN));
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(Float.NaN), TaffyDimension.length(Float.NaN));
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, new TaffySize<>(
+            dev.vfyjxf.taffy.style.AvailableSpace.definite(Float.POSITIVE_INFINITY),
+            dev.vfyjxf.taffy.style.AvailableSpace.definite(Float.POSITIVE_INFINITY)));
+
+        // The fr sizing loops are bounded (upstream #1036), so this returns; the exact sizes are not
+        // meaningful for non-finite inputs, only termination is (enforced by @Timeout).
+        assertRect(tree.getLayout(child), 0.0f, 0.0f, 0.0f, 0.0f, "non-finite child");
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(10)
+    @DisplayName("GR-20: a span larger than the estimated grid terminates")
+    void spanLargerThanGridTerminates() {
+        // Upstream #1037 fixed an infinite loop when an auto-placed item's span exceeded the estimated
+        // grid size. This port clamps spans and bounds the occupancy matrix (GR-05), so the placement
+        // must terminate; the item is clamped into the limited grid.
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.fixed(10.0f));
+        rootStyle.gridAutoColumns = List.of(TrackSizingFunction.fixed(10.0f));
+        rootStyle.gridAutoRows = List.of(TrackSizingFunction.fixed(10.0f));
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.length(10.0f), TaffyDimension.length(10.0f));
+        childStyle.gridColumn = new TaffyLine<>(GridPlacement.auto(), GridPlacement.span(10_000));
+        childStyle.gridRow = new TaffyLine<>(GridPlacement.auto(), GridPlacement.span(10_000));
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertEquals(0.0f, tree.getLayout(child).location().x, EPSILON, "clamped child x");
+        assertEquals(0.0f, tree.getLayout(child).location().y, EPSILON, "clamped child y");
+    }
+
     private static void assertRect(Layout layout, float x, float y, float width, float height, String label) {
         assertEquals(x, layout.location().x, EPSILON, label + " x");
         assertEquals(y, layout.location().y, EPSILON, label + " y");

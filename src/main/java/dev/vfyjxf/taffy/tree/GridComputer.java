@@ -3666,6 +3666,14 @@ public class GridComputer {
         float flexFraction;
         boolean changed;
 
+        // Every restart of the algorithm treats at least one more flexible track as inflexible, so a
+        // valid hypothetical fr size is always found within frValues.size() + 1 iterations. Non-finite
+        // values (which can arise from non-finite style inputs) break that invariant because comparisons
+        // against NaN are always false, so the iteration count is bounded to guarantee termination
+        // (GR-20 / upstream #1036 c579c315).
+        int maxIterations = frValues.size() + 1;
+        int iteration = 0;
+
         // Iterate until no tracks need to be made inflexible
         do {
             changed = false;
@@ -3710,7 +3718,7 @@ public class GridComputer {
                     }
                 }
             }
-        } while (changed);
+        } while (changed && ++iteration < maxIterations);
 
         return Math.max(0, flexFraction);
     }
@@ -4052,9 +4060,15 @@ public class GridComputer {
                     isInflexible.add(false);
                 }
 
-                // Iterative algorithm: tracks with content > fr*fraction become inflexible
+                // Iterative algorithm: tracks with content > fr*fraction become inflexible.
+                // Each pass marks at least one more track inflexible, so the loop always terminates within
+                // sizes.size() + 1 passes unless the inputs are non-finite (NaN comparisons are always
+                // false), which is why the iteration count is bounded explicitly here
+                // (GR-20 / upstream #1036 c579c315).
                 boolean changed = true;
-                while (changed) {
+                int flexIterations = 0;
+                int maxFlexIterations = sizes.size() + 1;
+                while (changed && flexIterations++ < maxFlexIterations) {
                     changed = false;
                     float remainingForFr = availableForFr - usedByInflexible;
                     float flexFraction = currentTotalFr > 0 ? remainingForFr / currentTotalFr : 0f;
