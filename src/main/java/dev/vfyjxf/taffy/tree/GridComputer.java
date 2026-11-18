@@ -1104,20 +1104,42 @@ public class GridComputer {
         return offsets;
     }
 
+    /**
+     * Create a {@link NamedLineResolver} for a grid container.
+     * <p>
+     * The explicit track counts are derived from the grid templates in the same way as the in-flow
+     * placement path, so that named-line lookup and fallback numbering are identical for in-flow and
+     * absolutely positioned items.
+     */
+    private NamedLineResolver createNamedLineResolver(TaffyStyle containerStyle) {
+        int explicitColCount = explicitTrackCount(containerStyle.getGridTemplateColumns());
+        int explicitRowCount = explicitTrackCount(containerStyle.getGridTemplateRows());
+
+        NamedLineResolver namedLineResolver = new NamedLineResolver(containerStyle);
+        namedLineResolver.setExplicitColumnCount(explicitColCount);
+        namedLineResolver.setExplicitRowCount(explicitRowCount);
+        return namedLineResolver;
+    }
+
+    /**
+     * The number of explicit tracks declared by a grid template. This is the explicit track count
+     * used for named-line fallback numbering (it intentionally counts declared template entries,
+     * matching the in-flow placement path).
+     */
+    private static int explicitTrackCount(List<TrackSizingFunction> template) {
+        return (template != null) ? template.size() : 0;
+    }
+
     private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize) {
         TaffyTree tree = layoutComputer.getTree();
         List<GridItem> items = new ArrayList<>();
 
         // Get explicit track counts for negative line number resolution
-        List<TrackSizingFunction> templateCols = containerStyle.getGridTemplateColumns();
-        List<TrackSizingFunction> templateRows = containerStyle.getGridTemplateRows();
-        int explicitColCount = (templateCols != null) ? templateCols.size() : 0;
-        int explicitRowCount = (templateRows != null) ? templateRows.size() : 0;
+        int explicitColCount = explicitTrackCount(containerStyle.getGridTemplateColumns());
+        int explicitRowCount = explicitTrackCount(containerStyle.getGridTemplateRows());
 
         // Create NamedLineResolver for resolving named grid lines
-        NamedLineResolver namedLineResolver = new NamedLineResolver(containerStyle);
-        namedLineResolver.setExplicitColumnCount(explicitColCount);
-        namedLineResolver.setExplicitRowCount(explicitRowCount);
+        NamedLineResolver namedLineResolver = createNamedLineResolver(containerStyle);
 
         int order = 0;
         for (NodeId childId : tree.getChildren(node)) {
@@ -4373,6 +4395,12 @@ public class GridComputer {
         boolean isRtl) {
         TaffyTree tree = layoutComputer.getTree();
 
+        // Named lines/spans must be resolved to numeric lines before the absolute grid area is
+        // computed, otherwise NAMED_LINE/NAMED_SPAN placements fall back to the container edges and
+        // the absolutely positioned item fills the whole grid. This mirrors the in-flow path
+        // (generateGridItems), using the same resolver configuration for identical line numbers.
+        NamedLineResolver namedLineResolver = createNamedLineResolver(tree.getStyle(node));
+
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getPosition() != TaffyPosition.ABSOLUTE) continue;
@@ -4381,6 +4409,14 @@ public class GridComputer {
             // Resolve grid placement for absolute positioned items
             TaffyLine<GridPlacement> gridCol = childStyle.gridColumn;
             TaffyLine<GridPlacement> gridRow = childStyle.gridRow;
+
+            // Resolve named lines/spans to numeric lines, preserving auto/line/span semantics
+            if (hasNamedGridPlacement(gridCol)) {
+                gridCol = namedLineResolver.resolveColumnNames(gridCol);
+            }
+            if (hasNamedGridPlacement(gridRow)) {
+                gridRow = namedLineResolver.resolveRowNames(gridRow);
+            }
 
             // Calculate grid area based on grid placement
             FloatRect gridArea = resolveAbsoluteGridArea(
@@ -4555,6 +4591,19 @@ public class GridComputer {
 
             tree.setUnroundedLayout(childId, layout);
         }
+    }
+
+    /**
+     * Whether a grid placement line contains a named line or named span that must be resolved via
+     * {@link NamedLineResolver} before the placement can be interpreted. Plain auto/line/span
+     * placements are left untouched and keep their existing semantics.
+     */
+    private static boolean hasNamedGridPlacement(TaffyLine<GridPlacement> placement) {
+        if (placement == null) return false;
+        GridPlacement start = placement.start;
+        GridPlacement end = placement.end;
+        return (start != null && (start.isNamedLine() || start.isNamedSpan()))
+               || (end != null && (end.isNamedLine() || end.isNamedSpan()));
     }
 
     /**
