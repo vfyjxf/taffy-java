@@ -120,4 +120,73 @@ public class FlexP1Test {
         assertLocation(tree.getLayout(growing), 100f, 100f, "growing item position");
         assertLocation(tree.getLayout(fixed), 100f, 110f, "fixed item position");
     }
+
+    // ==================================================================
+    // FL-02 (#1152 / 7d31807): the scaled shrink factor used by intrinsic
+    // contributions must be max(1, flex_shrink) * inner_flex_basis, and the
+    // second pass must not multiply a zero shrink factor by an infinite
+    // flex fraction.
+    //
+    // Upstream fixture: taffy_issue_1151_negative_margin. Here the factor
+    // mismatch is isolated with an explicit flex-basis and flex-shrink < 1.
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-02: scaled shrink factor is max(1, shrink) * inner basis")
+    void fl02_scaledShrinkFactorUsesMaxOneTimesInnerBasis() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexBasis = TaffyDimension.length(100f);
+        itemStyle.flexShrink = 0.5f;
+        MeasureFunc measure = (known, available) -> new FloatSize(
+            Float.isNaN(known.width) ? 40f : known.width,
+            Float.isNaN(known.height) ? 10f : known.height
+        );
+        NodeId item = tree.newLeafWithMeasure(itemStyle, measure);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // content contribution 40, flex-basis 100, diff -60
+        // new: fraction = -60 / (max(1, 0.5) * 100) = -0.6 -> size = 40
+        // old: fraction = -60 / max(1, 0.5 * 100) = -1.2 -> size = -20 -> floored to 0
+        Layout rootLayout = tree.getLayout(root);
+        assertFalse(Float.isNaN(rootLayout.size().width), "container width must not be NaN");
+        assertEquals(40f, rootLayout.size().width, EPS,
+            "scaled shrink factor must be max(1, shrink) * inner basis");
+    }
+
+    @Test
+    @DisplayName("FL-02: zero scaled shrink factor contributes zero instead of NaN")
+    void fl02_zeroScaledShrinkFactorContributesZero() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+
+        // inner flex basis is 0 (flex-basis == padding), and the scroll-container
+        // contribution path makes diff < 0, so the first pass stores -Infinity.
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.flexBasis = TaffyDimension.length(20f);
+        itemStyle.flexShrink = 1f;
+        itemStyle.maxSize = new TaffySize<>(TaffyDimension.length(10f), TaffyDimension.AUTO);
+        itemStyle.padding = new TaffyRect<>(
+            LengthPercentage.length(20f), LengthPercentage.ZERO,
+            LengthPercentage.ZERO, LengthPercentage.ZERO);
+        itemStyle.overflow = new dev.vfyjxf.taffy.geometry.TaffyPoint<>(
+            dev.vfyjxf.taffy.style.Overflow.SCROLL, dev.vfyjxf.taffy.style.Overflow.SCROLL);
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout rootLayout = tree.getLayout(root);
+        assertFalse(Float.isNaN(rootLayout.size().width), "zero scaled shrink factor must not produce NaN");
+        assertEquals(10f, rootLayout.size().width, EPS,
+            "content contribution clamps to max-width instead of NaN");
+    }
 }
