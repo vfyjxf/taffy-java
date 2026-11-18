@@ -308,4 +308,64 @@ public class BlockP1Test {
         assertLocation(tree.getLayout(grandchild), 0f, 0f, "grandchild");
         assertSize(tree.getLayout(grandchild), 50f, 0f, "grandchild");
     }
+
+    // === BK-10: in-flow children report their own margins ===
+
+    /**
+     * Port of upstream {@code tests/hand_written/block_margin.rs}
+     * ({@code layout_margin_excludes_collapsed_margins}, #1287): margin collapsing changes where
+     * boxes are placed, but {@code Layout.margin} is each box's own margin.
+     *
+     * <p>The upstream test uses a {@code display: flow-root} root (which this port does not have
+     * yet); a block root behaves identically here because the root's own margins are marked
+     * non-collapsible by the layout entry point.</p>
+     */
+    @Test
+    @DisplayName("BK-10: Layout.margin reports each in-flow child's own margins")
+    void layoutMarginExcludesCollapsedMargins() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle innerStyle = blockStyle();
+        innerStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        innerStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(13f), LengthPercentageAuto.length(20f));
+        NodeId inner = tree.newLeaf(innerStyle);
+
+        TaffyStyle outerStyle = blockStyle();
+        outerStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(8f), LengthPercentageAuto.length(5f));
+        NodeId outer = tree.newWithChildren(outerStyle, inner);
+
+        TaffyStyle siblingStyle = blockStyle();
+        siblingStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        siblingStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(30f), LengthPercentageAuto.ZERO);
+        NodeId sibling = tree.newLeaf(siblingStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, outer, sibling);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // The inner box's margins collapse through the outer box's edges
+        Layout outerLayout = tree.getLayout(outer);
+        assertLocation(outerLayout, 0f, 13f, "outer");
+        assertSize(outerLayout, 100f, 10f, "outer");
+        assertEquals(8f, outerLayout.margin().top, EPSILON, "outer margin top");
+        assertEquals(5f, outerLayout.margin().bottom, EPSILON, "outer margin bottom");
+
+        Layout innerLayout = tree.getLayout(inner);
+        assertLocation(innerLayout, 0f, 0f, "inner");
+        assertEquals(13f, innerLayout.margin().top, EPSILON, "inner margin top");
+        assertEquals(20f, innerLayout.margin().bottom, EPSILON, "inner margin bottom");
+
+        // The sibling is placed after the largest of the adjoining margins (5, 20, 30)
+        Layout siblingLayout = tree.getLayout(sibling);
+        assertLocation(siblingLayout, 0f, 53f, "sibling");
+        assertEquals(30f, siblingLayout.margin().top, EPSILON, "sibling margin top");
+    }
 }

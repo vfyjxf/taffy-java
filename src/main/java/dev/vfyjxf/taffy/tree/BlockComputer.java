@@ -526,11 +526,16 @@ public class BlockComputer {
             int autoMarginCount = (item.margin.left.isAuto() ? 1 : 0) + (item.margin.right.isAuto() ? 1 : 0);
             float xAxisAutoMarginSize = autoMarginCount > 0 ? freeXSpace / autoMarginCount : 0;
 
+            // Layout.margin reports the child's *own* margins. The collapsed sets above describe
+            // where the box is placed relative to its siblings (a parent/child margin interaction),
+            // not the box's own margin; reporting them leaked the parent's collapsed margin into
+            // the child's margin. Auto margins report 0 here: the resolved auto size is only
+            // consumed by the positioning maths. BK-10 / upstream #1287.
             FloatRect resolvedMargin = new FloatRect(
                 Float.isNaN(itemMarginOpt.left) ? xAxisAutoMarginSize : itemMarginOpt.left,
                 Float.isNaN(itemMarginOpt.right) ? xAxisAutoMarginSize : itemMarginOpt.right,
-                topMarginSet.resolve(),
-                bottomMarginSet.resolve()
+                Float.isNaN(itemMarginOpt.top) ? 0f : itemMarginOpt.top,
+                Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
             );
 
             // Resolve item inset
@@ -541,13 +546,17 @@ public class BlockComputer {
             float insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
             float insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
 
-            // Compute y margin offset with margin collapse
+            // Compute y margin offset with margin collapse.
+            //
+            // This must use the *collapsed* top margin set (the child's collapsed-through margins
+            // combined with the child's own top margin), not Layout.margin, which reports the
+            // child's own margin only (BK-10). Upstream computes this from `top_margin_set`.
             float yMarginOffset;
             if (isCollapsingWithFirstMarginSet && ownMarginsCollapseWithChildren.start) {
                 yMarginOffset = 0f;
             } else {
                 yMarginOffset = activeCollapsibleMarginSet.copy()
-                                                          .collapseWithMargin(resolvedMargin.top).resolve();
+                                                          .collapseWithSet(topMarginSet).resolve();
             }
 
             item.computedSize = finalSize;
