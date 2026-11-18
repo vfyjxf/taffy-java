@@ -200,6 +200,20 @@ Results:
   checkout; with the historical fixture tree it reports
   **7 files byte-identical, 1030 fixtures** (`block`, `blockflex`, `blockgrid`,
   `flex`, `grid`, `gridflex`, `leaf`).
+
+### Generator contract tests
+
+`:gentest:test` runs pure JUnit tests (no Chrome required) for:
+
+* the 15px scrollbar contract: the probe is asserted against 15px, and
+  `-Dtaffy.gentest.expectedScrollbarWidth=<px>` is the explicit opt-in for
+  platforms that genuinely use another width. A mismatch aborts generation
+  instead of writing a suite with different assumptions.
+* page readiness: navigation waits for the load event, the base stylesheet is
+  probed before `getTestData()` switches body classes, and transient
+  `getTestData()` failures retry.
+* the `#1138` grid-template contract: CSS strings (modern helper) and legacy
+  JSON arrays both map to the same Java style model.
 * `flex_aspect_ratio`, `intrinsic` and `rtl` are committed but their fixture
   sources are not part of upstream taffy; they cannot be byte-checked from a
   pristine upstream checkout.

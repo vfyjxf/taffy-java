@@ -78,6 +78,7 @@ final class ChromeOracle implements AutoCloseable {
             WebDriverManager.chromedriver().setup();
             driver = new ChromeDriver(options);
         }
+        driver.manage().timeouts().scriptTimeout(PageReadiness.TIMEOUT);
         return new ChromeOracle(driver, binary);
     }
 
@@ -86,17 +87,65 @@ final class ChromeOracle implements AutoCloseable {
     }
 
     void loadFile(Path file) {
-        currentScrollbarWidth = -1f;
-        driver.get(file.toUri().toString());
+        load(file.toUri().toString());
     }
 
     void loadUrl(String url) {
+        load(url);
+    }
+
+    private void load(String url) {
         currentScrollbarWidth = -1f;
         driver.get(url);
+        awaitDocumentReady();
+    }
+
+    /**
+     * Wait for the page's load event (upstream #1054). Stylesheets are applied
+     * by then; navigation can occasionally return earlier.
+     */
+    void awaitDocumentReady() {
+        try {
+            executeAsyncScript(PageReadiness.JS_AWAIT_LOAD);
+        } catch (RuntimeException ex) {
+            throw new IllegalStateException(
+                    PageReadiness.loadTimeoutMessage(currentUrl(), readyState()), ex);
+        }
+    }
+
+    /**
+     * Verify that the taffy test base stylesheet participates in the cascade
+     * before getTestData() starts switching body classes.
+     */
+    void verifyBaseStylesheetApplied() {
+        String probeResult;
+        try {
+            Object result = executeScript(PageReadiness.JS_BASE_STYLESHEET_APPLIED);
+            probeResult = result == null ? "no result" : result.toString();
+        } catch (RuntimeException ex) {
+            throw new IllegalStateException(
+                    "could not probe the taffy test base stylesheet on " + currentUrl() + ": " + ex.getMessage(), ex);
+        }
+        if (!PageReadiness.isBaseStylesheetApplied(probeResult)) {
+            throw new IllegalStateException(
+                    PageReadiness.stylesheetFailureMessage(probeResult, currentUrl(), readyState()));
+        }
+    }
+
+    private String readyState() {
+        try {
+            return String.valueOf(executeScript(PageReadiness.JS_READY_STATE));
+        } catch (RuntimeException ex) {
+            return "unavailable (" + ex.getMessage() + ")";
+        }
     }
 
     Object executeScript(String script) {
         return ((JavascriptExecutor) driver).executeScript(script);
+    }
+
+    private Object executeAsyncScript(String script) {
+        return ((JavascriptExecutor) driver).executeAsyncScript(script);
     }
 
     /**
@@ -111,6 +160,7 @@ final class ChromeOracle implements AutoCloseable {
         if (currentScrollbarWidth >= 0) {
             return currentScrollbarWidth;
         }
+        float measuredPx;
         try {
             Object result = executeScript(
                     "const el = document.createElement('div');"
@@ -120,15 +170,22 @@ final class ChromeOracle implements AutoCloseable {
                             + "const w = el.offsetWidth - el.clientWidth;"
                             + "el.remove();"
                             + "return w;");
-            currentScrollbarWidth = result instanceof Number n ? n.floatValue() : 0f;
+            measuredPx = result instanceof Number n ? n.floatValue() : 0f;
         } catch (RuntimeException ex) {
-            System.err.println("[warn] could not measure scrollbar width: " + ex.getMessage());
-            currentScrollbarWidth = 0f;
+            throw new ScrollbarWidth.ContractViolation(
+                    "could not measure the scrollbar width on " + currentUrl() + ": " + ex.getMessage(), ex);
         }
-        if (currentScrollbarWidth < 0) {
-            currentScrollbarWidth = 0f;
-        }
+        ScrollbarWidth.verify(measuredPx, currentUrl());
+        currentScrollbarWidth = measuredPx;
         return currentScrollbarWidth;
+    }
+
+    private String currentUrl() {
+        try {
+            return driver.getCurrentUrl();
+        } catch (RuntimeException ex) {
+            return "<unknown page: " + ex.getMessage() + ">";
+        }
     }
 
     static Path resolveChromeBinary(Path explicit) {
@@ -215,8 +272,20 @@ final class ChromeOracle implements AutoCloseable {
         return driver;
     }
 
+    private boolean closed;
+
+    /**
+     * End the WebDriver session before the process exits (upstream #1029).
+     * Selenium's quit() closes the session and then stops chromedriver, so no
+     * manual "close first, kill later" sequence is needed here. Idempotent
+     * because Generator uses try-with-resources and callers may close twice.
+     */
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         try {
             driver.quit();
         } catch (RuntimeException ignored) {

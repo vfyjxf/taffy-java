@@ -17,6 +17,10 @@ dependencies {
     implementation 'org.seleniumhq.selenium:selenium-java:4.16.1'
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'io.github.bonigarcia:webdrivermanager:5.6.2'
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 application {
@@ -196,4 +200,20 @@ tasks.register('convertWptToFixtures', JavaExec) {
 // application plugin run task: no hard-coded Chrome path; pass --args instead.
 tasks.named('run') {
     workingDir = projectRoot
+}
+
+// ---------------------------------------------------------------------------
+// Generator-side contract tests (pure JUnit, no Chrome required)
+// ---------------------------------------------------------------------------
+test {
+    useJUnitPlatform()
+}
+
+// Forward the scrollbar-width override to the forked generator JVMs. Gradle's
+// -D properties live in the daemon, so JavaExec tasks need an explicit copy.
+def expectedScrollbarWidth = System.getProperty('taffy.gentest.expectedScrollbarWidth')
+tasks.withType(JavaExec).configureEach {
+    if (expectedScrollbarWidth != null && !expectedScrollbarWidth.toString().isBlank()) {
+        systemProperty 'taffy.gentest.expectedScrollbarWidth', expectedScrollbarWidth.toString()
+    }
 }
