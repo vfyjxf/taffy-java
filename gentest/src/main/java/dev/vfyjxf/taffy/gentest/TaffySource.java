@@ -500,7 +500,8 @@ final class TaffySource {
         };
     }
 
-    private static GridTracks readTracks(JsonObject style, String key, boolean template) {
+    /** Package-private so generator-contract tests can exercise both schema shapes. */
+    static GridTracks readTracks(JsonObject style, String key, boolean template) {
         if (!has(style, key)) {
             return null;
         }
