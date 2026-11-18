@@ -828,10 +828,11 @@ public class BlockComputer {
             float freeSpaceY = absoluteAutoMarginSpaceY - finalSize.height
                                - nonAutoMargin.top - nonAutoMargin.bottom;
 
-            // Calculate auto margin size
-            float autoMarginSizeX = calcAutoMarginSize(marginOpt.left, marginOpt.right, styleSize.width, freeSpaceX);
+            // Calculate auto margin size against the free space left by the *used* (clamped) size.
+            // BK-07 / upstream #1096.
+            float autoMarginSizeX = calcAutoMarginSize(marginOpt.left, marginOpt.right, freeSpaceX);
 
-            float autoMarginSizeY = calcAutoMarginSize(marginOpt.top, marginOpt.bottom, styleSize.height, freeSpaceY);
+            float autoMarginSizeY = calcAutoMarginSize(marginOpt.top, marginOpt.bottom, freeSpaceY);
 
             FloatRect autoMargin = new FloatRect(
                 Float.isNaN(marginOpt.left) ? autoMarginSizeX : 0f,
@@ -886,12 +887,22 @@ public class BlockComputer {
         }
     }
 
-    private static float calcAutoMarginSize(float marginOpt, float marginOpt1, float styleSize, float freeSpace) {
+    /**
+     * Resolves the auto margin size for one axis of an absolutely positioned box.
+     *
+     * <p>Only the free space left by the box's <em>used</em> (clamped) size matters: when both
+     * margins are auto and the box already fills or overflows the space, they resolve to 0;
+     * otherwise the free space is split evenly (a negative value is possible and allowed when the
+     * box is larger than the containing block). Judging this by the box's declared size got
+     * centring wrong whenever {@code max-width}/{@code max-height} clamped it.
+     * BK-07 / upstream #1096.</p>
+     */
+    private static float calcAutoMarginSize(float marginOpt, float marginOpt1, float freeSpace) {
         float autoMarginSizeX;
         {
             int autoMarginCountX = (Float.isNaN(marginOpt) ? 1 : 0) + (Float.isNaN(marginOpt1) ? 1 : 0);
-            // If both margins are auto and size is >= free space, set auto margins to 0
-            if (autoMarginCountX == 2 && (Float.isNaN(styleSize) || styleSize >= freeSpace)) {
+            // If both margins are auto and the box fills the free space, set auto margins to 0
+            if (autoMarginCountX == 2 && freeSpace <= 0f) {
                 autoMarginSizeX = 0f;
             } else if (autoMarginCountX > 0) {
                 // Allow negative margins when child is larger than parent

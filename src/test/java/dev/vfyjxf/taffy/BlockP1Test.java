@@ -368,4 +368,69 @@ public class BlockP1Test {
         assertLocation(siblingLayout, 0f, 53f, "sibling");
         assertEquals(30f, siblingLayout.margin().top, EPSILON, "sibling margin top");
     }
+
+    // === BK-07: abspos auto margins resolve against the used (clamped) size ===
+
+    /**
+     * Upstream fixture {@code block_absolute_margin_auto_left_and_right_max_width} (#1096): the
+     * declared width is 180 but {@code max-width} clamps the used width to 100, so the two auto
+     * horizontal margins split the remaining 100px (50 each) instead of collapsing to 0.
+     */
+    @Test
+    @DisplayName("BK-07: abspos auto left/right margins centre a max-width clamped box")
+    void absoluteAutoMarginsUseClampedWidth() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.size = size(TaffyDimension.length(180f), TaffyDimension.length(40f));
+        childStyle.maxSize = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        childStyle.inset = new TaffyRect<>(
+            LengthPercentageAuto.length(0f), LengthPercentageAuto.length(0f),
+            LengthPercentageAuto.length(20f), LengthPercentageAuto.AUTO);
+        childStyle.margin = TaffyRect.all(LengthPercentageAuto.auto());
+        NodeId child = tree.newLeaf(childStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.position = TaffyPosition.RELATIVE;
+        rootStyle.size = size(TaffyDimension.length(200f), TaffyDimension.length(100f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout childLayout = tree.getLayout(child);
+        assertLocation(childLayout, 50f, 20f, "child");
+        assertSize(childLayout, 100f, 40f, "child");
+    }
+
+    /**
+     * Upstream fixture {@code block_absolute_margin_auto_top_and_bottom_max_height} (#1096): same
+     * rule on the vertical axis with {@code max-height}.
+     */
+    @Test
+    @DisplayName("BK-07: abspos auto top/bottom margins centre a max-height clamped box")
+    void absoluteAutoMarginsUseClampedHeight() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.size = size(TaffyDimension.length(100f), TaffyDimension.length(90f));
+        childStyle.maxSize = size(TaffyDimension.AUTO, TaffyDimension.length(40f));
+        childStyle.inset = new TaffyRect<>(
+            LengthPercentageAuto.length(20f), LengthPercentageAuto.AUTO,
+            LengthPercentageAuto.length(0f), LengthPercentageAuto.length(0f));
+        childStyle.margin = TaffyRect.all(LengthPercentageAuto.auto());
+        NodeId child = tree.newLeaf(childStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.position = TaffyPosition.RELATIVE;
+        rootStyle.size = size(TaffyDimension.length(200f), TaffyDimension.length(100f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout childLayout = tree.getLayout(child);
+        assertLocation(childLayout, 20f, 30f, "child");
+        assertSize(childLayout, 100f, 40f, "child");
+    }
 }
