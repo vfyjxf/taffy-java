@@ -11,6 +11,7 @@ import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
 import dev.vfyjxf.taffy.style.TaffyDirection;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
@@ -117,9 +118,19 @@ public class BlockComputer {
         FloatSize maxSize = Resolve.maybeApplyAspectRatio(size, aspectRatio);
         maxSize = maybeAdd(maxSize, boxSizingAdjustment);
 
+        // A `display: flow-root` box always establishes a new block formatting context. The part
+        // of that behaviour this port can express is margin isolation: the box's own margins no
+        // longer adjoin its children's, so nothing collapses with or through its block edges.
+        // (Containing floats and avoiding a sibling's floats are the other two effects of the
+        // new BFC; this port has no float layout yet — see the float work package F1/P7.)
+        // BK-17 / upstream #997 (10004cea).
+        boolean establishesNewBlockFormattingContext =
+            style.getDisplay() == TaffyDisplay.FLOW_ROOT;
+
         // Determine margin collapsing behaviour
         boolean ownMarginsCollapseWithChildrenStart =
             verticalMarginsAreCollapsible.start &&
+            !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
             style.getPosition() == TaffyPosition.RELATIVE &&
@@ -128,6 +139,7 @@ public class BlockComputer {
 
         boolean ownMarginsCollapseWithChildrenEnd =
             verticalMarginsAreCollapsible.end &&
+            !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
             style.getPosition() == TaffyPosition.RELATIVE &&
@@ -138,6 +150,10 @@ public class BlockComputer {
         TaffyLine<Boolean> ownMarginsCollapseWithChildren =
             new TaffyLine<>(ownMarginsCollapseWithChildrenStart, ownMarginsCollapseWithChildrenEnd);
 
+        // `!style.isBlock()` is the "does this box participate in its parent's block formatting
+        // context?" test, not "is this block layout?": flow-root is laid out by this class but is
+        // NOT part of the parent's BFC, so its own margins never collapse through it (upstream
+        // #997 keeps is_block false for flow-root for exactly this reason). BK-17.
         boolean hasStylesPreventingBeingCollapsedThrough =
             !style.isBlock() ||
             style.getOverflow().x.isScrollContainer() ||
@@ -147,9 +163,7 @@ public class BlockComputer {
             padding.top > 0 ||
             padding.bottom > 0 ||
             border.top > 0 ||
-            border.bottom > 0 ||
-            (!Float.isNaN(sizeStyle.height) && sizeStyle.height > 0) ||
-            (!Float.isNaN(minSize.height) && minSize.height > 0);
+            border.bottom > 0;
 
         FloatSize clampedStyleSize = inputs.sizingMode() == SizingMode.INHERENT_SIZE
                                      ? maybeClamp(sizeStyle, minSize, maxSize)
@@ -233,6 +247,26 @@ public class BlockComputer {
             return LayoutOutput.fromOuterSize(new FloatSize(containerOuterWidth, styledBasedKnownDimensions.height));
         }
 
+        // The percentage resolution height is this container's height basis for its children:
+        // their percentage heights and percentage vertical insets only resolve when it is
+        // definite. Per CSS 2 §10.5 an indefinite height makes those percentages behave as
+        // `auto`, so `min-height` alone is not a basis — when the style height is auto the
+        // answer stays "no basis" even if min-height is set (upstream #1122 removed the
+        // unconditional `.or(min_height)` fallback; `maybeMax` has the same Option semantics:
+        // (None, Some) => None). Under ContentSize the container's own height/min-height are
+        // ignored, so they cannot be a percentage basis either.
+        // BK-08 / upstream #1122 (f1a03062).
+        float containerPercentageResolutionHeight;
+        if (!Float.isNaN(knownDimensions.height)) {
+            // A height resolved by the parent (e.g. a definitively sized containing block) is
+            // the basis, matching upstream's known_dimensions_are_definite gate.
+            containerPercentageResolutionHeight = knownDimensions.height;
+        } else if (inputs.sizingMode() == SizingMode.INHERENT_SIZE) {
+            containerPercentageResolutionHeight = TaffyMath.maybeMax(sizeStyle.height, minSize.height);
+        } else {
+            containerPercentageResolutionHeight = NaN;
+        }
+
         // Perform final layout on children
         //
         // Percentage padding and borders resolve against the *containing block's* width
@@ -254,6 +288,7 @@ public class BlockComputer {
             items,
             runMode,
             containerOuterWidth,
+            containerPercentageResolutionHeight,
             contentBoxInset,
             style.getTextAlign(),
             layoutComputer.resolveDirection(node),
@@ -290,8 +325,17 @@ public class BlockComputer {
         boolean ownBottomMarginCollapsesWithChildren =
             ownMarginsCollapseWithChildren.end && !heightConstrainedByMinHeight;
 
-        // Determine whether this node can be collapsed through
+        // Determine whether this node can be collapsed through.
+        //
+        // CSS2 §8.3.1: a box's top and bottom margins collapse through it only if its *used*
+        // height is zero. `height`/`min-height`/`max-height` are therefore judged by the height
+        // they resolve to — `height: 1px; max-height: 0` collapses, `min-height: 1%` under an
+        // auto-height parent collapses — rather than by their computed values, and a zero used
+        // height with block-start/end border or padding still does not collapse (those are in
+        // hasStylesPreventingBeingCollapsedThrough).
+        // BK-09 / upstream #1188 (c17b313c).
         boolean canBeCollapsedThrough = !hasStylesPreventingBeingCollapsedThrough &&
+                                        finalOuterSize.height == 0 &&
                                         layoutResult.allChildrenCanBeCollapsedThrough;
 
         // Compute output margin sets
@@ -499,14 +543,23 @@ public class BlockComputer {
         List<BlockItem> items,
         RunMode runMode,
         float containerOuterWidth,
+        float containerPercentageResolutionHeight,
         FloatRect contentBoxInset,
         TextAlign textAlign,
         TaffyDirection direction,
         TaffyLine<Boolean> ownMarginsCollapseWithChildren) {
 
         TaffyTree tree = layoutComputer.getTree();
+        // The containing block of an in-flow child is this container's *content box*: its
+        // percentage widths resolve against the inner width, and its percentage heights and
+        // vertical insets against the inner height. The height basis is only passed on when it
+        // is definite; a percentage basis is a content box, so the resolved vertical content box
+        // inset is subtracted from the border box basis. NaN (indefinite) stays NaN.
+        // BK-08 / upstream #866 (25759dad).
         float containerInnerWidth = containerOuterWidth - contentBoxInset.left - contentBoxInset.right;
-        FloatSize parentSize = new FloatSize(containerOuterWidth, NaN);
+        float childPercentageResolutionHeight = TaffyMath.maybeSub(
+            containerPercentageResolutionHeight, contentBoxInset.top + contentBoxInset.bottom);
+        FloatSize parentSize = new FloatSize(containerInnerWidth, childPercentageResolutionHeight);
         // Vertical available space in block flow is indefinite, which this port represents as
         // MaxContent. Passing MinContent made every descendant grid believe it was being sized
         // under a min-content constraint, in which the track maximisation step has zero free
@@ -605,11 +658,13 @@ public class BlockComputer {
                 Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
             );
 
-            // Resolve item inset
+            // Resolve item inset. Horizontal insets resolve against the containing block width;
+            // vertical insets against its percentage resolution height (not a hard-coded zero
+            // basis, which made e.g. `top: 50%` a no-op). BK-08 / upstream #1122 (f1a03062).
             float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
             float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
-            float insetTop = item.inset.top.maybeResolve(0f);
-            float insetBottom = item.inset.bottom.maybeResolve(0f);
+            float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
+            float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
             float insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
             float insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
 

@@ -1051,6 +1051,7 @@ public class TaffyTree {
         
         switch (display) {
             case BLOCK: return "BLOCK";
+            case FLOW_ROOT: return "FLOW-ROOT";
             case FLEX:
                 FlexDirection dir = data.getStyle().getFlexDirection();
                 if (dir == FlexDirection.ROW ||
