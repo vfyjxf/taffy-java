@@ -49,10 +49,6 @@ public class BlockP3Test {
         return new TaffySize<>(width, height);
     }
 
-    private static FloatRect ltrb(float left, float right, float top, float bottom) {
-        return new FloatRect(left, right, top, bottom);
-    }
-
     private static void assertSize(Layout layout, float width, float height, String message) {
         assertEquals(width, layout.size().width, EPSILON, message + " width");
         assertEquals(height, layout.size().height, EPSILON, message + " height");
@@ -273,5 +269,265 @@ public class BlockP3Test {
 
         assertSize(tree.getLayout(root), 100f, 80f, "root");
         assertLocation(tree.getLayout(child), 0f, 0f, "child");
+    }
+
+    // === BK-09: margin collapse-through is decided by the used outer height ===
+
+    /**
+     * Upstream fixture {@code block_margin_y_collapse_through_height_clamped_by_max_height}
+     * (#1188): a box whose declared {@code height} is 10px but whose used height is 0 (clamped by
+     * {@code max-height: 0}) still collapses through. Judging this by the computed height blocked
+     * the collapse and pushed the following sibling 10px down.
+     */
+    @Test
+    @DisplayName("BK-09: max-height clamping the used height to 0 still collapses through")
+    void usedHeightClampedToZeroCollapsesThrough() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle firstStyle = blockStyle();
+        firstStyle.position = TaffyPosition.RELATIVE;
+        firstStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        firstStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10f));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle emptyStyle = blockStyle();
+        emptyStyle.position = TaffyPosition.RELATIVE;
+        NodeId empty = tree.newLeaf(emptyStyle);
+
+        TaffyStyle middleStyle = blockStyle();
+        middleStyle.position = TaffyPosition.RELATIVE;
+        middleStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        middleStyle.maxSize = size(TaffyDimension.AUTO, TaffyDimension.length(0f));
+        middleStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        NodeId middle = tree.newWithChildren(middleStyle, empty);
+
+        TaffyStyle lastStyle = blockStyle();
+        lastStyle.position = TaffyPosition.RELATIVE;
+        lastStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        lastStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO);
+        NodeId last = tree.newLeaf(lastStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, first, middle, last);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 30f, "root");
+        assertLocation(tree.getLayout(first), 0f, 0f, "first");
+        assertSize(tree.getLayout(first), 50f, 10f, "first");
+        // The collapsed-through box sits on top of the second row and has a used height of zero
+        assertLocation(tree.getLayout(middle), 0f, 20f, "middle");
+        assertSize(tree.getLayout(middle), 50f, 0f, "middle");
+        assertLocation(tree.getLayout(empty), 0f, 0f, "empty");
+        assertSize(tree.getLayout(empty), 50f, 0f, "empty");
+        // The 10px margins on both sides of the collapsed-through box overlap this sibling's own
+        assertLocation(tree.getLayout(last), 0f, 20f, "last");
+        assertSize(tree.getLayout(last), 50f, 10f, "last");
+    }
+
+    /**
+     * Upstream fixture {@code block_margin_y_collapse_through_percentage_min_height_indefinite_parent}
+     * (#1188): a percentage {@code min-height} under an auto-height parent has no resolution basis,
+     * so the used height stays 0 and the box collapses through.
+     */
+    @Test
+    @DisplayName("BK-09: an unresolvable percentage min-height does not block collapse-through")
+    void percentageMinHeightWithIndefiniteParentCollapsesThrough() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle firstStyle = blockStyle();
+        firstStyle.position = TaffyPosition.RELATIVE;
+        firstStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        firstStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10f));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle emptyStyle = blockStyle();
+        emptyStyle.position = TaffyPosition.RELATIVE;
+        NodeId empty = tree.newLeaf(emptyStyle);
+
+        TaffyStyle middleStyle = blockStyle();
+        middleStyle.position = TaffyPosition.RELATIVE;
+        middleStyle.minSize = size(TaffyDimension.AUTO, TaffyDimension.percent(0.1f));
+        middleStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        NodeId middle = tree.newWithChildren(middleStyle, empty);
+
+        TaffyStyle lastStyle = blockStyle();
+        lastStyle.position = TaffyPosition.RELATIVE;
+        lastStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        lastStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO);
+        NodeId last = tree.newLeaf(lastStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, first, middle, last);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 30f, "root");
+        assertLocation(tree.getLayout(middle), 0f, 20f, "middle");
+        assertSize(tree.getLayout(middle), 50f, 0f, "middle");
+        assertLocation(tree.getLayout(last), 0f, 20f, "last");
+    }
+
+    /**
+     * Upstream fixture {@code block_margin_y_collapse_through_blocked_by_min_height} (#1188
+     * counter-example): {@code min-height: 1px} makes the used height non-zero, so the box does
+     * not collapse through and its sibling follows below its 1px box.
+     */
+    @Test
+    @DisplayName("BK-09: a non-zero used height from min-height still blocks collapse-through")
+    void minHeightKeepingUsedHeightNonZeroBlocksCollapseThrough() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle firstStyle = blockStyle();
+        firstStyle.position = TaffyPosition.RELATIVE;
+        firstStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        firstStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10f));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle middleStyle = blockStyle();
+        middleStyle.position = TaffyPosition.RELATIVE;
+        middleStyle.minSize = size(TaffyDimension.AUTO, TaffyDimension.length(1f));
+        middleStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        NodeId middle = tree.newLeaf(middleStyle);
+
+        TaffyStyle lastStyle = blockStyle();
+        lastStyle.position = TaffyPosition.RELATIVE;
+        lastStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        lastStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO);
+        NodeId last = tree.newLeaf(lastStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, first, middle, last);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 41f, "root");
+        assertLocation(tree.getLayout(middle), 0f, 20f, "middle");
+        assertSize(tree.getLayout(middle), 50f, 1f, "middle");
+        // 20 + 1 (middle) + max(10, 10) margins
+        assertLocation(tree.getLayout(last), 0f, 31f, "last");
+        assertSize(tree.getLayout(last), 50f, 10f, "last");
+    }
+
+    /**
+     * Counter-example from #1188: a zero used height does not collapse the margins through a box
+     * that has block-start/end border or padding (only the block edges matter). The box keeps its
+     * padding/border height and its margins stay separate from its siblings'.
+     */
+    @Test
+    @DisplayName("BK-09: border or padding keeps a zero-height box from collapsing through")
+    void zeroHeightWithBorderOrPaddingDoesNotCollapseThrough() {
+        assertZeroHeightBoxWithEdgeInsetDoesNotCollapseThrough(true);
+        assertZeroHeightBoxWithEdgeInsetDoesNotCollapseThrough(false);
+    }
+
+    private static void assertZeroHeightBoxWithEdgeInsetDoesNotCollapseThrough(boolean useBorder) {
+        String kind = useBorder ? "border" : "padding";
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle firstStyle = blockStyle();
+        firstStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle middleStyle = blockStyle();
+        middleStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(0f));
+        middleStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        if (useBorder) {
+            middleStyle.border = new TaffyRect<>(
+                LengthPercentage.ZERO, LengthPercentage.ZERO,
+                LengthPercentage.ZERO, LengthPercentage.length(10f));
+        } else {
+            middleStyle.padding = new TaffyRect<>(
+                LengthPercentage.ZERO, LengthPercentage.ZERO,
+                LengthPercentage.ZERO, LengthPercentage.length(10f));
+        }
+        NodeId middle = tree.newLeaf(middleStyle);
+
+        TaffyStyle lastStyle = blockStyle();
+        lastStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        lastStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO);
+        NodeId last = tree.newLeaf(lastStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, first, middle, last);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // 10 (first) + 10 (own top margin; the root does not collapse with its children)
+        assertLocation(tree.getLayout(middle), 0f, 20f, kind);
+        // used height = the 10px block-end inset, because the content height is zero
+        assertSize(tree.getLayout(middle), 50f, 10f, kind);
+        // 20 + 10 (used height) + max(10, 10) adjoining margins
+        assertLocation(tree.getLayout(last), 0f, 40f, kind);
+        assertSize(tree.getLayout(root), 50f, 50f, kind + " root");
+    }
+
+    /**
+     * Control case for #1188: a box whose used height is zero (explicit {@code height: 0}) and
+     * which has no border or padding still collapses through, so the margins around it overlap
+     * and the following sibling moves up.
+     */
+    @Test
+    @DisplayName("BK-09: a plain zero-height box collapses through")
+    void plainZeroHeightBoxCollapsesThrough() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle firstStyle = blockStyle();
+        firstStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        firstStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10f));
+        NodeId first = tree.newLeaf(firstStyle);
+
+        TaffyStyle middleStyle = blockStyle();
+        middleStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(0f));
+        middleStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        NodeId middle = tree.newLeaf(middleStyle);
+
+        TaffyStyle lastStyle = blockStyle();
+        lastStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        lastStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO);
+        NodeId last = tree.newLeaf(lastStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, first, middle, last);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 30f, "root");
+        assertLocation(tree.getLayout(middle), 0f, 20f, "middle");
+        assertSize(tree.getLayout(middle), 50f, 0f, "middle");
+        assertLocation(tree.getLayout(last), 0f, 20f, "last");
     }
 }

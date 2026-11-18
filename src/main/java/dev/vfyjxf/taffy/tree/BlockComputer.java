@@ -147,9 +147,7 @@ public class BlockComputer {
             padding.top > 0 ||
             padding.bottom > 0 ||
             border.top > 0 ||
-            border.bottom > 0 ||
-            (!Float.isNaN(sizeStyle.height) && sizeStyle.height > 0) ||
-            (!Float.isNaN(minSize.height) && minSize.height > 0);
+            border.bottom > 0;
 
         FloatSize clampedStyleSize = inputs.sizingMode() == SizingMode.INHERENT_SIZE
                                      ? maybeClamp(sizeStyle, minSize, maxSize)
@@ -311,8 +309,17 @@ public class BlockComputer {
         boolean ownBottomMarginCollapsesWithChildren =
             ownMarginsCollapseWithChildren.end && !heightConstrainedByMinHeight;
 
-        // Determine whether this node can be collapsed through
+        // Determine whether this node can be collapsed through.
+        //
+        // CSS2 §8.3.1: a box's top and bottom margins collapse through it only if its *used*
+        // height is zero. `height`/`min-height`/`max-height` are therefore judged by the height
+        // they resolve to — `height: 1px; max-height: 0` collapses, `min-height: 1%` under an
+        // auto-height parent collapses — rather than by their computed values, and a zero used
+        // height with block-start/end border or padding still does not collapse (those are in
+        // hasStylesPreventingBeingCollapsedThrough).
+        // BK-09 / upstream #1188 (c17b313c).
         boolean canBeCollapsedThrough = !hasStylesPreventingBeingCollapsedThrough &&
+                                        finalOuterSize.height == 0 &&
                                         layoutResult.allChildrenCanBeCollapsedThrough;
 
         // Compute output margin sets
