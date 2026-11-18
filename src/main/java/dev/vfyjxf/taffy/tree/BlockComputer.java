@@ -233,6 +233,26 @@ public class BlockComputer {
             return LayoutOutput.fromOuterSize(new FloatSize(containerOuterWidth, styledBasedKnownDimensions.height));
         }
 
+        // The percentage resolution height is this container's height basis for its children:
+        // their percentage heights and percentage vertical insets only resolve when it is
+        // definite. Per CSS 2 §10.5 an indefinite height makes those percentages behave as
+        // `auto`, so `min-height` alone is not a basis — when the style height is auto the
+        // answer stays "no basis" even if min-height is set (upstream #1122 removed the
+        // unconditional `.or(min_height)` fallback; `maybeMax` has the same Option semantics:
+        // (None, Some) => None). Under ContentSize the container's own height/min-height are
+        // ignored, so they cannot be a percentage basis either.
+        // BK-08 / upstream #1122 (f1a03062).
+        float containerPercentageResolutionHeight;
+        if (!Float.isNaN(knownDimensions.height)) {
+            // A height resolved by the parent (e.g. a definitively sized containing block) is
+            // the basis, matching upstream's known_dimensions_are_definite gate.
+            containerPercentageResolutionHeight = knownDimensions.height;
+        } else if (inputs.sizingMode() == SizingMode.INHERENT_SIZE) {
+            containerPercentageResolutionHeight = TaffyMath.maybeMax(sizeStyle.height, minSize.height);
+        } else {
+            containerPercentageResolutionHeight = NaN;
+        }
+
         // Perform final layout on children
         //
         // Percentage padding and borders resolve against the *containing block's* width
@@ -254,6 +274,7 @@ public class BlockComputer {
             items,
             runMode,
             containerOuterWidth,
+            containerPercentageResolutionHeight,
             contentBoxInset,
             style.getTextAlign(),
             layoutComputer.resolveDirection(node),
@@ -499,14 +520,23 @@ public class BlockComputer {
         List<BlockItem> items,
         RunMode runMode,
         float containerOuterWidth,
+        float containerPercentageResolutionHeight,
         FloatRect contentBoxInset,
         TextAlign textAlign,
         TaffyDirection direction,
         TaffyLine<Boolean> ownMarginsCollapseWithChildren) {
 
         TaffyTree tree = layoutComputer.getTree();
+        // The containing block of an in-flow child is this container's *content box*: its
+        // percentage widths resolve against the inner width, and its percentage heights and
+        // vertical insets against the inner height. The height basis is only passed on when it
+        // is definite; a percentage basis is a content box, so the resolved vertical content box
+        // inset is subtracted from the border box basis. NaN (indefinite) stays NaN.
+        // BK-08 / upstream #866 (25759dad).
         float containerInnerWidth = containerOuterWidth - contentBoxInset.left - contentBoxInset.right;
-        FloatSize parentSize = new FloatSize(containerOuterWidth, NaN);
+        float childPercentageResolutionHeight = TaffyMath.maybeSub(
+            containerPercentageResolutionHeight, contentBoxInset.top + contentBoxInset.bottom);
+        FloatSize parentSize = new FloatSize(containerInnerWidth, childPercentageResolutionHeight);
         // Vertical available space in block flow is indefinite, which this port represents as
         // MaxContent. Passing MinContent made every descendant grid believe it was being sized
         // under a min-content constraint, in which the track maximisation step has zero free
@@ -605,11 +635,13 @@ public class BlockComputer {
                 Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
             );
 
-            // Resolve item inset
+            // Resolve item inset. Horizontal insets resolve against the containing block width;
+            // vertical insets against its percentage resolution height (not a hard-coded zero
+            // basis, which made e.g. `top: 50%` a no-op). BK-08 / upstream #1122 (f1a03062).
             float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
             float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
-            float insetTop = item.inset.top.maybeResolve(0f);
-            float insetBottom = item.inset.bottom.maybeResolve(0f);
+            float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
+            float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
             float insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
             float insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
 
