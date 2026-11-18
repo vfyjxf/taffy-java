@@ -44,6 +44,18 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
   instructions in `gentest/README.md`.
 
+### P3 additions (partial)
+
+- `TaffyDisplay.FLOW_ROOT` (appended enum constant) with block-algorithm dispatch and
+  the margin-isolation part of a new block formatting context. Float containment and
+  float avoidance need the float layout work (F7) and are not implemented yet.
+- `TaffyStyle.itemIsCompressibleReplaced`, `isCompressibleReplaced()` and
+  `setCompressibleReplaced()`; `isCompressibleReplaced()` is
+  `itemIsReplaced || itemIsCompressibleReplaced`, so the default is unchanged. The
+  grid minimum-contribution cap now consults this getter. The #1351 second half
+  (`%max` on form controls) and normal-alignment replaced behaviour are still TODO
+  (T17/T4/S10).
+
 ### Fixed
 
 - **PA-01 (grid)** — Absolutely positioned children now resolve named grid
@@ -102,6 +114,12 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   [docs/migration-1.2.md](docs/migration-1.2.md) explains how to compare your
   output against it. Downstream pixel/snapshot tests may need updated
   expectations.
+- **P3 batch (partial)**: block children resolve percentage padding/inset and
+  percentage heights against the content box (a definite height now provides the
+  basis; `min-height` alone does not); margin collapse-through is decided by the
+  used outer height; flex items subtract their margins from available space and
+  auto-cross-margin items no longer participate in baseline alignment;
+  `display: flow-root` no longer collapses its margins with its children.
 - This batch does not change default layout options.
 
 ### API

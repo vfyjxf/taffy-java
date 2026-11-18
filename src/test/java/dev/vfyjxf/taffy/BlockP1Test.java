@@ -322,9 +322,10 @@ public class BlockP1Test {
      * ({@code layout_margin_excludes_collapsed_margins}, #1287): margin collapsing changes where
      * boxes are placed, but {@code Layout.margin} is each box's own margin.
      *
-     * <p>The upstream test uses a {@code display: flow-root} root (which this port does not have
-     * yet); a block root behaves identically here because the root's own margins are marked
-     * non-collapsible by the layout entry point.</p>
+     * <p>The upstream test uses a {@code display: flow-root} root; this port now has
+     * {@code FLOW_ROOT}, but a block root is kept here because the root's own margins are marked
+     * non-collapsible by the layout entry point, so the expected geometry is identical (BK-17
+     * covers the FLOW_ROOT-vs-BLOCK difference separately).</p>
      */
     @Test
     @DisplayName("BK-10: Layout.margin reports each in-flow child's own margins")

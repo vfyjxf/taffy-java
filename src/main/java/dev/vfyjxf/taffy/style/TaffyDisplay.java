@@ -18,8 +18,9 @@ public enum TaffyDisplay {
 
     /**
      * The children will follow the block layout algorithm, and the node establishes a new block
-     * formatting context: its own margins do not collapse with its children's, and it contains its
-     * own floats and avoids external ones.
+     * formatting context: its own margins do not collapse with its children's, and (once CSS float
+     * layout is ported) it will contain its own floats and avoid external ones. This port currently
+     * implements the margin-isolation part; float containment/avoidance is part of F1/P7.
      *
      * <p>Appended after {@link #NONE} for compatibility (upstream taffy #997, BK-17). Note that
      * {@link TaffyStyle#isBlock()} deliberately stays {@code false} for this value: upstream

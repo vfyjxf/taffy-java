@@ -67,7 +67,12 @@ snapshot.
 - **P2 (done, tag `p2-complete`)**: `writeTree`/transpose helpers and the
   opt-in generated-test freshness gate (with a method-level allowlist for the
   two BK-13 hand edits).
-- **Next**: P3 (block semantics/baselines) per the reviewed work list.
+- **P3 (partial)**: ST-05 replaced split, BK-08/09/17 and FL-10/12 are merged;
+  `display: flow-root` currently implements the margin-isolation part (float
+  containment awaits F7). Remaining P3: CR-07 baselines, BK-12/14 and
+  FL-11/13/14 (baseline helper dependencies).
+- **Next**: finish P3's baseline/alignment remainder, then P4 (scrollable overflow)
+  and P6/P7.
 
 The detailed, reviewed change list is produced from the commit ranges in
 `Data/taffy-java/analysis/` and is not checked into this repository.
