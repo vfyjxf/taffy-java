@@ -174,7 +174,12 @@ public class LayoutComputer {
     }
 
     /**
-     * Performs layout for a child node.
+     * Performs layout for a child node (final layout).
+     *
+     * <p>Equivalent to {@link #performChildLayout(NodeId, FloatSize, FloatSize, TaffySize, SizingMode,
+     * TaffyLine, RunMode)} with {@link RunMode#PERFORM_LAYOUT}: the child is laid out and its
+     * subtree's layout state is written to the tree. Kept as the compatibility signature for
+     * callers that always want a final layout.</p>
      */
     public LayoutOutput performChildLayout(
         NodeId node,
@@ -184,12 +189,37 @@ public class LayoutComputer {
         SizingMode sizingMode,
         TaffyLine<Boolean> verticalMarginsAreCollapsible) {
 
+        return performChildLayout(node, knownDimensions, parentSize, availableSpace, sizingMode,
+            verticalMarginsAreCollapsible, RunMode.PERFORM_LAYOUT);
+    }
+
+    /**
+     * Performs layout for a child node using the parent's {@link RunMode} (BK-02, upstream #972).
+     *
+     * <p>A layout algorithm that is itself only being measured must hand
+     * {@link RunMode#COMPUTE_SIZE} down to its children, otherwise the children perform a real
+     * layout and write layout state to the tree during a measurement (defeating BK-01) and skip
+     * the margin-collapse reporting that a vertical {@code ComputeSize} pass is expected to
+     * return (BK-03). Passing {@link RunMode#PERFORM_LAYOUT} is exactly the behaviour of the
+     * legacy overload.</p>
+     *
+     * @param runMode the parent's run mode, propagated to the child
+     */
+    public LayoutOutput performChildLayout(
+        NodeId node,
+        FloatSize knownDimensions,
+        FloatSize parentSize,
+        TaffySize<AvailableSpace> availableSpace,
+        SizingMode sizingMode,
+        TaffyLine<Boolean> verticalMarginsAreCollapsible,
+        RunMode runMode) {
+
         // TODO(CR-01): upstream taffy passes the axis that the caller actually needs (block layout
         // even has a single-axis early-return). This port has no enabled RequestedAxis caller yet
         // (FL-25), so every layout pass requests BOTH. LayoutCache already keys on the other
         // inputs; the axis is the remaining unreachable part of CR-01.
         LayoutInput inputs = new LayoutInput(
-            RunMode.PERFORM_LAYOUT,
+            runMode,
             sizingMode,
             RequestedAxis.BOTH,
             knownDimensions,

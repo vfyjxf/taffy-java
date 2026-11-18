@@ -228,6 +228,7 @@ public class BlockComputer {
 
         InFlowLayoutResult layoutResult = performFinalLayoutOnChildren(
             items,
+            runMode,
             containerOuterWidth,
             contentBoxInset,
             style.getTextAlign(),
@@ -455,6 +456,7 @@ public class BlockComputer {
 
     private InFlowLayoutResult performFinalLayoutOnChildren(
         List<BlockItem> items,
+        RunMode runMode,
         float containerOuterWidth,
         FloatRect contentBoxInset,
         TextAlign textAlign,
@@ -516,6 +518,9 @@ public class BlockComputer {
                 );
             }
 
+            // The parent's run mode is propagated: measuring this container must not make its
+            // children write layout state, and a vertical ComputeSize pass needs the children's
+            // margin-collapse outputs. BK-02 / upstream #972.
             LayoutOutput itemOutput = layoutComputer.performChildLayout(
                 item.nodeId,
                 knownDimensions,
@@ -525,7 +530,8 @@ public class BlockComputer {
                     availableSpace.height
                 ),
                 SizingMode.INHERENT_SIZE,
-                new TaffyLine<>(true, true)
+                new TaffyLine<>(true, true),
+                runMode
             );
 
             FloatSize finalSize = itemOutput.size();

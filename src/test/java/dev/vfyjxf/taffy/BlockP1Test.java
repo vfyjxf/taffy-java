@@ -421,6 +421,70 @@ public class BlockP1Test {
             "measuring must not write the container layout");
     }
 
+    // === BK-02: a measuring block passes ComputeSize to its in-flow children ===
+
+    /**
+     * Upstream #972: a layout algorithm that is itself being measured must pass
+     * {@code RunMode::ComputeSize} down to its children. Otherwise the children perform a real
+     * layout and commit layout state to the tree during a measurement pass (defeating BK-01), and
+     * they skip the margin-collapse reporting a vertical ComputeSize pass exists to provide
+     * (BK-03).
+     *
+     * <p>The probe uses a narrower known width (100 instead of the tree's 200) so the probe's
+     * computed child layouts differ from the committed ones: without the run-mode propagation the
+     * nested block container writes those narrower layouts during the measurement.</p>
+     */
+    @Test
+    @DisplayName("BK-02: a measured block lays its in-flow children out in ComputeSize mode")
+    void measurePassPropagatesRunModeToInFlowChildren() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle leafStyle = blockStyle();
+        leafStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        leafStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(20f));
+        NodeId leaf = tree.newLeaf(leafStyle);
+
+        TaffyStyle innerStyle = blockStyle();
+        NodeId inner = tree.newWithChildren(innerStyle, leaf);
+
+        TaffyStyle outerStyle = blockStyle();
+        outerStyle.padding = TaffyRect.all(LengthPercentage.length(5f));
+        NodeId outer = tree.newWithChildren(outerStyle, inner);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, outer);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // 5 (padding top) + 10 (margins) + 10 (leaf) + 20 (margins) + 5 (padding bottom)
+        assertSize(tree.getLayout(outer), 200f, 50f, "outer");
+        assertEquals(190f, tree.getLayout(inner).size().width, EPSILON, "inner is stretched");
+
+        Layout outerBefore = tree.getUnroundedLayout(outer);
+        Layout innerBefore = tree.getUnroundedLayout(inner);
+        Layout leafBefore = tree.getUnroundedLayout(leaf);
+        assertEquals(190f, leafBefore.size().width, EPSILON, "leaf is stretched by the final layout");
+
+        // Measure the outer block with a *narrower* known width, as an intrinsic-size consumer
+        // would: the probe's inner layouts would be 90px wide instead of the committed 190px.
+        LayoutComputer computer = new LayoutComputer(tree, (dev.vfyjxf.taffy.util.MeasureFunc) null);
+        computer.measureChildSize(
+            outer,
+            new FloatSize(100f, Float.NaN),
+            new FloatSize(200f, Float.NaN),
+            new TaffySize<>(AvailableSpace.definite(100f), AvailableSpace.MAX_CONTENT),
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+
+        assertEquals(outerBefore, tree.getUnroundedLayout(outer), "outer layout must not be written");
+        assertEquals(innerBefore, tree.getUnroundedLayout(inner), "inner layout must not be written");
+        assertEquals(leafBefore, tree.getUnroundedLayout(leaf), "leaf layout must not be written");
+    }
+
     // === BK-07: abspos auto margins resolve against the used (clamped) size ===
 
     /**
