@@ -448,6 +448,9 @@ public class GridComputer {
                 // Check if we should stretch
                 boolean leftMarginAuto = rawMargin != null && rawMargin.left != null && rawMargin.left.isAuto();
                 boolean rightMarginAuto = rawMargin != null && rawMargin.right != null && rawMargin.right.isAuto();
+                // TODO(S19): upstream #1281 treats `normal` alignment as "stretch unless replaced";
+                // Java normalizes AUTO to STRETCH before this point (S10), so replaced items still
+                // stretch here.
                 if (!leftMarginAuto && !rightMarginAuto && justifySelf == AlignItems.STRETCH) {
                     width = gridAreaMinusMargins.width;
                 }
@@ -1467,7 +1470,12 @@ public class GridComputer {
             item.inset = childStyle.getInset();
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
-            item.isCompressibleReplaced = childStyle.getItemIsReplaced();
+            // TODO(T17/T4): upstream #1351 resolves the max-size basis of the minimum contribution
+            // against zero only for replaced elements; the cap below still applies to every
+            // compressible replaced item. Wiring that split needs the "definite preferred size
+            // clamped by min/max" branch from #1022/#1282, which the minimum contribution does not
+            // have yet.
+            item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
 
             // Alignment for track sizing: use child's preference, or parent's default, or STRETCH
             // This merged value is used during track sizing (computeItemKnownDimensions).
