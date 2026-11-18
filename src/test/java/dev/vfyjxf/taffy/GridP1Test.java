@@ -3,6 +3,7 @@ package dev.vfyjxf.taffy;
 import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.GridPlacement;
+import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.GridTemplateComponent;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
@@ -317,6 +318,211 @@ class GridP1Test {
         assertEquals(40.0f, tree.getLayout(outer).size().width, EPSILON, "outer grid width");
         assertEquals(30.0f, tree.getLayout(outer).size().height, EPSILON, "outer grid height");
         assertEquals(20.0f, tree.getLayout(leaf).size().height, EPSILON, "inner grid item height");
+    }
+
+    // ------------------------------------------------------------------
+    // GR-14 (#1078) + OF-08 (#1071/#1073/#1266): absolute grid areas resolve to track edges
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("GR-14: an empty grid positions its single line by content alignment")
+    void emptyGridLineIsPositionedByContentAlignment() {
+        // Upstream grid_absolute_collapsed_auto_fit_tracks_rtl uses this behaviour for an all-collapsed
+        // grid: the grid still contains one line per axis, positioned by justify-content/align-content.
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200.0f), TaffyDimension.length(100.0f));
+        rootStyle.justifyContent = dev.vfyjxf.taffy.style.AlignContent.CENTER;
+        rootStyle.alignContent = dev.vfyjxf.taffy.style.AlignContent.END;
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.size = new TaffySize<>(TaffyDimension.length(10.0f), TaffyDimension.length(10.0f));
+        childStyle.gridColumn = new TaffyLine<>(GridPlacement.line(1), GridPlacement.auto());
+        childStyle.gridRow = new TaffyLine<>(GridPlacement.line(1), GridPlacement.auto());
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // The column axis has no tracks at all: justify-content: center puts its single line at 200 / 2.
+        // Residual: this port always materialises one implicit row (maxSpan = 1 in computeRowCounts)
+        // which stretches to the 100px content box, so the block axis never reaches the empty-axis
+        // branch; auto-fit rows are not collapsed either (see the GR-14 report).
+        assertRect(tree.getLayout(child), 100.0f, 0.0f, 10.0f, 10.0f, "empty grid abspos child");
+    }
+
+    @Test
+    @DisplayName("GR-14: collapsed auto-fit columns align absolute grid lines (LTR and RTL)")
+    void collapsedAutoFitColumnsAreAligned() {
+        assertCollapsedAutoFitLine(true, dev.vfyjxf.taffy.style.AlignContent.CENTER, 250.0f);
+        // In RTL the inline-start edge is the right content edge.
+        assertCollapsedAutoFitLine(false, dev.vfyjxf.taffy.style.AlignContent.START, 500.0f);
+        assertCollapsedAutoFitLine(false, dev.vfyjxf.taffy.style.AlignContent.END, 0.0f);
+    }
+
+    private static void assertCollapsedAutoFitLine(boolean ltr, dev.vfyjxf.taffy.style.AlignContent justifyContent,
+                                                   float expectedX) {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.direction = ltr ? dev.vfyjxf.taffy.style.TaffyDirection.LTR
+                                  : dev.vfyjxf.taffy.style.TaffyDirection.RTL;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(500.0f), TaffyDimension.length(100.0f));
+        rootStyle.justifyContent = justifyContent;
+        rootStyle.gridTemplateColumnsWithRepeat = List.of(
+            GridTemplateComponent.autoFit(TrackSizingFunction.fixed(100.0f)));
+        rootStyle.gridTemplateRows = List.of(TrackSizingFunction.fixed(100.0f));
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.gridColumn = new TaffyLine<>(GridPlacement.line(1), GridPlacement.auto());
+        childStyle.gridRow = new TaffyLine<>(GridPlacement.line(1), GridPlacement.auto());
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // Every auto-fit track is collapsed, so the grid is a single line positioned by content
+        // alignment; the abspos child resolves its start edge to it.
+        assertEquals(expectedX, tree.getLayout(child).location().x, EPSILON,
+            "collapsed auto-fit grid line x (ltr=" + ltr + ", justify-content=" + justifyContent + ")");
+    }
+
+    @Test
+    @DisplayName("OF-08: abspos area spans resolve to track edges across gaps")
+    void absoluteGridAreaSpansAcrossGaps() {
+        // Upstream fixture grid_absolute_gaps_spans.
+        TaffyTree tree = new TaffyTree();
+        NodeId root = newGapsContainer(tree, dev.vfyjxf.taffy.style.TaffyDirection.LTR);
+
+        NodeId child = newAbsoluteGapsChild(tree, GridPlacement.line(2), GridPlacement.line(4),
+            GridPlacement.line(1), GridPlacement.line(3));
+
+        tree.addChild(root, child);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // First spanned column starts at border 5 + padding 15 + track 40 + gap 50 = 110.
+        assertRect(tree.getLayout(child), 110.0f, 20.0f, 0.0f, 0.0f, "gaps span child");
+    }
+
+    @Test
+    @DisplayName("OF-08: a line used as an end edge resolves to the end of the preceding track")
+    void absoluteGridAreaEndLines() {
+        // Upstream fixtures grid_absolute_gaps_end_lines / _rtl.
+        TaffyTree ltrTree = new TaffyTree();
+        NodeId ltrRoot = newGapsContainer(ltrTree, dev.vfyjxf.taffy.style.TaffyDirection.LTR);
+        NodeId ltrChild = newAbsoluteGapsChild(ltrTree, GridPlacement.auto(), GridPlacement.line(2),
+            GridPlacement.auto(), GridPlacement.line(2));
+        ltrTree.addChild(ltrRoot, ltrChild);
+        ltrTree.computeLayout(ltrRoot, TaffySize.maxContent());
+        assertRect(ltrTree.getLayout(ltrChild), 5.0f, 5.0f, 0.0f, 0.0f, "LTR end lines child");
+
+        TaffyTree rtlTree = new TaffyTree();
+        NodeId rtlRoot = newGapsContainer(rtlTree, dev.vfyjxf.taffy.style.TaffyDirection.RTL);
+        NodeId rtlChild = newAbsoluteGapsChild(rtlTree, GridPlacement.auto(), GridPlacement.line(2),
+            GridPlacement.auto(), GridPlacement.line(2));
+        rtlTree.addChild(rtlRoot, rtlChild);
+        rtlTree.computeLayout(rtlRoot, TaffySize.maxContent());
+        assertRect(rtlTree.getLayout(rtlChild), 435.0f, 5.0f, 0.0f, 0.0f, "RTL end lines child");
+    }
+
+    @Test
+    @DisplayName("OF-08: content alignment free space is excluded from the abspos area (center)")
+    void absoluteGridAreaExcludesContentAlignmentCenter() {
+        // Upstream fixture grid_absolute_content_alignment_center: 100+50 tracks in a 400px content
+        // box, centered -> the first track starts at (400 - 150) / 2 = 125; rows (200 - 100) / 2 = 50.
+        assertAbsoluteContentAlignment(
+            dev.vfyjxf.taffy.style.TaffyDirection.LTR,
+            dev.vfyjxf.taffy.style.AlignContent.CENTER,
+            dev.vfyjxf.taffy.style.AlignContent.CENTER,
+            GridPlacement.line(1), GridPlacement.line(2), GridPlacement.line(1), GridPlacement.line(2),
+            125.0f, 50.0f, 100.0f, 70.0f);
+    }
+
+    @Test
+    @DisplayName("OF-08: content alignment free space is excluded from the abspos area (space-between)")
+    void absoluteGridAreaExcludesContentAlignmentSpaceBetween() {
+        // Upstream fixture grid_absolute_content_alignment_space_between: first track at 0, the gap
+        // between the two columns absorbs the free space (250), so column 2 starts at 100 + 250 = 350.
+        assertAbsoluteContentAlignment(
+            dev.vfyjxf.taffy.style.TaffyDirection.LTR,
+            dev.vfyjxf.taffy.style.AlignContent.SPACE_BETWEEN,
+            dev.vfyjxf.taffy.style.AlignContent.SPACE_BETWEEN,
+            GridPlacement.line(2), GridPlacement.line(3), GridPlacement.line(2), GridPlacement.line(3),
+            350.0f, 170.0f, 50.0f, 30.0f);
+    }
+
+    @Test
+    @DisplayName("OF-08: content alignment free space is excluded from the abspos area (end + RTL)")
+    void absoluteGridAreaExcludesContentAlignmentEndRtl() {
+        // Upstream fixture grid_absolute_content_alignment_end_rtl: in RTL justify-content: end packs to
+        // the left, so the 100px first column starts at 400 - 250 - 100 = 50; rows end -> y = 100.
+        assertAbsoluteContentAlignment(
+            dev.vfyjxf.taffy.style.TaffyDirection.RTL,
+            dev.vfyjxf.taffy.style.AlignContent.END,
+            dev.vfyjxf.taffy.style.AlignContent.END,
+            GridPlacement.line(1), GridPlacement.line(2), GridPlacement.line(1), GridPlacement.line(2),
+            50.0f, 100.0f, 100.0f, 70.0f);
+    }
+
+    private static void assertAbsoluteContentAlignment(
+        dev.vfyjxf.taffy.style.TaffyDirection direction,
+        dev.vfyjxf.taffy.style.AlignContent justifyContent,
+        dev.vfyjxf.taffy.style.AlignContent alignContent,
+        GridPlacement columnStart, GridPlacement columnEnd,
+        GridPlacement rowStart, GridPlacement rowEnd,
+        float expectedX, float expectedY, float expectedWidth, float expectedHeight) {
+
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.direction = direction;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(400.0f), TaffyDimension.length(200.0f));
+        rootStyle.justifyContent = justifyContent;
+        rootStyle.alignContent = alignContent;
+        rootStyle.gridTemplateColumns = List.of(
+            TrackSizingFunction.fixed(100.0f), TrackSizingFunction.fixed(50.0f));
+        rootStyle.gridTemplateRows = List.of(
+            TrackSizingFunction.fixed(70.0f), TrackSizingFunction.fixed(30.0f));
+
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.percent(1.0f));
+        childStyle.gridColumn = new TaffyLine<>(columnStart, columnEnd);
+        childStyle.gridRow = new TaffyLine<>(rowStart, rowEnd);
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertRect(tree.getLayout(child), expectedX, expectedY, expectedWidth, expectedHeight,
+            "abspos child under content alignment " + justifyContent);
+    }
+
+    private static NodeId newGapsContainer(TaffyTree tree, dev.vfyjxf.taffy.style.TaffyDirection direction) {
+        TaffyStyle style = gridStyle();
+        style.direction = direction;
+        style.size = new TaffySize<>(TaffyDimension.length(440.0f), TaffyDimension.length(240.0f));
+        style.border = dev.vfyjxf.taffy.geometry.TaffyRect.all(LengthPercentage.length(5.0f));
+        style.padding = dev.vfyjxf.taffy.geometry.TaffyRect.all(LengthPercentage.length(15.0f));
+        style.gap = new TaffySize<>(LengthPercentage.length(50.0f), LengthPercentage.length(25.0f));
+        style.gridTemplateColumns = List.of(
+            TrackSizingFunction.fixed(40.0f), TrackSizingFunction.fixed(40.0f),
+            TrackSizingFunction.fixed(40.0f), TrackSizingFunction.fixed(40.0f));
+        style.gridTemplateRows = List.of(
+            TrackSizingFunction.fixed(40.0f), TrackSizingFunction.fixed(40.0f));
+        return tree.newLeaf(style);
+    }
+
+    private static NodeId newAbsoluteGapsChild(TaffyTree tree,
+                                               GridPlacement columnStart, GridPlacement columnEnd,
+                                               GridPlacement rowStart, GridPlacement rowEnd) {
+        TaffyStyle style = new TaffyStyle();
+        style.position = TaffyPosition.ABSOLUTE;
+        style.gridColumn = new TaffyLine<>(columnStart, columnEnd);
+        style.gridRow = new TaffyLine<>(rowStart, rowEnd);
+        return tree.newLeaf(style);
     }
 
     private static void assertRect(Layout layout, float x, float y, float width, float height, String label) {

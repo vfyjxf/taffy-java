@@ -1022,16 +1022,20 @@ public class GridComputer {
 
             FloatSize containerSize = new FloatSize(containerWidth, containerHeight);
 
-            // Calculate track offsets for absolute positioned children
-            // Track offsets start from padding+border edge (content box)
-            FloatList colOffsets = calculateTrackOffsets(columnSizes, gap.width, padding.left + border.left);
-            FloatList rowOffsets = calculateTrackOffsets(rowSizes, gap.height, padding.top + border.top);
+            // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
+            // logical (from the content box's inline-start) and include the content alignment offset.
+            ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize);
 
             // Get direction for RTL support (resolve INHERIT)
             boolean isRtlEmpty = layoutComputer.resolveDirection(node) == TaffyDirection.RTL;
 
+            GridAxisLines columnLines = new GridAxisLines(columnSizes, alignment.gapX(), alignment.offsetX(),
+                contentBoxInset.left, alignment.innerWidth(), isRtlEmpty);
+            GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
+                contentBoxInset.top, alignment.innerHeight(), false);
+
             // Layout absolutely positioned children even if no regular items
-            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, colOffsets, rowOffsets, isRtlEmpty);
+            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtlEmpty);
 
             // Layout hidden children (display: none)
             List<NodeId> children = tree.getChildren(node);
@@ -1054,14 +1058,18 @@ public class GridComputer {
             return LayoutOutput.fromSizesAndBaselines(containerSize, contentSize, new FloatPoint(NaN, NaN));
         }
 
-        // Calculate track offsets for absolute positioned children
-        // Track offsets start from padding+border edge (content box)
-        FloatList columnOffsets = calculateTrackOffsets(columnSizes, gap.width, padding.left + border.left);
-        FloatList rowOffsets = calculateTrackOffsets(rowSizes, gap.height, padding.top + border.top);
+        // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
+        // logical (from the content box's inline-start) and include the content alignment offset.
+        ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize);
 
         // Get direction for RTL/LTR support (resolve INHERIT)
         TaffyDirection direction = layoutComputer.resolveDirection(node);
         boolean isRtl = direction == TaffyDirection.RTL;
+        // The inline axis is reversed in RTL: lines are measured from the right content edge.
+        GridAxisLines columnLines = new GridAxisLines(columnSizes, alignment.gapX(), alignment.offsetX(),
+            contentBoxInset.left, alignment.innerWidth(), isRtl);
+        GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
+            contentBoxInset.top, alignment.innerHeight(), false);
 
         // Place items and calculate final positions
         placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize, style, colCounts, rowCounts, isRtl);
@@ -1091,7 +1099,7 @@ public class GridComputer {
         performFinalLayout(items);
 
         // Layout absolutely positioned children
-        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnOffsets, rowOffsets, isRtl);
+        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtl);
 
         // Layout hidden children (display: none)
         List<NodeId> children = tree.getChildren(node);
@@ -1197,36 +1205,176 @@ public class GridComputer {
     }
 
     /**
-     * Calculate track offsets from track sizes and gap.
-     * Each offset is the distance from the start of the grid (border edge) to the start of that track.
-     * Collapsed tracks (size = 0) do not contribute gaps between them and adjacent tracks.
+     * Content-alignment geometry for both axes, used to position absolutely positioned children (OF-08)
+     * and to position the single grid line of an empty axis (GR-14).
+     * <p>
+     * {@code offsetX}/{@code offsetY} are the offsets of the first non-collapsed track from the content
+     * box's inline-start edge, {@code gapX}/{@code gapY} are the gaps used between non-collapsed tracks
+     * (content alignment distributes free space into the gaps for the space-* keywords), and
+     * {@code innerWidth}/{@code innerHeight} are the definite content box sizes (or the used track size
+     * when the container is indefinite in that axis).
      */
-    private FloatList calculateTrackOffsets(FloatList trackSizes, float gap, float borderStart) {
-        FloatList offsets = new FloatArrayList();
-        float currentOffset = borderStart;
-        boolean previousWasNonCollapsed = false;
+    private record ContentAlignment(
+        float offsetX, float gapX, float innerWidth,
+        float offsetY, float gapY, float innerHeight) {}
 
-        for (int i = 0; i < trackSizes.size(); i++) {
-            float trackSize = trackSizes.getFloat(i);
-            boolean isCollapsed = (trackSize == 0);
+    /**
+     * Compute the content alignment (justify-content/align-content) geometry used by the absolute
+     * positioning path. This mirrors the alignment computation performed by {@link #placeItems} so that
+     * absolutely positioned children resolve their grid lines to the same (content-aligned) track edges.
+     */
+    private ContentAlignment computeContentAlignment(
+        TaffyStyle style,
+        FloatList columnSizes,
+        FloatList rowSizes,
+        FloatSize gap,
+        FloatSize nodeInnerSize) {
 
-            // Add gap before this track if:
-            // - This track is not collapsed AND
-            // - The previous track was non-collapsed
-            if (!isCollapsed && previousWasNonCollapsed) {
-                currentOffset += gap;
-            }
-
-            offsets.add(currentOffset);
-            currentOffset += trackSize;
-
-            if (!isCollapsed) {
-                previousWasNonCollapsed = true;
-            }
+        int nonCollapsedColumns = 0;
+        float totalColumnSize = 0f;
+        for (int i = 0; i < columnSizes.size(); i++) {
+            float size = columnSizes.getFloat(i);
+            totalColumnSize += size;
+            if (size > 0) nonCollapsedColumns++;
         }
-        // Add final offset (after all tracks)
-        offsets.add(currentOffset);
-        return offsets;
+        totalColumnSize += gap.width * Math.max(0, nonCollapsedColumns - 1);
+
+        int nonCollapsedRows = 0;
+        float totalRowSize = 0f;
+        for (int i = 0; i < rowSizes.size(); i++) {
+            float size = rowSizes.getFloat(i);
+            totalRowSize += size;
+            if (size > 0) nonCollapsedRows++;
+        }
+        totalRowSize += gap.height * Math.max(0, nonCollapsedRows - 1);
+
+        float innerWidth = !Float.isNaN(nodeInnerSize.width) ? nodeInnerSize.width : totalColumnSize;
+        float innerHeight = !Float.isNaN(nodeInnerSize.height) ? nodeInnerSize.height : totalRowSize;
+        float freeSpaceWidth = innerWidth - totalColumnSize;
+        float freeSpaceHeight = innerHeight - totalRowSize;
+
+        JustifyContent justifyContent = style.getJustifyContent();
+        AlignContent alignContent = style.getAlignContent();
+
+        // An axis without any non-collapsed track still contains a single grid line, which content
+        // alignment positions within the container (GR-14 / upstream #1078).
+        float offsetX = nonCollapsedColumns == 0
+                        ? calculateEmptyAxisAlignmentOffset(justifyContent, freeSpaceWidth)
+                        : calculateContentAlignmentOffset(justifyContent, freeSpaceWidth, nonCollapsedColumns);
+        float offsetY = nonCollapsedRows == 0
+                        ? calculateEmptyAxisAlignmentOffset(alignContent, freeSpaceHeight)
+                        : calculateContentAlignmentOffset(alignContent, freeSpaceHeight, nonCollapsedRows);
+
+        float gapX = calculateAdjustedGap(justifyContent, freeSpaceWidth, nonCollapsedColumns, gap.width);
+        float gapY = calculateAdjustedGap(alignContent, freeSpaceHeight, nonCollapsedRows, gap.height);
+
+        return new ContentAlignment(offsetX, gapX, innerWidth, offsetY, gapY, innerHeight);
+    }
+
+    /**
+     * The offset of the (single) grid line of an axis without any non-collapsed track. The distribution
+     * keywords fall back to their single-item fallbacks (space-* behave like center, stretch and
+     * space-between behave like start), matching upstream's {@code apply_alignment_fallback}
+     * (GR-14 / #1078).
+     */
+    private static float calculateEmptyAxisAlignmentOffset(AlignContent alignment, float freeSpace) {
+        if (alignment == null) return 0;
+        return switch (alignment) {
+            case CENTER -> freeSpace / 2;
+            case END, FLEX_END -> freeSpace;
+            case SPACE_AROUND, SPACE_EVENLY -> freeSpace / 2;
+            case AUTO, START, FLEX_START, STRETCH, SPACE_BETWEEN -> 0;
+        };
+    }
+
+    private static float calculateEmptyAxisAlignmentOffset(JustifyContent alignment, float freeSpace) {
+        if (alignment == null) return 0;
+        return switch (alignment) {
+            case CENTER -> freeSpace / 2;
+            case END, FLEX_END -> freeSpace;
+            case SPACE_AROUND, SPACE_EVENLY -> freeSpace / 2;
+            case START, FLEX_START, STRETCH, SPACE_BETWEEN -> 0;
+        };
+    }
+
+    /**
+     * The grid line positions of one axis, used to resolve absolutely positioned children (OF-08).
+     * <p>
+     * Positions are logical: measured from the content box's inline-start edge (the left content edge for
+     * LTR, the right content edge for RTL) and growing towards the inline-end, with the content alignment
+     * offset and the space-* gap distribution already applied. {@link #physical(float)} converts a logical
+     * position into container coordinates.
+     * <p>
+     * Grid lines used by absolutely positioned children resolve to the edges of the tracks adjacent to the
+     * line rather than to the raw gutter offset (upstream #1071):
+     * <ul>
+     *   <li>as a start edge, a line resolves to the start of the first non-collapsed track that follows it;</li>
+     *   <li>as an end edge, a line resolves to the end of the last non-collapsed track that precedes it.</li>
+     * </ul>
+     * so that free space distributed by align-content/justify-content is not included in the grid area, and
+     * gutters adjacent to collapsed tracks (which overlap) are not counted twice (upstream #1266).
+     */
+    private static final class GridAxisLines {
+        private final float[] starts;   // logical start position of each track; the last entry is the end of the grid
+        private final float[] ends;     // logical end position of each track
+        private final boolean[] nonCollapsed;
+        private final float origin;
+        private final float innerSize;
+        private final boolean reversed;
+
+        GridAxisLines(FloatList trackSizes, float adjustedGap, float firstTrackOffset,
+                      float origin, float innerSize, boolean reversed) {
+            int trackCount = trackSizes.size();
+            this.starts = new float[trackCount + 1];
+            this.ends = new float[trackCount];
+            this.nonCollapsed = new boolean[trackCount];
+            this.origin = origin;
+            this.innerSize = innerSize;
+            this.reversed = reversed;
+
+            float position = firstTrackOffset;
+            for (int i = 0; i < trackCount; i++) {
+                boolean isNonCollapsed = trackSizes.getFloat(i) > 0;
+                nonCollapsed[i] = isNonCollapsed;
+                // Only non-collapsed tracks separated from the previous non-collapsed track by a gutter
+                // receive a gap; gaps adjacent to collapsed tracks overlap and are not counted.
+                if (i > 0 && isNonCollapsed && nonCollapsed[i - 1]) {
+                    position += adjustedGap;
+                }
+                starts[i] = position;
+                if (isNonCollapsed) {
+                    position += trackSizes.getFloat(i);
+                }
+                ends[i] = position;
+            }
+            starts[trackCount] = position;
+        }
+
+        /** Convert a logical position (from the inline-start edge) into container coordinates. */
+        float physical(float logical) {
+            return reversed ? origin + innerSize - logical : origin + logical;
+        }
+
+        /** The physical position of a grid line used as a start edge. */
+        float startEdge(int lineIndex) {
+            int from = Math.max(0, lineIndex);
+            for (int i = from; i < nonCollapsed.length; i++) {
+                if (nonCollapsed[i]) return physical(starts[i]);
+            }
+            return physical(starts[starts.length - 1]);
+        }
+
+        /** The physical position of a grid line used as an end edge. */
+        float endEdge(int lineIndex) {
+            for (int i = Math.min(lineIndex, nonCollapsed.length) - 1; i >= 0; i--) {
+                if (nonCollapsed[i]) return physical(ends[i]);
+            }
+            // No track precedes this line: resolve to the start of the first track that follows it.
+            for (int i = Math.max(0, lineIndex); i < nonCollapsed.length; i++) {
+                if (nonCollapsed[i]) return physical(starts[i]);
+            }
+            return physical(starts[starts.length - 1]);
+        }
     }
 
     /**
@@ -4631,8 +4779,8 @@ public class GridComputer {
         float scrollbarGutterY,
         TrackCounts colCounts,
         TrackCounts rowCounts,
-        FloatList columnOffsets,
-        FloatList rowOffsets,
+        GridAxisLines columnLines,
+        GridAxisLines rowLines,
         boolean isRtl) {
         TaffyTree tree = layoutComputer.getTree();
 
@@ -4659,13 +4807,14 @@ public class GridComputer {
                 gridRow = namedLineResolver.resolveRowNames(gridRow);
             }
 
-            // Calculate grid area based on grid placement
+            // Calculate grid area based on grid placement (physical container coordinates)
             FloatRect gridArea = resolveAbsoluteGridArea(
                 gridCol, gridRow,
                 colCounts, rowCounts,
-                columnOffsets, rowOffsets,
+                columnLines, rowLines,
                 containerSize, border,
-                scrollbarGutterX, scrollbarGutterY
+                scrollbarGutterX, scrollbarGutterY,
+                isRtl
             );
 
             float areaWidth = gridArea.right - gridArea.left;
@@ -4758,18 +4907,10 @@ public class GridComputer {
             AlignItems justifySelf = childStyle.justifySelf;
             AlignItems alignSelf = childStyle.getAlignSelf();
 
-            // For RTL, we need to flip the grid area horizontally within the container
-            // grid-column: 1 in RTL means the rightmost column
-            FloatRect effectiveGridArea = gridArea;
-            if (isRtl) {
-                // In RTL, flip the left/right of the grid area
-                // gridArea.left becomes containerSize.width - gridArea.right
-                // gridArea.right becomes containerSize.width - gridArea.left
-                float newLeft = containerSize.width - gridArea.right;
-                float newRight = containerSize.width - gridArea.left;
-                effectiveGridArea = new FloatRect(newLeft, newRight, gridArea.top, gridArea.bottom);
-            }
-            float effectiveAreaWidth = effectiveGridArea.right - effectiveGridArea.left;
+            // The grid area is already resolved to physical container coordinates (the logical start/end
+            // lines were mirrored for RTL in resolveAbsoluteGridArea), so only the self-alignment keywords
+            // need to be interpreted relative to the writing direction.
+            float effectiveAreaWidth = gridArea.right - gridArea.left;
 
             // Compute offset in horizontal axis
             float xInArea;
@@ -4778,14 +4919,18 @@ public class GridComputer {
             } else if (!Float.isNaN(right)) {
                 xInArea = effectiveAreaWidth - right - finalSize.width - margin.right;
             } else {
-                // Use alignment-based offset
+                // Use alignment-based offset. In RTL the inline-start edge is the right edge of the area,
+                // so START/FLEX_START resolve to the right and END/FLEX_END to the left.
                 float freeSpaceX = effectiveAreaWidth - finalSize.width - margin.left - margin.right;
-                if (justifySelf == AlignItems.END || justifySelf == AlignItems.FLEX_END) {
-                    xInArea = freeSpaceX + margin.left;
-                } else if (justifySelf == AlignItems.CENTER) {
+                boolean alignsToStart = justifySelf == null || justifySelf == AlignItems.START
+                                        || justifySelf == AlignItems.FLEX_START || justifySelf == AlignItems.AUTO;
+                boolean alignsToEnd = justifySelf == AlignItems.END || justifySelf == AlignItems.FLEX_END;
+                if (justifySelf == AlignItems.CENTER) {
                     xInArea = freeSpaceX / 2 + margin.left;
+                } else if (isRtl ? alignsToStart : alignsToEnd) {
+                    xInArea = freeSpaceX + margin.left;
                 } else {
-                    // START, FLEX_START, STRETCH, BASELINE - all start at margin.left
+                    // START/FLEX_START (LTR), END/FLEX_END (RTL), STRETCH, BASELINE: start of the area
                     xInArea = margin.left;
                 }
             }
@@ -4810,7 +4955,7 @@ public class GridComputer {
             }
 
             // Convert to container coordinates
-            float x = effectiveGridArea.left + xInArea;
+            float x = gridArea.left + xInArea;
             float y = gridArea.top + yInArea;
 
             TaffyPoint<Overflow> overflow = childStyle.getOverflow();
@@ -4857,12 +5002,13 @@ public class GridComputer {
         TaffyLine<GridPlacement> gridRow,
         TrackCounts colCounts,
         TrackCounts rowCounts,
-        FloatList columnOffsets,
-        FloatList rowOffsets,
+        GridAxisLines columnLines,
+        GridAxisLines rowLines,
         FloatSize containerSize,
         FloatRect border,
         float scrollbarGutterX,
-        float scrollbarGutterY) {
+        float scrollbarGutterY,
+        boolean isRtl) {
 
         // Resolve column placement
         Integer colStart = resolveAbsoluteGridLine(gridCol.start, gridCol.end, colCounts, true);
@@ -4872,19 +5018,22 @@ public class GridComputer {
         Integer rowStart = resolveAbsoluteGridLine(gridRow.start, gridRow.end, rowCounts, true);
         Integer rowEnd = resolveAbsoluteGridLine(gridRow.end, gridRow.start, rowCounts, false);
 
-        // Get offset values, falling back to border edges
-        float left = colStart != null && colStart >= 0 && colStart < columnOffsets.size()
-                     ? columnOffsets.getFloat(colStart)
-                     : border.left;
-        float right = colEnd != null && colEnd >= 0 && colEnd < columnOffsets.size()
-                      ? columnOffsets.getFloat(colEnd)
-                      : containerSize.width - border.right - scrollbarGutterX;
-        float top = rowStart != null && rowStart >= 0 && rowStart < rowOffsets.size()
-                    ? rowOffsets.getFloat(rowStart)
-                    : border.top;
-        float bottom = rowEnd != null && rowEnd >= 0 && rowEnd < rowOffsets.size()
-                       ? rowOffsets.getFloat(rowEnd)
-                       : containerSize.height - border.bottom - scrollbarGutterY;
+        // A grid line used as an edge resolves to the edge of the adjacent track rather than to the raw
+        // gutter offset, so that content alignment free space is excluded from the grid area
+        // (upstream #1071/#1266). In RTL the item's physical left edge derives from its logical end line
+        // and its physical right edge from its logical start line (upstream's RTL branch).
+        float left;
+        float right;
+        if (isRtl) {
+            left = colEnd != null ? columnLines.endEdge(colEnd) : border.left + scrollbarGutterX;
+            right = colStart != null ? columnLines.startEdge(colStart) : containerSize.width - border.right;
+        } else {
+            left = colStart != null ? columnLines.startEdge(colStart) : border.left;
+            right = colEnd != null ? columnLines.endEdge(colEnd) : containerSize.width - border.right - scrollbarGutterX;
+        }
+
+        float top = rowStart != null ? rowLines.startEdge(rowStart) : border.top;
+        float bottom = rowEnd != null ? rowLines.endEdge(rowEnd) : containerSize.height - border.bottom - scrollbarGutterY;
 
         return new FloatRect(left, right, top, bottom);
     }
