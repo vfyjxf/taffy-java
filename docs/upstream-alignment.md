@@ -42,5 +42,25 @@ snapshot.
 3. Keep the Java-specific additions (incremental layout, change listeners,
    direction/RTL handling, convenience API) intact while porting.
 
+## Alignment progress (1.2.0)
+
+- **P0-a (done, tag `p0a-complete`)**: six existing Java defects fixed (grid
+  named lines for abspos, AlignSelf START/END under wrap-reverse, RTL root,
+  `copy()` flex shorthand, definite-final-size second pass for abspos,
+  block `display:none` descendants), with a frozen behavior golden and a
+  per-value allowlist in `compat-golden/ALLOWLIST.md`.
+- **P0-b (done, tag `p0b-complete`)**: cache keys now include parent size and
+  the cache-wide sizing/margin mode (with second-chance eviction and a
+  `remove` parent invalidation); `ScrollableOverflow` and `Baselines` record
+  components were added alongside the legacy ones; `MeasureFunction` (with
+  `MeasureContext`) is the new measure contract and the old `MeasureFunc` is
+  adapted; the S5 intrinsic-keyword helper is present but not wired
+  (LEGACY_AUTO).
+- **Deferred**: B-01 (`LayoutInput.knownDimensionsAreDefinite`) needs a record
+  component, so it is part of the 2.0 component change; 1.x measure cache keys
+  conservatively compare the full parent size instead.
+- **Next**: P1 low-cost upstream fixes (flex/block/grid/OOF), then P2...P7 per
+  the reviewed work list.
+
 The detailed, reviewed change list is produced from the commit ranges in
 `Data/taffy-java/analysis/` and is not checked into this repository.

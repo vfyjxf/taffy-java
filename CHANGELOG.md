@@ -10,6 +10,24 @@ signatures are unchanged, but layouts that hit the fixed defects change. The
 per-value record is [compat-golden/ALLOWLIST.md](compat-golden/ALLOWLIST.md);
 the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 
+### Added (additive contracts from P0-b)
+
+- `MeasureFunction` + `MeasureContext`: a new measure callback that receives the
+  derived `LayoutInput`, the node's `TaffyStyle`, the `NodeId` and an optional
+  node context, and returns a `LayoutOutput` (size plus baselines/scrollable
+  overflow). `MeasureFunc` remains and is adapted internally; per-node callbacks
+  win over tree defaults, and the legacy callback keeps the old inputs.
+- `ScrollableOverflow` and `Baselines` value types; `Layout` gains
+  `scrollableOverflow`, `LayoutOutput` gains `scrollableOverflow` and
+  `baselines`. The legacy `contentSize`/`firstBaselines` components and the old
+  6/8-arg constructors and accessors remain for 1.x compatibility. No layout
+  algorithm writes the new values yet (P3/P4); the accessors defensively copy
+  their mutable geometry.
+- `TaffyTree` overloads for the new measure function, node context, and
+  `computeLayoutWithMeasureFunction`; old methods are unchanged.
+- `LayoutCache`/`TaffyTree` `LayoutInput`-based cache accessors with
+  parent-size and mode-aware keys; old signatures delegate.
+
 ### Fixed
 
 - **PA-01 (grid)** — Absolutely positioned children now resolve named grid
@@ -61,8 +79,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 
 ### API
 
-- No public API removals, field/type changes, or method signature changes.
-  `./gradlew checkApiCompatibility` stays green against the published `1.1.5`
+- No public API removals. The additions above are source- and binary-compatible:
+  the old 6/8-arg record constructors, `MeasureFunc`, and the old cache/measure
+  methods remain. They will be deprecated as call sites migrate and removed in
+  2.0.0, after a full 1.x deprecation window.
+- Record schema change: `Layout` and `LayoutOutput` gain components, so their
+  serialized JSON/`toString` shapes change (approved Q4=A; `RecordSchemaTest`
+  pins component order). Old constructors still produce `ZERO`/absent values,
+  so old writers keep working; old readers should be updated.
+- `./gradlew checkApiCompatibility` stays green against the published `1.1.5`
   baseline; see [docs/api-compatibility.md](docs/api-compatibility.md).
-- Deprecation of the old API starts in the next batch (P0-b), not in 1.2.0; the
-  deprecated API is kept until 2.0.0.

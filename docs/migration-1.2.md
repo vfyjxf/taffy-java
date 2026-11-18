@@ -26,6 +26,29 @@ The fixes in this batch:
 | PA-06 | block | `display: none` descendants are cleared instead of keeping stale layouts. |
 | PA-05 | abspos | Content-sized abspos boxes get a definite-final-size second pass; percentage descendants resolve against it. |
 
+## New additive API (usually no action required)
+
+1.2.0 also carries the P0-b contract skeleton. It is additive; existing code
+keeps compiling and behaving the same:
+
+- **Measure callbacks**: `MeasureFunction` (with `MeasureContext`) is the new
+  callback. It receives the derived `LayoutInput`, the node style, the node id
+  and an optional node context, and returns a `LayoutOutput`. The old
+  `MeasureFunc` is still supported and receives exactly the same
+  known-dimensions/available-space arguments as before. Per-node callbacks win
+  over tree-level defaults.
+- **Record components**: `Layout` gains `scrollableOverflow`; `LayoutOutput`
+  gains `scrollableOverflow` and `baselines`. The old `contentSize` and
+  `firstBaselines` components and the old 6/8-arg constructors/accessors remain.
+  Because records expose their components, **serialized JSON/`toString` shape
+  changes** — update readers that depend on the old shape. The new accessors
+  return defensive copies of their mutable geometry.
+- **Cache/measure overloads**: `LayoutCache` and `TaffyTree` gained
+  `LayoutInput`-based cache methods; the old signatures still delegate.
+
+No layout algorithm writes the new fields yet, so the computed numbers are
+unchanged by this part of 1.2.0.
+
 ## How to compare your output with the allowlist
 
 The allowlist is a table in which one row describes one changed field group in
