@@ -879,7 +879,9 @@ public class TaffyTree {
      * Computes the layout for the tree starting from the given root node.
      */
     public void computeLayout(NodeId rootNode, TaffySize<AvailableSpace> availableSpace) {
-        computeLayoutWithMeasureFunction(rootNode, availableSpace, (MeasureFunction) null);
+        // Route through the legacy entry point: subclasses overriding computeLayoutWithMeasure keep
+        // observing computeLayout even though the new MeasureFunction entry point exists.
+        computeLayoutWithMeasure(rootNode, availableSpace, null);
     }
 
     /**
@@ -891,7 +893,9 @@ public class TaffyTree {
      * points share the same layout computation and rounding. It is deliberately a separate method
      * name (not an overload of {@code computeLayout}/{@code computeLayoutWithMeasure}) so that
      * existing source passing a bare {@code null} as the third argument keeps compiling against a
-     * single applicable signature.</p>
+     * single applicable signature. {@link #computeLayout(NodeId, TaffySize)} keeps routing through
+     * {@link #computeLayoutWithMeasure(NodeId, TaffySize, MeasureFunc)} so that legacy subclass
+     * overrides of that method are still honoured.</p>
      *
      * @param rootNode               the root of the tree to lay out
      * @param availableSpace         the space to lay the tree out into
@@ -900,13 +904,7 @@ public class TaffyTree {
     public void computeLayoutWithMeasureFunction(NodeId rootNode,
                                                  TaffySize<AvailableSpace> availableSpace,
                                                  MeasureFunction defaultMeasureFunction) {
-        LayoutComputer computer = new LayoutComputer(this, null, defaultMeasureFunction);
-        computer.computeLayout(rootNode, availableSpace);
-
-        // Round layouts if enabled
-        if (useRounding) {
-            RoundLayout.roundLayout(this, rootNode);
-        }
+        computeLayoutInternal(rootNode, availableSpace, null, defaultMeasureFunction);
     }
 
     /**
@@ -914,11 +912,20 @@ public class TaffyTree {
      */
     public void computeLayoutWithMeasure(NodeId rootNode, TaffySize<AvailableSpace> availableSpace,
                                           MeasureFunc defaultMeasureFunc) {
+        computeLayoutInternal(rootNode, availableSpace, defaultMeasureFunc, null);
+    }
+
+    /**
+     * Shared implementation of the layout entry points.
+     */
+    private void computeLayoutInternal(NodeId rootNode, TaffySize<AvailableSpace> availableSpace,
+                                       MeasureFunc defaultMeasureFunc,
+                                       MeasureFunction defaultMeasureFunction) {
         // This will be implemented by the compute module
         // For now, delegate to the LayoutComputer
-        LayoutComputer computer = new LayoutComputer(this, defaultMeasureFunc, null);
+        LayoutComputer computer = new LayoutComputer(this, defaultMeasureFunc, defaultMeasureFunction);
         computer.computeLayout(rootNode, availableSpace);
-        
+
         // Round layouts if enabled
         if (useRounding) {
             RoundLayout.roundLayout(this, rootNode);

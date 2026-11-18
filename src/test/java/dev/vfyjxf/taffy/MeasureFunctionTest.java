@@ -205,27 +205,57 @@ public class MeasureFunctionTest {
     }
 
     @Test
-    @DisplayName("measure_selection_order_is_node_new_then_default_new_then_legacy")
+    @DisplayName("measure_selection_order_is_node_callbacks_before_defaults")
     void measureSelectionOrder() {
         MeasureFunction defaultMeasure = context ->
             LayoutOutput.fromOuterSize(new FloatSize(70.0f, 25.0f));
 
         TaffyTree tree = new TaffyTree();
 
-        // A default new-style callback takes precedence over a node legacy callback.
+        // A per-node legacy callback wins over a default new-style callback: tree-level defaults
+        // are only a fallback and must never override a callback the node registered itself.
         NodeId legacyNode = tree.newLeafWithMeasure(new TaffyStyle(),
             (knownDimensions, availableSpace) -> new FloatSize(100.0f, 100.0f));
         tree.computeLayoutWithMeasureFunction(legacyNode, TaffySize.maxContent(), defaultMeasure);
-        assertEquals(70.0f, tree.getLayout(legacyNode).size().width, EPSILON);
-        assertEquals(25.0f, tree.getLayout(legacyNode).size().height, EPSILON);
+        assertEquals(100.0f, tree.getLayout(legacyNode).size().width, EPSILON);
+        assertEquals(100.0f, tree.getLayout(legacyNode).size().height, EPSILON);
 
-        // A node new-style callback takes precedence over the default new-style callback.
+        // A per-node new-style callback wins over the default new-style callback.
         NodeId newNode = tree.newLeafWithMeasureFunction(new TaffyStyle(), context ->
             LayoutOutput.fromOuterSize(new FloatSize(10.0f, 10.0f))
         );
         tree.computeLayoutWithMeasureFunction(newNode, TaffySize.maxContent(), defaultMeasure);
         assertEquals(10.0f, tree.getLayout(newNode).size().width, EPSILON);
         assertEquals(10.0f, tree.getLayout(newNode).size().height, EPSILON);
+
+        // Among the defaults themselves, the new-style default wins over the legacy default.
+        TaffyTree defaultsTree = new TaffyTree();
+        NodeId plainNode = defaultsTree.newLeaf(new TaffyStyle());
+        LayoutOutput defaultOutput = new LayoutComputer(
+            defaultsTree,
+            (knownDimensions, availableSpace) -> new FloatSize(40.0f, 40.0f),
+            defaultMeasure
+        ).performChildLayout(
+            plainNode,
+            new FloatSize(Float.NaN, Float.NaN),
+            new FloatSize(Float.NaN, Float.NaN),
+            TaffySize.maxContent(),
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+        assertEquals(70.0f, defaultOutput.size().width, EPSILON);
+        assertEquals(25.0f, defaultOutput.size().height, EPSILON);
+    }
+
+    @Test
+    @DisplayName("measure_function_returning_null_is_rejected_with_a_clear_error")
+    void measureFunctionReturningNullIsRejected() {
+        TaffyTree tree = new TaffyTree();
+        NodeId node = tree.newLeafWithMeasureFunction(new TaffyStyle(), context -> null);
+
+        NullPointerException error = assertThrows(NullPointerException.class,
+            () -> tree.computeLayout(node, TaffySize.maxContent()));
+        assertEquals("MeasureFunction returned null", error.getMessage());
     }
 
     @Test

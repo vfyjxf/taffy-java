@@ -35,7 +35,8 @@ public interface MeasureFunction {
      * @param context the measure arguments: content-box layout inputs, style, node id and node
      *                context
      * @return the measured content size plus optional baselines/scrollable overflow; must not be
-     *         {@code null}
+     *         {@code null} (the layout call sites reject a null result with a
+     *         {@link NullPointerException})
      */
     LayoutOutput measure(MeasureContext context);
 }

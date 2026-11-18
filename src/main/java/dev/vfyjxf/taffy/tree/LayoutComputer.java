@@ -21,6 +21,7 @@ import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Computes layout for a TaffyTree.
@@ -45,10 +46,10 @@ public class LayoutComputer {
      * Creates a layout computer with both a legacy and a new-style default measure function
      * (S1, 1.2 additive).
      *
-     * <p>Both defaults are fallbacks for leaves without a per-node callback. The per-node
-     * selection order is documented on {@link #measureLeaf}; a default
-     * {@link MeasureFunction} is consulted before a legacy {@link MeasureFunc}, whether that
-     * legacy callback is configured per node or as the default.</p>
+     * <p>Both defaults are fallbacks for leaves without a per-node callback. Per-node callbacks
+     * always take precedence over the defaults: the selection order is node
+     * {@link MeasureFunction}, node legacy {@link MeasureFunc}, default {@link MeasureFunction},
+     * default legacy {@link MeasureFunc}; see {@link #measureLeaf}.</p>
      *
      * @param tree                    the tree being laid out
      * @param defaultMeasureFunc      the legacy default measure callback, or {@code null}
@@ -637,11 +638,12 @@ public class LayoutComputer {
     /**
      * Invokes the measure callback that applies to a leaf node, if any.
      *
-     * <p><b>Selection order (S1):</b></p>
+     * <p><b>Selection order (S1):</b> per-node callbacks always beat the tree-level defaults, so a
+     * default measure function can never override a callback the node itself registered.</p>
      * <ol>
      *   <li>the node's new-style {@link MeasureFunction};</li>
-     *   <li>the computer's default new-style {@link MeasureFunction};</li>
      *   <li>the node's legacy {@link MeasureFunc}, wrapped in {@link MeasureFuncAdapter};</li>
+     *   <li>the computer's default new-style {@link MeasureFunction};</li>
      *   <li>the computer's default legacy {@link MeasureFunc}, wrapped in {@link MeasureFuncAdapter}.</li>
      * </ol>
      *
@@ -667,18 +669,19 @@ public class LayoutComputer {
     private LayoutOutput measureLeaf(NodeId node, LayoutInput inputs, TaffyStyle style,
                                      FloatSize knownDimensions,
                                      TaffySize<AvailableSpace> availableSpace) {
+        // Per-node callbacks always take precedence over the tree-level defaults.
         MeasureFunction measureFunction = tree.getMeasureFunction(node);
+        if (measureFunction == null) {
+            MeasureFunc nodeMeasureFunc = tree.getMeasureFunc(node);
+            if (nodeMeasureFunc != null) {
+                measureFunction = new MeasureFuncAdapter(nodeMeasureFunc);
+            }
+        }
         if (measureFunction == null) {
             measureFunction = defaultMeasureFunction;
         }
-        if (measureFunction == null) {
-            MeasureFunc legacyMeasureFunc = tree.getMeasureFunc(node);
-            if (legacyMeasureFunc == null) {
-                legacyMeasureFunc = defaultMeasureFunc;
-            }
-            if (legacyMeasureFunc != null) {
-                measureFunction = new MeasureFuncAdapter(legacyMeasureFunc);
-            }
+        if (measureFunction == null && defaultMeasureFunc != null) {
+            measureFunction = new MeasureFuncAdapter(defaultMeasureFunc);
         }
         if (measureFunction == null) {
             return null;
@@ -693,7 +696,10 @@ public class LayoutComputer {
             node,
             tree.getNodeContext(node)
         );
-        return measureFunction.measure(measureContext);
+        return Objects.requireNonNull(
+            measureFunction.measure(measureContext),
+            "MeasureFunction returned null"
+        );
     }
 
     /**
