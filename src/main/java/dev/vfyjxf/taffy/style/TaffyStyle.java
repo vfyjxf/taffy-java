@@ -40,6 +40,23 @@ public final class TaffyStyle {
     public boolean itemIsReplaced = false;
 
     /**
+     * Is it a compressible replaced element that is not a replaced element (a form control with an
+     * intrinsic size, such as an input, select or textarea)?
+     * <p>
+     * A replaced element ({@link #itemIsReplaced}) also counts as compressible replaced; use
+     * {@link #isCompressibleReplaced()} to test for both. Such boxes resolve an {@code auto} width to
+     * their intrinsic size rather than being stretched by block layout, and their grid minimum
+     * contribution is capped by a definite preferred or maximum size.
+     * <p>
+     * This field defaults to {@code false}, so when it is unset {@link #isCompressibleReplaced()}
+     * returns exactly {@link #itemIsReplaced}, which preserves the historical single-flag behavior.
+     *
+     * @see <a href="https://drafts.csswg.org/css-sizing-3/#compressible">CSS Sizing 3: compressible
+     *      replaced elements</a>
+     */
+    public boolean itemIsCompressibleReplaced = false;
+
+    /**
      * Should size styles apply to the content box or the border box
      */
     public BoxSizing boxSizing = BoxSizing.BORDER_BOX;
@@ -437,6 +454,7 @@ public final class TaffyStyle {
         copy.display = this.display;
         copy.itemIsTable = this.itemIsTable;
         copy.itemIsReplaced = this.itemIsReplaced;
+        copy.itemIsCompressibleReplaced = this.itemIsCompressibleReplaced;
         copy.boxSizing = this.boxSizing;
         copy.overflow = this.overflow.copy();
         copy.scrollbarWidth = this.scrollbarWidth;
@@ -506,6 +524,30 @@ public final class TaffyStyle {
     public boolean getItemIsTable() {return itemIsTable;}
 
     public boolean getItemIsReplaced() {return itemIsReplaced;}
+
+    // TODO(T17/T4): upstream #1351 resolves the max-size basis of a grid item's minimum
+    // contribution against zero only for replaced elements (is_replaced), not for form controls.
+    // Java's minimum contribution has no "definite preferred size clamped by min/max" branch yet
+    // (#1022/#1282), so this distinction cannot be wired here.
+    // TODO(S19): upstream #1281 also uses is_replaced so that `normal` alignment does not stretch
+    // replaced grid items; Java has no Normal alignment semantics yet (S10).
+    /**
+     * Returns whether this is a compressible replaced element: a replaced element (image, video,
+     * canvas, ...) or a form control with an intrinsic size. Replaced elements are implicitly
+     * compressible replaced, so this is {@link #itemIsReplaced} or
+     * {@link #itemIsCompressibleReplaced}.
+     */
+    public boolean isCompressibleReplaced() {
+        return itemIsReplaced || itemIsCompressibleReplaced;
+    }
+
+    /**
+     * Marks this as a compressible replaced element that is not a replaced element (a form control
+     * with an intrinsic size). Does not change {@link #itemIsReplaced}.
+     */
+    public void setCompressibleReplaced(boolean compressibleReplaced) {
+        this.itemIsCompressibleReplaced = compressibleReplaced;
+    }
 
     public BoxSizing getBoxSizing() {return boxSizing;}
 
