@@ -241,7 +241,7 @@ public class FlexboxComputer {
         // Collect items into flex lines (use innerAvailableSpace for wrapping, matching Rust)
         float innerMainSize = isRow ? nodeInnerSize.width : nodeInnerSize.height;
         float mainGap = isRow ? gap.width : gap.height;
-        List<FlexLine> flexLines = collectIntoFlexLines(items, innerAvailableSpace, mainGap, isWrap, flexDirection, minSize, maxSize);
+        List<FlexLine> flexLines = collectIntoFlexLines(items, innerAvailableSpace, mainGap, isWrap, flexDirection, minSize, maxSize, innerMainSize);
 
         // Determine container main size if not already known (needed for flex grow/shrink)
         if (isNaN(innerMainSize)) {
@@ -1139,7 +1139,8 @@ public class FlexboxComputer {
         boolean isWrap,
         FlexDirection flexDirection,
         FloatSize minSize,
-        FloatSize maxSize) {
+        FloatSize maxSize,
+        float knownInnerMainSize) {
 
         List<FlexLine> lines = new ArrayList<>();
         boolean isRow = flexDirection.isRow();
@@ -1158,13 +1159,28 @@ public class FlexboxComputer {
         float mainMinSize = isRow ? minSize.width : minSize.height;
         AvailableSpace outerMainAvail = isRow ? availableSpace.width : availableSpace.height;
 
+        // TODO(FL-15/C01): this approximates upstream's `has_definite_main_size` flag. A known main
+        // size derived from the container's own content (e.g. a flex-basis percentage that could not
+        // resolve) is indeterminate here; the real flag arrives with the definiteness work.
+        boolean hasDefiniteMainSize = !Float.isNaN(knownInnerMainSize);
+
         AvailableSpace mainAxisAvailableSpace;
         if (!Float.isNaN(mainMaxSize)) {
             // If max-size is set, use it as the constraint
             float innerVal = outerMainAvail.intoOption();
             float constrainedSize = !Float.isNaN(innerVal) ? innerVal : mainMaxSize;
+            // FL-06 (#1101): when the container's main size is indefinite it is at most max-size,
+            // so max-size (not the available space) is the limit that items wrap against.
+            if (!hasDefiniteMainSize) {
+                constrainedSize = Math.min(constrainedSize, mainMaxSize);
+            }
             if (!Float.isNaN(mainMinSize)) constrainedSize = Math.max(constrainedSize, mainMinSize);
             mainAxisAvailableSpace = AvailableSpace.definite(constrainedSize);
+        } else if (!isRow && !hasDefiniteMainSize && outerMainAvail.isDefinite()) {
+            // FL-06 (#1176): a column container's automatic main size is content-based, so definite
+            // available space handed down by an ancestor does not constrain where its lines wrap.
+            // Automatic widths resolve against available space, so rows do wrap against it.
+            mainAxisAvailableSpace = AvailableSpace.maxContent();
         } else {
             mainAxisAvailableSpace = outerMainAvail;
         }

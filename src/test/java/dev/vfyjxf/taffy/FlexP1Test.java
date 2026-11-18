@@ -440,4 +440,68 @@ public class FlexP1Test {
         assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
         assertLocation(tree.getLayout(second), 90f, 0f, "second item position");
     }
+
+    // ==================================================================
+    // FL-06 (#1101 / 2e4dbc5, #1176 / ac2b869): where flex lines wrap.
+    //   - max-width caps wrapping when the container's main size is indefinite
+    //   - an auto-height column container does not wrap against definite
+    //     available space handed down by an ancestor
+    //
+    // NOTE: Java approximates upstream's has_definite_main_size with
+    // !Float.isNaN(knownInnerMainSize) (TODO FL-15/C01).
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-06: wrap row uses min(available, max-width) when its width is indefinite")
+    void fl06_wrapRowMaxWidthIndefiniteWidth() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.flexWrap = FlexWrap.WRAP;
+        rootStyle.maxSize = new TaffySize<>(TaffyDimension.length(20f), TaffyDimension.AUTO);
+        rootStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(110f));
+
+        NodeId first = tree.newLeaf(withSize(20f, 10f));
+        NodeId second = tree.newLeaf(withSize(20f, 40f));
+        NodeId root = tree.newWithChildren(rootStyle, first, second);
+
+        // 200px viewport from the upstream fixture's wrapper div; without FL-06 the items wrap
+        // against 200 and stay on one line.
+        tree.computeLayout(root, TaffySize.of(AvailableSpace.definite(200f), AvailableSpace.maxContent()));
+
+        assertSize(tree.getLayout(root), 20f, 110f, "wrapped row container size");
+        assertSize(tree.getLayout(first), 20f, 10f, "first item size");
+        assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
+        assertSize(tree.getLayout(second), 20f, 40f, "second item size");
+        assertLocation(tree.getLayout(second), 0f, 40f, "second item position");
+    }
+
+    @Test
+    @DisplayName("FL-06: auto-height column does not wrap against ancestor available space")
+    void fl06_wrapColumnAutoHeightDoesNotWrapAgainstAvailableSpace() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.alignItems = AlignItems.FLEX_START;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(400f), TaffyDimension.length(150f));
+
+        TaffyStyle columnStyle = flexBox();
+        columnStyle.flexDirection = FlexDirection.COLUMN;
+        columnStyle.flexWrap = FlexWrap.WRAP;
+
+        NodeId first = tree.newLeaf(withSize(60f, 100f));
+        NodeId second = tree.newLeaf(withSize(60f, 100f));
+        NodeId column = tree.newWithChildren(columnStyle, first, second);
+        NodeId root = tree.newWithChildren(rootStyle, column);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 400f, 150f, "row container size");
+        // without FL-06 the column wraps two 100px items against the ancestor's 150px height
+        assertSize(tree.getLayout(column), 60f, 200f, "column container does not wrap");
+        assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
+        assertLocation(tree.getLayout(second), 0f, 100f, "second item position");
+    }
 }
