@@ -656,7 +656,13 @@ public class BlockComputer {
         }
 
         CollapsibleMarginSet lastChildBottomMarginSet = activeCollapsibleMarginSet;
-        float bottomYMarginOffset = ownMarginsCollapseWithChildren.end
+        // When the first child's margins collapse through this box and this box has no top
+        // border/padding, they were already folded into the box's own top margin set, so they
+        // must not also be added to its bottom (they are not adjoining the box's bottom edge).
+        // BK-11 / upstream #1397.
+        boolean firstChildMarginSetCollapsedThrough =
+            isCollapsingWithFirstMarginSet && ownMarginsCollapseWithChildren.start;
+        float bottomYMarginOffset = (ownMarginsCollapseWithChildren.end || firstChildMarginSetCollapsedThrough)
                                     ? 0f
                                     : lastChildBottomMarginSet.resolve();
 

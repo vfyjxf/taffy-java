@@ -269,4 +269,43 @@ public class BlockP1Test {
         assertSize(tree.getLayout(grandchild), 50f, 0f, "grandchild");
         assertLocation(tree.getLayout(sibling), 0f, 50f, "sibling");
     }
+
+    // === BK-11: a collapsed-through first child's margin is not added to the bottom ===
+
+    /**
+     * Upstream fixture {@code block_margin_y_first_child_collapse_through_with_border_bottom}
+     * (#1397). The inner box has no height and no top border/padding but a 10px bottom border, so
+     * its first (only) child collapses through and its margins are folded into the box's top
+     * margin set. They must not be added to the box's bottom as well.
+     */
+    @Test
+    @DisplayName("BK-11: collapsed-through first-child margin is not added to the box's bottom")
+    void collapsedThroughFirstChildMarginNotAddedToBottom() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        grandchildStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(10f));
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.border = new TaffyRect<>(
+            LengthPercentage.ZERO, LengthPercentage.ZERO,
+            LengthPercentage.ZERO, LengthPercentage.length(10f));
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // 10 (collapsed-through top margin) + 10 (bottom border)
+        assertSize(tree.getLayout(root), 50f, 20f, "root");
+        assertLocation(tree.getLayout(child), 0f, 10f, "child");
+        assertSize(tree.getLayout(child), 50f, 10f, "child");
+        assertLocation(tree.getLayout(grandchild), 0f, 0f, "grandchild");
+        assertSize(tree.getLayout(grandchild), 50f, 0f, "grandchild");
+    }
 }
