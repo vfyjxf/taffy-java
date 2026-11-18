@@ -97,4 +97,47 @@ public class BlockP1Test {
         // width = 100 - 4 - 4
         assertSize(innerLayout, 92f, 10f, "inner");
     }
+
+    // === BK-21: percentage margins resolve against the containing block's inner width ===
+
+    /**
+     * A block child's percentage margins (all four sides) resolve against the containing block's
+     * inline size, which is the parent's *content box* width, not its outer width. Here the root
+     * is 100 wide with 20px padding, so the containing block width is 60: {@code margin: 10%}
+     * resolves to 6, not to 10. Port of the percentage-margin part of upstream #990 (86d93d95);
+     * the float/clearance parts of that commit do not apply (Java has no float layout).
+     */
+    @Test
+    @DisplayName("BK-21: percentage margins resolve against the container inner width")
+    void percentageMarginsUseContainerInnerWidth() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        childStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.percent(0.1f),
+            LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.percent(0.1f),
+            LengthPercentageAuto.ZERO
+        );
+        NodeId child = tree.newLeaf(childStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        rootStyle.padding = TaffyRect.all(LengthPercentage.length(20f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout rootLayout = tree.getLayout(root);
+        assertLocation(rootLayout, 0f, 0f, "root");
+        // 20 (top padding) + 6 (margin) + 10 (child) + 20 (bottom padding)
+        assertSize(rootLayout, 100f, 56f, "root");
+
+        Layout childLayout = tree.getLayout(child);
+        // x = 20 (left padding) + 6 (10% of the 60px containing block width)
+        assertLocation(childLayout, 26f, 26f, "child");
+        // auto width fills the containing block minus the non-auto horizontal margin
+        assertSize(childLayout, 54f, 10f, "child");
+    }
 }

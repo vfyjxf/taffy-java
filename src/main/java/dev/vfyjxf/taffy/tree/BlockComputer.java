@@ -463,8 +463,12 @@ public class BlockComputer {
                 continue;
             }
 
-            // Resolve margins
-            FloatRect itemMarginOpt = resolveMarginOptional(item.margin, containerOuterWidth);
+            // Resolve margins.
+            //
+            // Percentage (auto-margin-free) margins resolve against the containing block's
+            // inline size, i.e. this container's *content box* width, not its outer width.
+            // BK-21 / upstream #990 (86d93d95).
+            FloatRect itemMarginOpt = resolveMarginOptional(item.margin, containerInnerWidth);
             FloatRect itemNonAutoMargin = new FloatRect(
                 Float.isNaN(itemMarginOpt.left) ? 0f : itemMarginOpt.left,
                 Float.isNaN(itemMarginOpt.right) ? 0f : itemMarginOpt.right,
