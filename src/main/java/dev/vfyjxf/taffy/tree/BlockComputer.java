@@ -57,6 +57,12 @@ public class BlockComputer {
         FloatSize computedSize;
         FloatPoint staticPosition;
         boolean canBeCollapsedThrough;
+        /**
+         * Pending layout of an in-flow child. Held back from {@code setUnroundedLayout} so that a
+         * measurement pass ({@link RunMode#COMPUTE_SIZE}) can return before any tree state is
+         * written; the final layout commits them in one place. Upstream #971 (BK-01).
+         */
+        Layout finalLayout;
     }
 
     /**
@@ -258,6 +264,15 @@ public class BlockComputer {
 
         if (runMode == RunMode.COMPUTE_SIZE) {
             return LayoutOutput.fromOuterSize(finalOuterSize);
+        }
+
+        // Commit the deferred in-flow layouts. This must stay *after* the ComputeSize return
+        // above: measuring a node must never write layout state to the tree.
+        // Upstream #971 (BK-01).
+        for (BlockItem item : items) {
+            if (item.finalLayout != null) {
+                tree.setUnroundedLayout(item.nodeId, item.finalLayout);
+            }
         }
 
         // Layout absolutely positioned children
@@ -636,7 +651,9 @@ public class BlockComputer {
                 resolvedMargin
             );
 
-            tree.setUnroundedLayout(item.nodeId, layout);
+            // Defer the tree write until the caller has been confirmed to want a final layout
+            // (see the commit loop in compute). Upstream #971 (BK-01).
+            item.finalLayout = layout;
 
             // Update first_child_top_margin_set
             if (isCollapsingWithFirstMarginSet) {

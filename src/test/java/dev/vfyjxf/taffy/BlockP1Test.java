@@ -12,8 +12,12 @@ import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.tree.Layout;
+import dev.vfyjxf.taffy.tree.LayoutComputer;
 import dev.vfyjxf.taffy.tree.NodeId;
+import dev.vfyjxf.taffy.tree.SizingMode;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -367,6 +371,54 @@ public class BlockP1Test {
         Layout siblingLayout = tree.getLayout(sibling);
         assertLocation(siblingLayout, 0f, 53f, "sibling");
         assertEquals(30f, siblingLayout.margin().top, EPSILON, "sibling margin top");
+    }
+
+    // === BK-01: measurement must not write layout state to the tree ===
+
+    /**
+     * Upstream #971: a block container must not {@code set_unrounded_layout} on its in-flow
+     * children while it is only being measured ({@code RunMode.COMPUTE_SIZE}). Before the fix the
+     * in-flow layouts were written unconditionally, so every intrinsic-size probe overwrote the
+     * committed layout with the probe's (content-sized) values.
+     */
+    @Test
+    @DisplayName("BK-01: measuring a block container does not overwrite its children's layouts")
+    void measurePassDoesNotWriteChildLayouts() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle leafStyle = blockStyle();
+        leafStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        NodeId leaf = tree.newLeaf(leafStyle);
+
+        TaffyStyle containerStyle = blockStyle();
+        NodeId container = tree.newWithChildren(containerStyle, leaf);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, container);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout leafBefore = tree.getUnroundedLayout(leaf);
+        Layout containerBefore = tree.getUnroundedLayout(container);
+        assertEquals(200f, leafBefore.size().width, EPSILON, "leaf is stretched by the final layout");
+
+        // Measure the container the way an intrinsic-size consumer would: content based width,
+        // ComputeSize run mode, no full layout requested.
+        LayoutComputer computer = new LayoutComputer(tree, (dev.vfyjxf.taffy.util.MeasureFunc) null);
+        FloatSize measured = computer.measureChildSize(
+            container,
+            new FloatSize(Float.NaN, Float.NaN),
+            new FloatSize(200f, Float.NaN),
+            new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.MAX_CONTENT),
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+        assertEquals(0f, measured.width, EPSILON, "content-based measured width of the empty leaf");
+
+        assertEquals(leafBefore, tree.getUnroundedLayout(leaf), "measuring must not write the leaf layout");
+        assertEquals(containerBefore, tree.getUnroundedLayout(container),
+            "measuring must not write the container layout");
     }
 
     // === BK-07: abspos auto margins resolve against the used (clamped) size ===
