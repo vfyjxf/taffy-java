@@ -745,6 +745,24 @@ public class GridComputer {
             }
         }
 
+        // If only the container's width has been requested then the rows do not need to be sized at all,
+        // which avoids measuring the height of every item (and recursively of everything below them).
+        // Column sizing is not re-run when only computing the container's size, so the returned size is
+        // unaffected by skipping the block-axis work.
+        //
+        // TODO(GR-10): unreachable in this port today: LayoutComputer always passes
+        // RequestedAxis.BOTH (see the CR-01 TODOs in LayoutComputer.performChildLayout and
+        // LayoutComputer.measureChildSize), so no caller ever asks for the horizontal axis alone.
+        // Enable this together with the RequestedAxis plumbing (CR-01 / FL-25). Upstream #1219
+        // (9770a07) has the same short-circuit.
+        if (runMode == RunMode.COMPUTE_SIZE && inputs.axis() == RequestedAxis.HORIZONTAL) {
+            float width = Math.max(
+                TaffyMath.clamp(initialColumnSum + contentBoxInset.left + contentBoxInset.right,
+                    minSize.width, maxSize.width),
+                paddingBorderSize.width);
+            return LayoutOutput.fromOuterSize(new FloatSize(width, 0f));
+        }
+
         // Clear the inline-axis contribution input cache after initial column sizing (Rust:
         // items.iter_mut().for_each(|item| item.grid_area_size_cache = None)): the container's inner
         // width is now definite, so any input recorded during column sizing is stale.

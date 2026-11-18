@@ -282,6 +282,43 @@ class GridP1Test {
             + firstRunMeasures);
     }
 
+    // ------------------------------------------------------------------
+    // GR-10 (#1219): skip row sizing when only the container's width is requested
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("GR-10: a grid measured for its size still reports its full outer size")
+    void computeSizeStillReturnsFullOuterSize() {
+        // The horizontal-axis short-circuit added for GR-10 is unreachable in this port because every
+        // caller requests RequestedAxis.BOTH (CR-01 todo), so this test guards the behaviour the
+        // short-circuit must preserve: a grid measured in COMPUTE_SIZE mode during its parent's track
+        // sizing still reports a complete border-box size, and its own rows are still laid out.
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle outerStyle = gridStyle();
+        outerStyle.gridTemplateColumns = List.of(TrackSizingFunction.auto());
+        outerStyle.gridTemplateRows = List.of(TrackSizingFunction.auto());
+
+        TaffyStyle innerStyle = gridStyle();
+        innerStyle.gridTemplateColumns = List.of(TrackSizingFunction.fixed(40.0f));
+        innerStyle.gridTemplateRows = List.of(TrackSizingFunction.fixed(30.0f));
+
+        TaffyStyle leafStyle = new TaffyStyle();
+        leafStyle.size = new TaffySize<>(TaffyDimension.length(10.0f), TaffyDimension.length(20.0f));
+
+        NodeId leaf = tree.newLeaf(leafStyle);
+        NodeId inner = tree.newWithChildren(innerStyle, leaf);
+        NodeId outer = tree.newWithChildren(outerStyle, inner);
+
+        tree.computeLayout(outer, TaffySize.maxContent());
+
+        assertEquals(40.0f, tree.getLayout(inner).size().width, EPSILON, "inner grid width");
+        assertEquals(30.0f, tree.getLayout(inner).size().height, EPSILON, "inner grid height");
+        assertEquals(40.0f, tree.getLayout(outer).size().width, EPSILON, "outer grid width");
+        assertEquals(30.0f, tree.getLayout(outer).size().height, EPSILON, "outer grid height");
+        assertEquals(20.0f, tree.getLayout(leaf).size().height, EPSILON, "inner grid item height");
+    }
+
     private static void assertRect(Layout layout, float x, float y, float width, float height, String label) {
         assertEquals(x, layout.location().x, EPSILON, label + " x");
         assertEquals(y, layout.location().y, EPSILON, label + " y");
