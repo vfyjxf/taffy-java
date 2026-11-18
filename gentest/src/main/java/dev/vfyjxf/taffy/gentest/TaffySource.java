@@ -86,6 +86,10 @@ final class TaffySource {
                         body.append(test);
                         processed++;
                     }
+                } catch (ScrollbarWidth.ContractViolation ex) {
+                    // Platform-level contract (15px scrollbar): abort the whole
+                    // run instead of writing an empty/incorrect suite.
+                    throw ex;
                 } catch (Exception ex) {
                     System.err.println("Error processing " + fixture.name() + ": " + ex.getMessage());
                     ex.printStackTrace();
@@ -107,9 +111,12 @@ final class TaffySource {
     }
 
     private static String generateFixture(ChromeOracle oracle, Fixture fixture) throws IOException {
+        // loadFile() waits for the load event; the stylesheet probe then guards
+        // against measuring a page whose body-class variants are not applied yet.
         oracle.loadFile(fixture.path());
+        oracle.verifyBaseStylesheetApplied();
         float scrollbarWidth = oracle.measureScrollbarWidth();
-        Object result = oracle.executeScript("return getTestData()");
+        Object result = readTestData(oracle, fixture);
         if (result == null) {
             System.err.println("No test data for: " + fixture.name());
             return null;
@@ -142,6 +149,41 @@ final class TaffySource {
             sb.append(generateTest(fixture.name() + "__content_box", content, scrollbarWidth));
         }
         return sb.toString();
+    }
+
+    /**
+     * Read getTestData(), retrying transient JavaScript failures after
+     * re-checking page readiness (upstream #1054 keeps the same backstop).
+     * A null result is not retried: the fixture legitimately has no test data.
+     */
+    private static Object readTestData(ChromeOracle oracle, Fixture fixture) {
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= PageReadiness.GET_TEST_DATA_ATTEMPTS; attempt++) {
+            try {
+                return oracle.executeScript("return getTestData()");
+            } catch (RuntimeException ex) {
+                last = ex;
+                if (attempt == PageReadiness.GET_TEST_DATA_ATTEMPTS) {
+                    break;
+                }
+                System.err.println("[warn] getTestData() failed for " + fixture.relativePath()
+                        + " (attempt " + attempt + "): " + ex.getMessage());
+                sleep(PageReadiness.RETRY_DELAY_MS);
+                oracle.awaitDocumentReady();
+                oracle.verifyBaseStylesheetApplied();
+            }
+        }
+        throw new IllegalStateException("getTestData() failed for " + fixture.relativePath()
+                + " after " + PageReadiness.GET_TEST_DATA_ATTEMPTS + " attempts", last);
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while retrying getTestData()", ex);
+        }
     }
 
     private static String getObjectString(JsonObject data, String key) {

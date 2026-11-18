@@ -30,7 +30,7 @@ class ScrollbarWidthTest {
 
     @Test
     void rejectsPlatformDrift() {
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
+        ScrollbarWidth.ContractViolation ex = assertThrows(ScrollbarWidth.ContractViolation.class,
                 () -> ScrollbarWidth.verify(12f, PAGE));
         assertTrue(ex.getMessage().contains("12.0px"), ex.getMessage());
         assertTrue(ex.getMessage().contains("15.0px"), ex.getMessage());
@@ -40,7 +40,7 @@ class ScrollbarWidthTest {
 
     @Test
     void rejectsZeroWidth() {
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
+        ScrollbarWidth.ContractViolation ex = assertThrows(ScrollbarWidth.ContractViolation.class,
                 () -> ScrollbarWidth.verify(0f, PAGE));
         assertTrue(ex.getMessage().contains("unexpected scrollbar width"), ex.getMessage());
     }
@@ -55,7 +55,8 @@ class ScrollbarWidthTest {
     @Test
     void rejectsInvalidOverride() {
         System.setProperty(ScrollbarWidth.EXPECTED_WIDTH_PROPERTY, "not-a-number");
-        IllegalStateException ex = assertThrows(IllegalStateException.class, ScrollbarWidth::expectedPx);
+        ScrollbarWidth.ContractViolation ex =
+                assertThrows(ScrollbarWidth.ContractViolation.class, ScrollbarWidth::expectedPx);
         assertTrue(ex.getMessage().contains(ScrollbarWidth.EXPECTED_WIDTH_PROPERTY), ex.getMessage());
         assertTrue(ex.getMessage().contains("not-a-number"), ex.getMessage());
     }
@@ -63,9 +64,9 @@ class ScrollbarWidthTest {
     @Test
     void rejectsNonPositiveOverride() {
         System.setProperty(ScrollbarWidth.EXPECTED_WIDTH_PROPERTY, "0");
-        assertThrows(IllegalStateException.class, ScrollbarWidth::expectedPx);
+        assertThrows(ScrollbarWidth.ContractViolation.class, ScrollbarWidth::expectedPx);
 
         System.setProperty(ScrollbarWidth.EXPECTED_WIDTH_PROPERTY, "-1");
-        assertThrows(IllegalStateException.class, ScrollbarWidth::expectedPx);
+        assertThrows(ScrollbarWidth.ContractViolation.class, ScrollbarWidth::expectedPx);
     }
 }

@@ -28,6 +28,21 @@ final class ScrollbarWidth {
 
     private ScrollbarWidth() {}
 
+    /**
+     * A platform-level contract violation. Unlike per-fixture parse/style
+     * errors this is fatal: generating a suite with silently different
+     * scrollbar assumptions must not look like success.
+     */
+    static final class ContractViolation extends IllegalStateException {
+        ContractViolation(String message) {
+            super(message);
+        }
+
+        ContractViolation(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     /** Resolve the expected scrollbar width from the system property or the 15px default. */
     static float expectedPx() {
         String raw = System.getProperty(EXPECTED_WIDTH_PROPERTY);
@@ -41,7 +56,7 @@ final class ScrollbarWidth {
             }
             return value;
         } catch (NumberFormatException ex) {
-            throw new IllegalStateException(
+            throw new ContractViolation(
                     "invalid -D" + EXPECTED_WIDTH_PROPERTY + "='" + raw + "': " + ex.getMessage(), ex);
         }
     }
@@ -50,7 +65,7 @@ final class ScrollbarWidth {
     static void verify(float measuredPx, String page) {
         float expectedPx = expectedPx();
         if (!Float.isFinite(measuredPx) || Math.abs(measuredPx - expectedPx) > TOLERANCE_PX) {
-            throw new IllegalStateException(failureMessage(measuredPx, expectedPx, page));
+            throw new ContractViolation(failureMessage(measuredPx, expectedPx, page));
         }
     }
 
