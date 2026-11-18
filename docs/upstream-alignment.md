@@ -64,8 +64,10 @@ snapshot.
   gentest scrollbar/readiness/contract work. Remaining partials are tracked in
   the workspace analysis (grid rerun container size, BK-15's height-only
   aspect-ratio derivation, BK-04/BL-07 dependency).
-- **Next**: P2 (cache/tree formalization) and P3 (block semantics/baselines)
-  per the reviewed work list.
+- **P2 (done, tag `p2-complete`)**: `writeTree`/transpose helpers and the
+  opt-in generated-test freshness gate (with a method-level allowlist for the
+  two BK-13 hand edits).
+- **Next**: P3 (block semantics/baselines) per the reviewed work list.
 
 The detailed, reviewed change list is produced from the commit ranges in
 `Data/taffy-java/analysis/` and is not checked into this repository.

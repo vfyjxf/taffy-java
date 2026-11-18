@@ -28,6 +28,22 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 - `LayoutCache`/`TaffyTree` `LayoutInput`-based cache accessors with
   parent-size and mode-aware keys; old signatures delegate.
 
+### P2 additions
+
+- `TaffyTree.writeTree(Writer, NodeId)` writes the full layout tree (order,
+  location, size, content size, scrollable overflow, scrollbar, border, padding,
+  margin); `printTree` now delegates to it, so the debug output format changed
+  while the method signature stayed the same.
+- `transpose()` on `TaffySize`, `TaffyRect`, `LayoutInput` and
+  `LayoutOutput` for the vertical writing-mode path. Geometry and baselines are
+  swapped; collapsible margins and the collapse-through flag are reset, matching
+  upstream taffy #1265 (they do not survive a transposition).
+- An opt-in generated-test freshness gate:
+  `:gentest:checkGeneratedFreshness` with `-Ptaffy.checkGenerated=true`
+  (or `TAFFY_CHECK_GENERATED=true`), a method-level
+  `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
+  instructions in `gentest/README.md`.
+
 ### Fixed
 
 - **PA-01 (grid)** — Absolutely positioned children now resolve named grid
