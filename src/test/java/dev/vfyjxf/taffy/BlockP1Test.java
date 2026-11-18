@@ -485,6 +485,62 @@ public class BlockP1Test {
         assertEquals(leafBefore, tree.getUnroundedLayout(leaf), "leaf layout must not be written");
     }
 
+    // === BK-03: ComputeSize returns the margin-collapse outputs ===
+
+    /**
+     * Upstream #976: a vertical {@code ComputeSize} pass must return the node's collapsed top and
+     * bottom margin sets (and the collapse-through flag), because a parent block container builds
+     * its intrinsic height from its children's margins. Returning a bare size dropped every
+     * collapsed margin that belongs to the space *between* boxes, shrinking the measured height.
+     *
+     * <p>The assertion is the height of a padded block whose intermediate blocks collapse their
+     * children's margins through themselves: 5 + 10 + 10 + 20 + 5 = 50. It requires BK-02, since
+     * the propagation of {@code COMPUTE_SIZE} is what makes the intermediate blocks take the
+     * measurement path that BK-03 fixes.</p>
+     */
+    @Test
+    @DisplayName("BK-03: a measured block returns the collapsed margin sets of its children")
+    void computeSizeReturnsMarginCollapseOutputs() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle leafStyle = blockStyle();
+        leafStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        leafStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.length(20f));
+        NodeId leaf = tree.newLeaf(leafStyle);
+
+        TaffyStyle middleStyle = blockStyle();
+        NodeId middle = tree.newWithChildren(middleStyle, leaf);
+
+        TaffyStyle containerStyle = blockStyle();
+        containerStyle.padding = TaffyRect.all(LengthPercentage.length(5f));
+        NodeId container = tree.newWithChildren(containerStyle, middle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, container);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // The final layout gets the same height (the margins collapse through the middle block
+        // and are added by the padded container).
+        assertSize(tree.getLayout(container), 200f, 50f, "container");
+
+        LayoutComputer computer = new LayoutComputer(tree, (dev.vfyjxf.taffy.util.MeasureFunc) null);
+        FloatSize measured = computer.measureChildSize(
+            container,
+            new FloatSize(Float.NaN, Float.NaN),
+            new FloatSize(200f, Float.NaN),
+            new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.MAX_CONTENT),
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+
+        assertEquals(50f, measured.height, EPSILON,
+            "measured height must include the collapsed 10px/20px margins of the descendants");
+    }
+
     // === BK-07: abspos auto margins resolve against the used (clamped) size ===
 
     /**

@@ -263,8 +263,43 @@ public class BlockComputer {
         boolean ownBottomMarginCollapsesWithChildren =
             ownMarginsCollapseWithChildren.end && !heightConstrainedByMinHeight;
 
+        // Determine whether this node can be collapsed through
+        boolean canBeCollapsedThrough = !hasStylesPreventingBeingCollapsedThrough &&
+                                        layoutResult.allChildrenCanBeCollapsedThrough;
+
+        // Compute output margin sets
+        CollapsibleMarginSet topMargin;
+        if (ownMarginsCollapseWithChildren.start) {
+            topMargin = layoutResult.firstChildTopMarginSet;
+        } else {
+            float marginTop = Resolve.resolveLpaOrZero(style.getMargin().top, parentSize.width);
+            topMargin = CollapsibleMarginSet.fromMargin(marginTop);
+        }
+
+        CollapsibleMarginSet bottomMargin;
+        if (ownBottomMarginCollapsesWithChildren) {
+            bottomMargin = layoutResult.lastChildBottomMarginSet;
+        } else {
+            float marginBottom = Resolve.resolveLpaOrZero(style.getMargin().bottom, parentSize.width);
+            bottomMargin = CollapsibleMarginSet.fromMargin(marginBottom);
+        }
+
+        // Short-circuit if computing size.
+        //
+        // The margin-collapse related outputs are part of the result: a parent block container
+        // relies on its children's top/bottom margin sets to compute its own intrinsic height, and
+        // the collapse-through flag drives its own collapsing. Content size is not known yet (and
+        // is only needed by a full layout), so it stays ZERO.
+        // BK-03 / upstream #976 (b9067e74).
         if (runMode == RunMode.COMPUTE_SIZE) {
-            return LayoutOutput.fromOuterSize(finalOuterSize);
+            return new LayoutOutput(
+                finalOuterSize,
+                FloatSize.zero(),
+                new FloatPoint(NaN, NaN),
+                topMargin,
+                bottomMargin,
+                canBeCollapsedThrough
+            );
         }
 
         // Commit the deferred in-flow layouts. This must stay *after* the ComputeSize return
@@ -313,27 +348,6 @@ public class BlockComputer {
         }
 
         FloatSize contentSize = computeContentSizeFromChildren(node);
-
-        // Determine whether this node can be collapsed through
-        boolean canBeCollapsedThrough = !hasStylesPreventingBeingCollapsedThrough &&
-                                        layoutResult.allChildrenCanBeCollapsedThrough;
-
-        // Compute output margin sets
-        CollapsibleMarginSet topMargin;
-        if (ownMarginsCollapseWithChildren.start) {
-            topMargin = layoutResult.firstChildTopMarginSet;
-        } else {
-            float marginTop = Resolve.resolveLpaOrZero(style.getMargin().top, parentSize.width);
-            topMargin = CollapsibleMarginSet.fromMargin(marginTop);
-        }
-
-        CollapsibleMarginSet bottomMargin;
-        if (ownBottomMarginCollapsesWithChildren) {
-            bottomMargin = layoutResult.lastChildBottomMarginSet;
-        } else {
-            float marginBottom = Resolve.resolveLpaOrZero(style.getMargin().bottom, parentSize.width);
-            bottomMargin = CollapsibleMarginSet.fromMargin(marginBottom);
-        }
 
         return new LayoutOutput(
             finalOuterSize,
