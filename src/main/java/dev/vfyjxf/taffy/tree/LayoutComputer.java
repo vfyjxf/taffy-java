@@ -115,10 +115,23 @@ public class LayoutComputer {
             style.getOverflow().x == Overflow.SCROLL ? style.getScrollbarWidth() : 0f
         );
 
-        // Set the root layout
+        // Set the root layout.
+        // PA-03: in RTL the root's margin box is aligned to the right edge of the available space:
+        //   x = available_width - size.width - margin.right
+        // which matches the upstream root RTL branch (taffy compute/mod.rs).
+        // Non-RTL, or an indefinite available width, keeps the historical origin (0, 0): the rest of the
+        // upstream root placement (margin box at the origin, i.e. x = margin.left / y = margin.top, plus
+        // relative inset offsets) belongs to ST-06/P6 and is still pending here.
+        // Child locations stay parent-relative and are not affected by this.
+        TaffyDirection direction = resolveDirection(root);
+        float rootX = 0f;
+        if (direction == TaffyDirection.RTL && availableSpace.width.isDefinite()) {
+            rootX = availableSpace.width.getValue() - output.size().width - margin.right;
+        }
+
         Layout layout = new Layout(
             0,
-            new FloatPoint(0f, 0f),
+            new FloatPoint(rootX, 0f),
             output.size(),
             output.contentSize(),
             scrollbarSize,

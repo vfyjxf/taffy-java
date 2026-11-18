@@ -460,6 +460,7 @@ public final class TaffyStyle {
         copy.direction = this.direction;
         copy.flexDirection = this.flexDirection;
         copy.flexWrap = this.flexWrap;
+        copy.flex = this.flex;
         copy.flexBasis = this.flexBasis;
         copy.flexGrow = this.flexGrow;
         copy.flexShrink = this.flexShrink;
