@@ -252,6 +252,7 @@ public class FlexboxComputer {
                 maxSize,
                 mainGap,
                 flexDirection,
+                isWrap,
                 innerAvailableSpace,
                 nodeInnerSize
             );
@@ -833,6 +834,7 @@ public class FlexboxComputer {
         FloatSize maxSize,
         float mainGap,
         FlexDirection flexDirection,
+        boolean isWrap,
         TaffySize<AvailableSpace> availableSpace,
         FloatSize nodeInnerSize) {
 
@@ -1045,7 +1047,9 @@ public class FlexboxComputer {
 
                     // Calculate content_flex_fraction
                     // This represents the "flex fraction" needed to size the item to its content contribution
-                    float diff = contentContribution - intrinsicFlexBasis;
+                    // FL-05: contentContribution already includes the main-axis margin, so the flex
+                    // base size comparison must subtract it again (upstream #1335).
+                    float diff = contentContribution - marginMain - intrinsicFlexBasis;
                     if (diff > 0.0f) {
                         item.contentFlexFraction = diff / Math.max(1.0f, item.flexGrow);
                     } else if (diff < 0.0f) {
@@ -1061,6 +1065,10 @@ public class FlexboxComputer {
                 //   - its flex grow factor (or scaled flex shrink factor, if the chosen max-content flex fraction was negative)
                 //   - the chosen max-content flex fraction
                 float itemMainSizeSum = 0;
+                // A wrapping row container is at least as large as its largest item (which matters when
+                // another item has a negative margin). This matches Chrome; Firefox does not apply this floor.
+                boolean floorByLargestItem = isWrap && isRow;
+                float largestItemSize = 0f;
                 for (FlexItem item : line.items) {
                     float flexFraction = item.contentFlexFraction;
 
@@ -1089,22 +1097,24 @@ public class FlexboxComputer {
                     if (maxMainSize != POSITIVE_INFINITY) {
                         intrinsicFlexBasis = Math.min(intrinsicFlexBasis, maxMainSize);
                     }
-                    float itemSize = intrinsicFlexBasis + flexContribution;
 
-                    // Update item's target sizes (used later in layout)
-                    if (isRow) {
-                        item.outerTargetSize = new FloatSize(itemSize, item.outerTargetSize != null ? item.outerTargetSize.height : Float.NaN);
-                        item.targetSize = new FloatSize(itemSize, item.targetSize != null ? item.targetSize.height : Float.NaN);
-                    } else {
-                        item.outerTargetSize = new FloatSize(item.outerTargetSize != null ? item.outerTargetSize.width : Float.NaN, itemSize);
-                        item.targetSize = new FloatSize(item.targetSize != null ? item.targetSize.width : Float.NaN, itemSize);
+                    // FL-05: the line sum is an outer contribution, so the item margin belongs in it.
+                    // The target sizes are not written back here: the main-axis resolution below owns
+                    // them, and writing intrinsic-sizing values into targetSize leaked into final layout.
+                    float marginMain = isRow
+                                       ? item.margin.left + item.margin.right
+                                       : item.margin.top + item.margin.bottom;
+                    float itemSize = intrinsicFlexBasis + flexContribution + marginMain;
+
+                    if (floorByLargestItem) {
+                        largestItemSize = Math.max(largestItemSize, itemSize);
                     }
 
                     itemMainSizeSum += itemSize;
                 }
 
                 float gapSum = mainGap * Math.max(0, line.items.size() - 1);
-                maxLineSum = Math.max(maxLineSum, itemMainSizeSum + gapSum);
+                maxLineSum = Math.max(maxLineSum, Math.max(largestItemSize, itemMainSizeSum + gapSum));
             }
 
             outerMainSize = maxLineSum + mainContentBoxInset;

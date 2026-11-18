@@ -302,4 +302,142 @@ public class FlexP1Test {
         assertSize(tree.getLayout(root), 76f, 100f, "row container intrinsic main size");
         assertLocation(tree.getLayout(item), -24f, 0f, "row item position");
     }
+
+    // ==================================================================
+    // FL-05 (#1335 / ea07c4c): intrinsic max-content main size with negative
+    // margins.
+    //   1. the item contribution in the line sum includes the main-axis margin
+    //   2. the content flex fraction subtracts the margin (it is already part
+    //      of content_contribution)
+    //   3. a wrapping row container is floored at its largest single item
+    //
+    // Upstream fixtures: intrinsic_sizing_main_size_row_negative_margin_*
+    // and the last row of taffy_issue_1151_negative_margin.
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-05: row max-content contribution applies the item's negative margin once")
+    void fl05_rowNegativeMarginPaddingBorder() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.padding = new TaffyRect<>(
+            LengthPercentage.length(5f), LengthPercentage.ZERO,
+            LengthPercentage.ZERO, LengthPercentage.ZERO);
+        itemStyle.border = new TaffyRect<>(
+            LengthPercentage.ZERO, LengthPercentage.length(1f),
+            LengthPercentage.ZERO, LengthPercentage.ZERO);
+        itemStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(-2f), LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // item: flex-basis 6 (5 padding + 1 border), contribution 4, margin -2
+        // old line sum: 6 (margin dropped by the second pass) -> container 6
+        // new line sum: 6 - 2 = 4 -> container 4
+        assertSize(tree.getLayout(root), 4f, 0f, "row container max-content size");
+        assertSize(tree.getLayout(item), 6f, 0f, "item size");
+        assertLocation(tree.getLayout(item), -2f, 0f, "item position");
+    }
+
+    @Test
+    @DisplayName("FL-05: multiple negative-margin items contribute their margins to the row max-content size")
+    void fl05_rowNegativeMarginMultipleItems() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+
+        NodeId first = tree.newLeaf(withSize(100f, Float.NaN));
+
+        TaffyStyle secondStyle = withSize(0f, Float.NaN);
+        secondStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(-10f), LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId second = tree.newLeaf(secondStyle);
+
+        TaffyStyle thirdStyle = new TaffyStyle();
+        thirdStyle.padding = new TaffyRect<>(
+            LengthPercentage.length(5f), LengthPercentage.ZERO,
+            LengthPercentage.ZERO, LengthPercentage.ZERO);
+        thirdStyle.border = new TaffyRect<>(
+            LengthPercentage.ZERO, LengthPercentage.length(1f),
+            LengthPercentage.ZERO, LengthPercentage.ZERO);
+        thirdStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(-10f), LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId third = tree.newLeaf(thirdStyle);
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second, third);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // upstream fixture: container 86, items 100 / 0 / 6 at x = 0 / 90 / 80
+        assertSize(tree.getLayout(root), 86f, 0f, "row container max-content size");
+        assertEquals(100f, tree.getLayout(first).size().width, EPS, "first item width");
+        assertEquals(0f, tree.getLayout(second).size().width, EPS, "second item width");
+        assertEquals(6f, tree.getLayout(third).size().width, EPS, "third item width");
+        assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
+        assertLocation(tree.getLayout(second), 90f, 0f, "second item position");
+        assertLocation(tree.getLayout(third), 80f, 0f, "third item position");
+    }
+
+    @Test
+    @DisplayName("FL-05: wrapping row max-content size includes negative margins")
+    void fl05_rowWrapNegativeMarginMultipleItems() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.flexWrap = FlexWrap.WRAP;
+
+        NodeId first = tree.newLeaf(withSize(100f, Float.NaN));
+
+        TaffyStyle secondStyle = withSize(0f, Float.NaN);
+        secondStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(-10f), LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId second = tree.newLeaf(secondStyle);
+        NodeId third = tree.newLeaf(withSize(50f, Float.NaN));
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second, third);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // upstream fixture: container 140, items 100 / 0 / 50 at x = 0 / 90 / 90
+        assertSize(tree.getLayout(root), 140f, 0f, "wrapping row container max-content size");
+        assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
+        assertLocation(tree.getLayout(second), 90f, 0f, "second item position");
+        assertLocation(tree.getLayout(third), 90f, 0f, "third item position");
+    }
+
+    @Test
+    @DisplayName("FL-05: wrapping row max-content size is floored at its largest single item")
+    void fl05_rowWrapFlooredAtLargestItem() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.flexWrap = FlexWrap.WRAP;
+
+        NodeId first = tree.newLeaf(withSize(100f, Float.NaN));
+
+        TaffyStyle secondStyle = withSize(0f, Float.NaN);
+        secondStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(-10f), LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId second = tree.newLeaf(secondStyle);
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // line sum = 100 + (0 - 10) = 90; the floor makes the container 100 (the largest item).
+        assertSize(tree.getLayout(root), 100f, 0f, "wrapping row container floors at the largest item");
+        assertLocation(tree.getLayout(first), 0f, 0f, "first item position");
+        assertLocation(tree.getLayout(second), 90f, 0f, "second item position");
+    }
 }
