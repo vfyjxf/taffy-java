@@ -120,74 +120,114 @@ public class WptToFixtureConverter {
             </html>
             """;
 
+    /**
+     * Deprecated positional entry point kept for old build scripts.
+     *
+     * <p>Prefer: {@code Generator --source wpt --convert-to-fixtures
+     * --convert-input <dir> --convert-output <dir>}.</p>
+     */
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("Usage: WptToFixtureConverter <wptDir> <outputDir> [--prefix <prefix>] [--pattern <glob>]");
-            System.exit(1);
+            System.err.println("Usage: WptToFixtureConverter <wptDir> <outputDir> [--prefix <prefix>] [--pattern <glob>] [--recursive]");
+            System.err.println("[deprecated] Prefer: Generator --source wpt --convert-to-fixtures " +
+                    "--convert-input <dir> --convert-output <dir>");
+            System.exit(2);
         }
-
-        Path wptDir = Paths.get(args[0]);
-        Path outputDir = Paths.get(args[1]);
+        Path input = Paths.get(args[0]);
+        Path output = Paths.get(args[1]);
         String prefix = "wpt_";
         String pattern = "flex-aspect-ratio-*.html";
-
+        boolean recursive = false;
         for (int i = 2; i < args.length; i++) {
             switch (args[i]) {
                 case "--prefix" -> prefix = args[++i];
                 case "--pattern" -> pattern = args[++i];
+                case "--recursive" -> recursive = true;
+                default -> {
+                    System.err.println("Unknown argument: " + args[i]);
+                    System.exit(2);
+                }
             }
         }
+        System.err.println("[deprecated] WptToFixtureConverter positional CLI; see gentest/README.md.");
+        convert(input, output, prefix, pattern, recursive, false);
+    }
 
-        if (!Files.exists(wptDir)) {
-            System.err.println("WPT directory not found: " + wptDir);
-            System.exit(1);
+    /**
+     * Convert WPT HTML files into taffy fixtures.
+     *
+     * @return number of converted files
+     */
+    static int convert(Path input, Path output, String prefix, String pattern,
+                       boolean recursive, boolean dryRun) throws IOException {
+        if (!Files.isDirectory(input)) {
+            throw new GeneratorOptions.UsageException("convert input is not a directory: " + input);
+        }
+        if (!dryRun) {
+            Files.createDirectories(output);
         }
 
-        Files.createDirectories(outputDir);
+        List<Path> files = new ArrayList<>();
+        java.nio.file.PathMatcher matcher = input.getFileSystem().getPathMatcher("glob:" + pattern);
+        if (recursive) {
+            try (Stream<Path> stream = Files.walk(input)) {
+                stream.filter(Files::isRegularFile)
+                        .filter(path -> matcher.matches(path.getFileName()))
+                        .forEach(files::add);
+            }
+        } else {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(input, pattern)) {
+                stream.forEach(files::add);
+            }
+        }
+        files.sort(Comparator.comparing(path -> path.getFileName().toString()));
 
         int converted = 0;
         int skipped = 0;
+        for (Path wptFile : files) {
+            String content = Files.readString(wptFile).replace("\r\n", "\n").replace('\r', '\n');
+            String fileName = wptFile.getFileName().toString();
 
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(wptDir, pattern)) {
-            List<Path> files = new ArrayList<>();
-            stream.forEach(files::add);
-            files.sort(Comparator.comparing(Path::getFileName));
-
-            for (Path wptFile : files) {
-                String content = Files.readString(wptFile);
-                String fileName = wptFile.getFileName().toString();
-
-                // Skip files with unsupported elements
-                if (UNSUPPORTED_ELEMENTS.matcher(content).find()) {
-                    System.out.println("  SKIP (unsupported element): " + fileName);
-                    skipped++;
-                    continue;
-                }
-
-                // Skip files with script tags
-                if (SCRIPT_TAG.matcher(content).find()) {
-                    System.out.println("  SKIP (has script): " + fileName);
-                    skipped++;
-                    continue;
-                }
-
-                String fixture = convertToFixture(content, fileName);
-                if (fixture == null) {
-                    System.out.println("  SKIP (conversion failed): " + fileName);
-                    skipped++;
-                    continue;
-                }
-
-                // Convert filename: flex-aspect-ratio-001.html → wpt_flex_aspect_ratio_001.html
-                String fixtureName = prefix + fileName.replace('-', '_');
-                Path outputPath = outputDir.resolve(fixtureName);
-                Files.writeString(outputPath, fixture);
-                System.out.println("  OK: " + fileName + " → " + fixtureName);
-                converted++;
+            // WPT reference files are not tests; mirror the direct WPT discovery rules.
+            String lowerName = fileName.toLowerCase(java.util.Locale.ROOT);
+            if (lowerName.endsWith("-ref.html") || lowerName.endsWith("-notref.html")
+                    || lowerName.contains("-manual")) {
+                System.out.println("  SKIP (reference/manual): " + fileName);
+                skipped++;
+                continue;
             }
-        }
 
-        System.out.println("\nConverted: " + converted + ", Skipped: " + skipped);
+            if (UNSUPPORTED_ELEMENTS.matcher(content).find()) {
+                System.out.println("  SKIP (unsupported element): " + fileName);
+                skipped++;
+                continue;
+            }
+            if (SCRIPT_TAG.matcher(content).find()) {
+                System.out.println("  SKIP (has script): " + fileName);
+                skipped++;
+                continue;
+            }
+
+            String fixture = convertToFixture(content, fileName);
+            if (fixture == null) {
+                System.out.println("  SKIP (conversion failed): " + fileName);
+                skipped++;
+                continue;
+            }
+
+            String fixtureName = prefix + fileName.replace('-', '_');
+            Path outputPath = output.resolve(fixtureName);
+            if (dryRun) {
+                System.out.println("  DRY-RUN would write: " + outputPath);
+            } else {
+                Files.writeString(outputPath, fixture.replace("\r\n", "\n").replace('\r', '\n'),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                System.out.println("  OK: " + fileName + " -> " + fixtureName);
+            }
+            converted++;
+        }
+        System.out.println("\n" + (dryRun ? "Would convert" : "Converted") + ": " + converted + ", Skipped: " + skipped);
+        return converted;
     }
 
     static String convertToFixture(String htmlContent, String originalName) {
