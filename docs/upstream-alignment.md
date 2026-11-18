@@ -67,10 +67,11 @@ snapshot.
 - **P2 (done, tag `p2-complete`)**: `writeTree`/transpose helpers and the
   opt-in generated-test freshness gate (with a method-level allowlist for the
   two BK-13 hand edits).
-- **P3 (partial)**: ST-05 replaced split, BK-08/09/17 and FL-10/12 are merged;
+- **P3 (mostly done)**: ST-05 replaced split, BK-08/09/12/17, FL-10/11/12/13/14
+  and the CR-07/BL-06 baseline helper + block propagation are merged;
   `display: flow-root` currently implements the margin-isolation part (float
-  containment awaits F7). Remaining P3: CR-07 baselines, BK-12/14 and
-  FL-11/13/14 (baseline helper dependencies).
+  containment awaits F7). Remaining P3: BK-14 (block align-content) and the grid
+  baseline A3-A6/#1322-#1323 segment.
 - **Next**: finish P3's baseline/alignment remainder, then P4 (scrollable overflow)
   and P6/P7.
 

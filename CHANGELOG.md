@@ -119,7 +119,10 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   basis; `min-height` alone does not); margin collapse-through is decided by the
   used outer height; flex items subtract their margins from available space and
   auto-cross-margin items no longer participate in baseline alignment;
-  `display: flow-root` no longer collapses its margins with its children.
+  `display: flow-root` no longer collapses its margins with its children;
+  compressible replaced boxes cap their min-content width per #1401 (form-control
+  `%max` no longer collapses to zero there); fixed-size leaves consult their
+  measure callback for baselines.
 - This batch does not change default layout options.
 
 ### API
