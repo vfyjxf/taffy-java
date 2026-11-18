@@ -28,6 +28,7 @@ import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.grid.NamedLineResolver;
+import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
@@ -3880,8 +3881,14 @@ public class GridComputer {
                     new TaffyLine<>(false, false)
                 );
 
-                float baselineValue = output.firstBaselines() != null ? output.firstBaselines().y : NaN;
+                // Scroll-container items' baselines are clamped to their border box, and a
+                // scroll container without a baseline synthesizes one at its border-box bottom
+                // edge (upstream #1108, shared helper from #1323). A non-scroll item with no
+                // baseline falls back to its border-box height at the call site, exactly like
+                // upstream's child_first_baseline(...).unwrap_or(height).
                 float height = output.size().height;
+                float baselineValue = BaselineHelper.childFirstBaseline(
+                    output, item.overflow.y.isScrollContainer());
                 float marginTop = item.margin != null ? item.margin.top : 0f;
 
                 // baseline = first_baseline.y or height, plus margin.top

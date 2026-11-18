@@ -17,6 +17,7 @@ import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TextAlign;
+import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
@@ -72,7 +73,8 @@ public class BlockComputer {
     private record InFlowLayoutResult(
         float contentHeight, CollapsibleMarginSet firstChildTopMarginSet,
         CollapsibleMarginSet lastChildBottomMarginSet,
-        boolean allChildrenCanBeCollapsedThrough
+        boolean allChildrenCanBeCollapsedThrough,
+        float firstBaseline
     ) {}
 
     /**
@@ -420,10 +422,14 @@ public class BlockComputer {
 
         FloatSize contentSize = computeContentSizeFromChildren(node);
 
+        // The final layout output carries the container's first baseline. The ComputeSize returns
+        // above deliberately stay baseline-less: upstream returns LayoutOutput::from_outer_size
+        // there too (block.rs:482/488/651/656), and only a full layout produces baselines.
+        // Upstream #996.
         return new LayoutOutput(
             finalOuterSize,
             contentSize,
-            new FloatPoint(NaN, NaN),
+            new FloatPoint(NaN, layoutResult.firstBaseline),
             topMargin,
             bottomMargin,
             canBeCollapsedThrough
@@ -576,6 +582,9 @@ public class BlockComputer {
         CollapsibleMarginSet activeCollapsibleMarginSet = CollapsibleMarginSet.zero();
         boolean isCollapsingWithFirstMarginSet = true;
         boolean allChildrenCanBeCollapsedThrough = true;
+        // The container's first baseline: the first baseline of its first in-flow child that has
+        // one. NaN until such a child is laid out (upstream #996, refined by #1323).
+        float firstBaseline = NaN;
 
         // Check RTL once at the start
         boolean isRtl = direction != null && direction.isRtl();
@@ -742,6 +751,17 @@ public class BlockComputer {
                 }
             }
 
+            // A block container's first baseline is the first baseline of its first in-flow child
+            // that has one. The child's relative offset does not affect it: y includes
+            // insetOffsetY, so the baseline location subtracts it again (upstream #996 added the
+            // propagation, #1323 removed the relative offset). Scroll-container children are
+            // clamped to their border box, and synthesize a baseline at the border-box bottom edge
+            // when they report none (upstream #1126 / #1323 BaselineHelper).
+            if (Float.isNaN(firstBaseline)) {
+                firstBaseline = BaselineHelper.childFirstBaseline(
+                    itemOutput, y - insetOffsetY, item.overflow.y.isScrollContainer());
+            }
+
             FloatSize scrollbarSize = new FloatSize(
                 item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
                 item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
@@ -806,7 +826,8 @@ public class BlockComputer {
             contentHeight,
             firstChildTopMarginSet,
             lastChildBottomMarginSet,
-            allChildrenCanBeCollapsedThrough
+            allChildrenCanBeCollapsedThrough,
+            firstBaseline
         );
     }
 
