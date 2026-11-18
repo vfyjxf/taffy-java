@@ -297,6 +297,9 @@ final class GeneratorOptions {
         if (b.freshnessAllowlist != null && !b.check) {
             throw new UsageException("--freshness-allowlist requires --check");
         }
+        if (b.freshnessAllowlist != null && b.source == Source.WPT) {
+            throw new UsageException("--freshness-allowlist is taffy-only; use --source taffy or --source all");
+        }
         return b.build();
     }
 

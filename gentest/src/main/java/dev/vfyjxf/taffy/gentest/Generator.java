@@ -73,9 +73,11 @@ public final class Generator {
         }
 
         // Read (and validate) the allowlist before paying the Chrome startup cost.
-        List<FreshnessAllowlist.Entry> freshnessAllowlist = options.freshnessAllowlist == null
-                ? List.of()
-                : FreshnessAllowlist.read(options.freshnessAllowlist);
+        // The allowlist is taffy-only: WPT output is not committed and its paths
+        // would otherwise look like unmatched entries.
+        List<FreshnessAllowlist.Entry> freshnessAllowlist = taffy && options.freshnessAllowlist != null
+                ? FreshnessAllowlist.read(options.freshnessAllowlist)
+                : List.of();
 
         Path outputRoot = options.outRoot;
         Path temporaryRoot = null;
@@ -124,7 +126,7 @@ public final class Generator {
                     Path expected = options.outRoot.resolve(packagePath(options.wptPackage()));
                     return compareTrees(expected, packageRoot,
                             "./gradlew :gentest:genWpt -PwptRoot=<wpt checkout>",
-                            freshnessAllowlist) ? 0 : 1;
+                            List.of()) ? 0 : 1;
                 }
             }
         } finally {

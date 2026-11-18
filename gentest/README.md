@@ -244,8 +244,9 @@ Expected result: `CHECK PASSED: 7 file(s) byte-identical` followed by
 ### Allowlist for accepted hand edits
 
 `gentest/freshness-allowlist.txt` names individual generated test methods
-that intentionally deviate from regeneration. Whole-file exclusions and silent
-skips are not supported:
+that intentionally deviate from regeneration. It applies to the taffy source
+only (`--freshness-allowlist` is rejected with `--source wpt`). Whole-file
+exclusions and silent skips are not supported:
 
 * every hit prints
   `allowlisted hand edit skipped: <file> :: <@DisplayName> (<reason>)`;
