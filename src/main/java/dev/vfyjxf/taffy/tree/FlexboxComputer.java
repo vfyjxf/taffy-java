@@ -1026,16 +1026,20 @@ public class FlexboxComputer {
                         );
 
                         float measuredMain = isRow ? measured.width : measured.height;
-                        float contentMainSize = measuredMain + marginMain;
 
+                        // FL-04 (#1164): floor the inner contribution first, then add the main-axis margin,
+                        // and only then clamp by the style min/max. The margin must not be clamped away.
+                        //
                         // Asymmetric behavior between row and column containers (matches Webkit/Firefox):
                         // - Row containers: use content size clamped by min/max
                         // - Column containers: content size is at least flex-basis
+                        float innerMainSize = measuredMain;
                         if (isRow) {
-                            contentContribution = TaffyMath.maybeClamp(contentMainSize, styleMinMain, styleMaxMain);
+                            contentContribution = TaffyMath.maybeClamp(
+                                innerMainSize + marginMain, styleMinMain, styleMaxMain);
                         } else {
-                            contentContribution = Math.max(contentMainSize, item.flexBasis);
-                            contentContribution = TaffyMath.maybeClamp(contentContribution, styleMinMain, styleMaxMain);
+                            contentContribution = TaffyMath.maybeClamp(
+                                Math.max(innerMainSize, item.flexBasis) + marginMain, styleMinMain, styleMaxMain);
                         }
                     }
 

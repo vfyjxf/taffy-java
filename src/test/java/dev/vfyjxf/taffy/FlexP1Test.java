@@ -242,4 +242,64 @@ public class FlexP1Test {
         assertSize(tree.getLayout(root), 200f, 0f, "row container max-content size");
         assertEquals(100f, tree.getLayout(item).size().width, EPS, "row item keeps its flex-basis target");
     }
+
+    // ==================================================================
+    // FL-04 (#1164 / adef6dd): in the intrinsic contribution the inner size
+    // is floored/addressed first, then the main-axis margin is added, and
+    // only then the style min/max clamp is applied.
+    //
+    // Upstream fixtures: flex_grow_negative_margin_intrinsic_column and
+    // flex_grow_flex_shrink_negative_margin_intrinsic_column. The gridflex
+    // fixture of the same upstream commit is cross-domain (grid) and skipped.
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-04: negative main-axis margin is applied after the flex-basis floor (column)")
+    void fl04_negativeMarginAppliedAfterFloorColumn() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.COLUMN;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(300f), TaffyDimension.AUTO);
+
+        TaffyStyle itemStyle = withSize(100f, 100f);
+        itemStyle.flexGrow = 1f;
+        itemStyle.flexShrink = 0f;
+        itemStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(-24f), LengthPercentageAuto.ZERO);
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // old: (100 - 24).max(flex-basis = 100) = 100 -> container 100
+        // new: (100.max(100) - 24) = 76 -> container 76
+        assertSize(tree.getLayout(root), 300f, 76f, "column container intrinsic main size");
+        assertSize(tree.getLayout(item), 100f, 100f, "column item size");
+        assertLocation(tree.getLayout(item), 0f, -24f, "column item position");
+    }
+
+    @Test
+    @DisplayName("FL-04: negative main-axis margin is applied after the flex-basis floor (row)")
+    void fl04_negativeMarginAppliedAfterFloorRow() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+
+        TaffyStyle itemStyle = withSize(100f, 100f);
+        itemStyle.flexGrow = 1f;
+        itemStyle.flexShrink = 0f;
+        itemStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.length(-24f), LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(rootStyle, item);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 76f, 100f, "row container intrinsic main size");
+        assertLocation(tree.getLayout(item), -24f, 0f, "row item position");
+    }
 }
