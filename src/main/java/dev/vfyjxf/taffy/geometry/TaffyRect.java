@@ -99,6 +99,20 @@ public final class TaffyRect<T> {
     public static final TaffyRect<Float> ZERO = zero();
 
     /**
+     * Swap the horizontal and vertical sides ({@code left <-> top}, {@code right <-> bottom}).
+     *
+     * <p>Used by tree implementations that lay out a vertical writing mode: transpose the
+     * inputs, run the horizontal-top-to-bottom algorithm, then transpose the result back.
+     * The receiver is never modified.</p>
+     *
+     * @return a new rect whose left/top come from this top/left and whose right/bottom come from
+     *         this bottom/right
+     */
+    public TaffyRect<T> transpose() {
+        return new TaffyRect<>(top, bottom, left, right);
+    }
+
+    /**
      * Map each edge using the provided function
      */
     public <R> TaffyRect<R> map(Function<T, R> mapper) {

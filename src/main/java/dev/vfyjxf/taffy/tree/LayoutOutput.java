@@ -99,6 +99,38 @@ public record LayoutOutput(
     public static final LayoutOutput DEFAULT = HIDDEN;
 
     /**
+     * Swap the horizontal and vertical axes of the output (inverse of
+     * {@link LayoutInput#transpose()}).
+     *
+     * <p>The geometry is carried through the transposition: {@link #size()},
+     * {@link #contentSize()} and {@link #scrollableOverflow()} swap their axes, and the legacy
+     * {@link #firstBaselines()} point as well as both {@link #baselines()} points swap
+     * {@code x} and {@code y}. The Java baseline type carries both axes, so the baselines are
+     * transposed instead of dropped (upstream only computes the block-axis baseline).</p>
+     *
+     * <p>Collapsible margins and the collapse-through flag are block-axis quantities that have no
+     * meaning on the parent's inline axis, so {@link #topMargin()} and {@link #bottomMargin()} are
+     * reset to {@link CollapsibleMarginSet#ZERO} and {@link #marginsCanCollapseThrough()} to
+     * {@code false}, exactly like upstream taffy #1265. They do not survive a transposition.</p>
+     *
+     * <p>The receiver is never modified; the returned output is a new record instance.</p>
+     *
+     * @return a new transposed output
+     */
+    public LayoutOutput transpose() {
+        return new LayoutOutput(
+            new FloatSize(size.height, size.width),
+            new FloatSize(contentSize.height, contentSize.width),
+            scrollableOverflow.transpose(),
+            firstBaselines.transpose(),
+            new Baselines(baselines.first().transpose(), baselines.last().transpose()),
+            CollapsibleMarginSet.ZERO,
+            CollapsibleMarginSet.ZERO,
+            false
+        );
+    }
+
+    /**
      * Constructor to create a LayoutOutput from just the size and baselines
      */
     public static LayoutOutput fromSizesAndBaselines(
