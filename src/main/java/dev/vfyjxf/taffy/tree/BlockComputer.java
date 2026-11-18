@@ -45,6 +45,20 @@ public class BlockComputer {
         NodeId nodeId;
         int order;
         boolean isTable;
+        /**
+         * Whether this item is a replaced element or a compressible replaced form control. Such
+         * items are exempt from block stretch sizing and cap their min-content contribution
+         * (upstream #1002/#1401).
+         */
+        boolean isCompressibleReplaced;
+        /**
+         * For compressible replaced items, the cap on their min-content contribution from a
+         * percentage {@code width} or {@code max-width} resolved against zero. NaN when the item
+         * has no such cap.
+         * <a href="https://drafts.csswg.org/css-sizing-3/#replaced-percentage-min-contribution">
+         * CSS Sizing 3: replaced percentage min contribution</a>; upstream #1401 (4aca4f49).
+         */
+        float minContentWidthCap = NaN;
         FloatSize size;
         FloatSize minSize;
         FloatSize maxSize;
@@ -506,6 +520,22 @@ public class BlockComputer {
             item.staticPosition = new FloatPoint(0f, 0f);
             item.canBeCollapsedThrough = false;
             item.isTable = childStyle.getItemIsTable();
+            item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
+            // For compressible replaced items a percentage width/max-width resolves against a
+            // zero-width containing block in the min-content contribution, so the item contributes
+            // at most this cap. Upstream #1401 (4aca4f49).
+            if (item.isCompressibleReplaced) {
+                FloatSize resolvedWidth = Resolve.maybeResolveSize(
+                    childStyle.getSize(), new FloatSize(0f, NaN));
+                FloatSize resolvedMaxWidth = Resolve.maybeResolveSize(
+                    childStyle.getMaxSize(), new FloatSize(0f, NaN));
+                float width = resolvedWidth.width;
+                float maxWidth = resolvedMaxWidth.width;
+                float cap = Float.isNaN(width)
+                            ? maxWidth
+                            : (Float.isNaN(maxWidth) ? width : Math.min(width, maxWidth));
+                item.minContentWidthCap = Float.isNaN(cap) ? NaN : cap + boxSizingAdj.width;
+            }
 
             items.add(item);
         }
@@ -536,7 +566,21 @@ public class BlockComputer {
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(true, true)
                 );
-                width = output.size().width + marginSum;
+                float measuredWidth = output.size().width;
+                // The cap is the item's min-content contribution, so its fit-content contribution
+                // is min(max-content, max(cap, available)). Upstream #1401 (4aca4f49).
+                float cap = item.minContentWidthCap;
+                if (!Float.isNaN(cap)) {
+                    if (adjustedAvailable.isMinContent()) {
+                        measuredWidth = Math.min(measuredWidth, cap);
+                    } else if (adjustedAvailable.isDefinite()) {
+                        measuredWidth = Math.min(measuredWidth, Math.max(cap, adjustedAvailable.getValue()));
+                    }
+                    if (!Float.isNaN(item.minSize.width)) {
+                        measuredWidth = Math.max(measuredWidth, item.minSize.width);
+                    }
+                }
+                width = measuredWidth + marginSum;
             }
             width = Math.max(width, item.paddingBorderSum.width);
             maxChildWidth = Math.max(maxChildWidth, width);
