@@ -13,7 +13,10 @@ import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.util.MeasureContext;
 import dev.vfyjxf.taffy.util.MeasureFunc;
+import dev.vfyjxf.taffy.util.MeasureFuncAdapter;
+import dev.vfyjxf.taffy.util.MeasureFunction;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
@@ -26,10 +29,36 @@ public class LayoutComputer {
 
     private final TaffyTree tree;
     private final MeasureFunc defaultMeasureFunc;
+    private final MeasureFunction defaultMeasureFunction;
 
+    /**
+     * Creates a layout computer with a legacy default measure function.
+     *
+     * <p>Kept for compatibility; equivalent to
+     * {@code new LayoutComputer(tree, defaultMeasureFunc, null)}.</p>
+     */
     public LayoutComputer(TaffyTree tree, MeasureFunc defaultMeasureFunc) {
+        this(tree, defaultMeasureFunc, null);
+    }
+
+    /**
+     * Creates a layout computer with both a legacy and a new-style default measure function
+     * (S1, 1.2 additive).
+     *
+     * <p>Both defaults are fallbacks for leaves without a per-node callback. The per-node
+     * selection order is documented on {@link #measureLeaf}; a default
+     * {@link MeasureFunction} is consulted before a legacy {@link MeasureFunc}, whether that
+     * legacy callback is configured per node or as the default.</p>
+     *
+     * @param tree                    the tree being laid out
+     * @param defaultMeasureFunc      the legacy default measure callback, or {@code null}
+     * @param defaultMeasureFunction  the new-style default measure callback, or {@code null}
+     */
+    public LayoutComputer(TaffyTree tree, MeasureFunc defaultMeasureFunc,
+                          MeasureFunction defaultMeasureFunction) {
         this.tree = tree;
         this.defaultMeasureFunc = defaultMeasureFunc;
+        this.defaultMeasureFunction = defaultMeasureFunction;
     }
 
     /**
@@ -463,20 +492,21 @@ public class LayoutComputer {
             if (hasStylesPreventingBeingCollapsedThrough) {
                 canCollapseThrough = false;
             } else if (size.height == 0) {
-                // Check if node has a measure function that would return content
-                MeasureFunc measureFunc = tree.getMeasureFunc(node);
-                if (measureFunc == null) {
-                    measureFunc = defaultMeasureFunc;
-                }
-                if (measureFunc != null) {
-                    // Call measure with null height to get actual content height
-                    // This determines if there's a "line box" that prevents collapse through
-                    FloatSize measureKnownDimensions = new FloatSize(
-                        TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
-                        Float.NaN  // Pass null height to get actual content height
-                    );
-                    FloatSize measuredSize = measureFunc.measure(measureKnownDimensions, availableSpace);
-                    float measuredHeight = Float.isNaN(measuredSize.height) ? 0f : measuredSize.height;
+                // Call measure with null height to get actual content height
+                // This determines if there's a "line box" that prevents collapse through.
+                // This early-return path goes through the same measure selection order as the main
+                // leaf path, but only the measured content height is consumed: the returned
+                // baselines/scrollable overflow are not attached to the style-sized output.
+                FloatSize measureKnownDimensions = new FloatSize(
+                    TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
+                    Float.NaN  // Pass null height to get actual content height
+                );
+                LayoutOutput measuredOutput = measureLeaf(
+                    node, inputs, style, measureKnownDimensions, availableSpace);
+                if (measuredOutput != null) {
+                    float measuredHeight = Float.isNaN(measuredOutput.size().height)
+                                          ? 0f
+                                          : measuredOutput.size().height;
                     canCollapseThrough = measuredHeight == 0;
                 } else {
                     canCollapseThrough = true;
@@ -523,23 +553,18 @@ public class LayoutComputer {
             )
         );
 
-        // Use measure function if available
-        MeasureFunc measureFunc = tree.getMeasureFunc(node);
-        if (measureFunc == null) {
-            measureFunc = defaultMeasureFunc;
-        }
-
-        FloatSize measuredSize;
-        if (measureFunc != null) {
-            // Subtract content box inset (incl. scrollbar) from known dimensions to get content area
-            FloatSize measureKnownDimensions = new FloatSize(
-                TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
-                TaffyMath.maybeSub(styledBasedKnownDimensions.height, contentBoxInsetSize.height)
-            );
-            measuredSize = measureFunc.measure(measureKnownDimensions, contentAvailableSpace);
-        } else {
-            measuredSize = new FloatSize(0f, 0f);
-        }
+        // Use a measure callback if available. The output size is a content size (same semantics
+        // as the legacy MeasureFunc FloatSize); the padding/border/scrollbar inset is added below.
+        // Subtract content box inset (incl. scrollbar) from known dimensions to get content area
+        FloatSize measureKnownDimensions = new FloatSize(
+            TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
+            TaffyMath.maybeSub(styledBasedKnownDimensions.height, contentBoxInsetSize.height)
+        );
+        LayoutOutput measuredOutput = measureLeaf(
+            node, inputs, style, measureKnownDimensions, contentAvailableSpace);
+        FloatSize measuredSize = measuredOutput != null
+                                 ? measuredOutput.size()
+                                 : new FloatSize(0f, 0f);
 
         // Compute final size
         // For measured content, add contentBoxInsetSize (incl. scrollbar) to content size
@@ -584,17 +609,91 @@ public class LayoutComputer {
                                      && size.height == 0
                                      && measuredHeight == 0;
 
+        // Baselines and scrollable overflow reported by a MeasureFunction are propagated to the
+        // final output (S1). A legacy MeasureFunc goes through MeasureFuncAdapter, which leaves
+        // both empty, exactly like the pre-1.2 leaf path. The legacy firstBaselines field is kept
+        // in sync with the new Baselines.first() value so old and new consumers observe the same
+        // baseline.
+        Baselines baselines = measuredOutput != null ? measuredOutput.baselines() : Baselines.NONE;
+        ScrollableOverflow scrollableOverflow = measuredOutput != null
+                                                ? measuredOutput.scrollableOverflow()
+                                                : ScrollableOverflow.ZERO;
+
         return new LayoutOutput(
             size,
             new FloatSize(
                 (Float.isNaN(measuredSize.width) ? 0f : measuredSize.width) + padding.left + padding.right,
                 (Float.isNaN(measuredSize.height) ? 0f : measuredSize.height) + padding.top + padding.bottom
             ),
-            new FloatPoint(Float.NaN, Float.NaN),
+            scrollableOverflow,
+            baselines.first(),
+            baselines,
             CollapsibleMarginSet.ZERO,
             CollapsibleMarginSet.ZERO,
             canCollapseThrough
         );
+    }
+
+    /**
+     * Invokes the measure callback that applies to a leaf node, if any.
+     *
+     * <p><b>Selection order (S1):</b></p>
+     * <ol>
+     *   <li>the node's new-style {@link MeasureFunction};</li>
+     *   <li>the computer's default new-style {@link MeasureFunction};</li>
+     *   <li>the node's legacy {@link MeasureFunc}, wrapped in {@link MeasureFuncAdapter};</li>
+     *   <li>the computer's default legacy {@link MeasureFunc}, wrapped in {@link MeasureFuncAdapter}.</li>
+     * </ol>
+     *
+     * <p>The legacy {@code MeasureFunc} and {@code defaultMeasureFunc} parameters are adapted at
+     * the call site, so both kinds of callback flow through one code path. A node has at most one
+     * callback configured at a time ({@code TaffyTree} enforces the mutual exclusion), but the
+     * order above is still well defined if both slots were somehow populated.</p>
+     *
+     * <p>The {@link MeasureContext#input()} is a measure-specific derived input, not the raw
+     * {@code LayoutInput} of the surrounding pass. On the main leaf path {@code knownDimensions}
+     * and {@code availableSpace} are content-box values; on the early-return collapse-through probe
+     * the available space is the layout input's available space and the height stays {@code NaN},
+     * exactly as the pre-1.2 code called a legacy measure function. In both cases the arguments
+     * forwarded by {@link MeasureFuncAdapter} are identical to the ones the legacy path used.</p>
+     *
+     * @param node            the leaf node being measured
+     * @param inputs          the layout inputs of the surrounding layout pass
+     * @param style           the resolved style of the node
+     * @param knownDimensions content-box known dimensions for the callback
+     * @param availableSpace  available space for the callback (see above)
+     * @return the callback output, or {@code null} when no measure callback applies
+     */
+    private LayoutOutput measureLeaf(NodeId node, LayoutInput inputs, TaffyStyle style,
+                                     FloatSize knownDimensions,
+                                     TaffySize<AvailableSpace> availableSpace) {
+        MeasureFunction measureFunction = tree.getMeasureFunction(node);
+        if (measureFunction == null) {
+            measureFunction = defaultMeasureFunction;
+        }
+        if (measureFunction == null) {
+            MeasureFunc legacyMeasureFunc = tree.getMeasureFunc(node);
+            if (legacyMeasureFunc == null) {
+                legacyMeasureFunc = defaultMeasureFunc;
+            }
+            if (legacyMeasureFunc != null) {
+                measureFunction = new MeasureFuncAdapter(legacyMeasureFunc);
+            }
+        }
+        if (measureFunction == null) {
+            return null;
+        }
+
+        LayoutInput measureInput = inputs
+            .withKnownDimensions(knownDimensions)
+            .withAvailableSpace(availableSpace);
+        MeasureContext measureContext = new MeasureContext(
+            measureInput,
+            style,
+            node,
+            tree.getNodeContext(node)
+        );
+        return measureFunction.measure(measureContext);
     }
 
     /**

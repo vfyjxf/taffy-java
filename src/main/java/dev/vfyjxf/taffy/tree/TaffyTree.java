@@ -6,7 +6,9 @@ import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.util.MeasureContext;
 import dev.vfyjxf.taffy.util.MeasureFunc;
+import dev.vfyjxf.taffy.util.MeasureFunction;
 import dev.vfyjxf.taffy.util.RoundLayout;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
@@ -29,8 +31,21 @@ public class TaffyTree {
     /** NodeData storage by node ID - using fastutil for faster primitive key access */
     private final Long2ObjectOpenHashMap<NodeData> nodes;
 
-    /** Context data (measure functions) storage by node ID */
+    /** Context data (legacy measure functions) storage by node ID */
     private final Long2ObjectOpenHashMap<MeasureFunc> nodeContextData;
+
+    /**
+     * Generic per-node measure context (S1, 1.2 additive) storage by node ID.
+     *
+     * <p>This is the {@link MeasureContext#nodeContext()} slot handed to new-style
+     * {@link MeasureFunction} callbacks. It is independent from the measure callback itself:
+     * setting a context does not make a node measurable, and a node without a measure function
+     * can still carry a context.</p>
+     */
+    private final Long2ObjectOpenHashMap<Object> nodeMeasureContexts;
+
+    /** New-style measure functions (S1, 1.2 additive) storage by node ID. */
+    private final Long2ObjectOpenHashMap<MeasureFunction> nodeMeasureFunctions;
 
     /** Children of each node */
     private final Long2ObjectOpenHashMap<List<NodeId>> children;
@@ -57,6 +72,8 @@ public class TaffyTree {
     public TaffyTree(int capacity) {
         this.nodes = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeContextData = new Long2ObjectOpenHashMap<>(capacity);
+        this.nodeMeasureContexts = new Long2ObjectOpenHashMap<>(capacity);
+        this.nodeMeasureFunctions = new Long2ObjectOpenHashMap<>(capacity);
         this.children = new Long2ObjectOpenHashMap<>(capacity);
         this.parents = new Long2ObjectOpenHashMap<>(capacity);
     }
@@ -143,6 +160,34 @@ public class TaffyTree {
     }
 
     /**
+     * Creates and adds a new unattached leaf node with a new-style measure function (S1, 1.2
+     * additive).
+     *
+     * <p>This is the {@link MeasureFunction} counterpart of
+     * {@link #newLeafWithMeasure(TaffyStyle, MeasureFunc)}: exactly one measure callback is
+     * attached to the node, so the new-style slot is populated and the legacy slot stays empty.</p>
+     *
+     * @param style       the style of the new node
+     * @param measureFunc the new-style measure callback, or {@code null} for none
+     * @return the id of the created node
+     */
+    public NodeId newLeafWithMeasureFunction(TaffyStyle style, MeasureFunction measureFunc) {
+        long id = nodeIdCounter.getAndIncrement();
+        NodeId nodeId = new NodeId(id);
+
+        NodeData data = new NodeData(style);
+        data.setHasContext(measureFunc != null);
+        nodes.put(id, data);
+        if (measureFunc != null) {
+            nodeMeasureFunctions.put(id, measureFunc);
+        }
+        children.put(id, new ArrayList<>());
+        parents.put(id, null);
+
+        return nodeId;
+    }
+
+    /**
      * Creates and adds a new node with children.
      */
     public NodeId newWithChildren(TaffyStyle style, NodeId... childNodes) {
@@ -178,6 +223,8 @@ public class TaffyTree {
     public void clear() {
         nodes.clear();
         nodeContextData.clear();
+        nodeMeasureContexts.clear();
+        nodeMeasureFunctions.clear();
         children.clear();
         parents.clear();
     }
@@ -212,12 +259,19 @@ public class TaffyTree {
         parents.remove(key);
         nodes.remove(key);
         nodeContextData.remove(key);
+        nodeMeasureContexts.remove(key);
+        nodeMeasureFunctions.remove(key);
     }
 
     // === Context (Measure Function) Management ===
 
     /**
-     * Sets the measure function for a node.
+     * Sets the legacy measure function for a node.
+     *
+     * <p>Registering a non-null legacy callback replaces a new-style {@link MeasureFunction}
+     * registered on the same node through {@link #setMeasureFunction(NodeId, MeasureFunction)}:
+     * a node has at most one measure callback. Passing {@code null} only clears the legacy slot
+     * and leaves a new-style callback in place.</p>
      */
     public void setMeasureFunc(NodeId node, MeasureFunc measureFunc) {
         long key = node.getId();
@@ -227,21 +281,109 @@ public class TaffyTree {
         }
         
         if (measureFunc != null) {
-            data.setHasContext(true);
+            nodeMeasureFunctions.remove(key);
             nodeContextData.put(key, measureFunc);
         } else {
-            data.setHasContext(false);
             nodeContextData.remove(key);
         }
+        data.setHasContext(measureFunc != null || nodeMeasureFunctions.containsKey(key));
         
         markDirty(node);
     }
 
     /**
-     * Gets the measure function for a node.
+     * Gets the legacy measure function for a node.
+     *
+     * <p>Returns {@code null} when the node has no legacy callback. In particular, after a
+     * successful {@link #setMeasureFunction(NodeId, MeasureFunction)} call the new-style callback
+     * replaces the legacy one, so this getter returns {@code null} even though the node is
+     * measurable; use {@link #getMeasureFunction(NodeId)} to read the new-style slot.</p>
      */
     public MeasureFunc getMeasureFunc(NodeId node) {
         return nodeContextData.get(node.getId());
+    }
+
+    /**
+     * Sets the new-style measure function for a node (S1, 1.2 additive).
+     *
+     * <p>The callback receives a {@link MeasureContext} with the content-box layout inputs, the
+     * node style, the node id and the generic node context, and returns a
+     * {@code LayoutOutput} whose size is treated as the content size. Registering a non-null
+     * callback replaces a legacy {@link MeasureFunc} registered on the same node: a node has at
+     * most one measure callback. Passing {@code null} only clears the new-style slot and leaves a
+     * legacy callback in place.</p>
+     *
+     * <p>Like {@link #setMeasureFunc(NodeId, MeasureFunc)}, this invalidates the node's cached
+     * layout and marks it (and its ancestors) dirty.</p>
+     *
+     * @param node        the node to set the callback on
+     * @param measureFunc the new-style callback, or {@code null} to clear it
+     * @throws TaffyException if the node does not exist
+     */
+    public void setMeasureFunction(NodeId node, MeasureFunction measureFunc) {
+        long key = node.getId();
+        NodeData data = nodes.get(key);
+        if (data == null) {
+            throw TaffyException.invalidInputNode(node);
+        }
+
+        if (measureFunc != null) {
+            nodeContextData.remove(key);
+            nodeMeasureFunctions.put(key, measureFunc);
+        } else {
+            nodeMeasureFunctions.remove(key);
+        }
+        data.setHasContext(measureFunc != null || nodeContextData.containsKey(key));
+
+        markDirty(node);
+    }
+
+    /**
+     * Gets the new-style measure function for a node (S1, 1.2 additive).
+     *
+     * @param node the node to query
+     * @return the registered {@link MeasureFunction}, or {@code null} if none is set
+     */
+    public MeasureFunction getMeasureFunction(NodeId node) {
+        return nodeMeasureFunctions.get(node.getId());
+    }
+
+    /**
+     * Sets the generic measure context for a node (S1, 1.2 additive).
+     *
+     * <p>The context is opaque to the layout algorithms: it is only passed to a
+     * {@link MeasureFunction} through {@link MeasureContext#nodeContext()}, which lets a caller
+     * attach text, a resource handle or any other state without closing over it. Setting or
+     * clearing the context invalidates the node's cached layout and marks it (and its ancestors)
+     * dirty, because the context can change what the measure callback returns.</p>
+     *
+     * @param node    the node to set the context on
+     * @param context the context object, or {@code null} to clear it
+     * @throws TaffyException if the node does not exist
+     */
+    public void setNodeContext(NodeId node, Object context) {
+        long key = node.getId();
+        if (!nodes.containsKey(key)) {
+            throw TaffyException.invalidInputNode(node);
+        }
+
+        if (context != null) {
+            nodeMeasureContexts.put(key, context);
+        } else {
+            nodeMeasureContexts.remove(key);
+        }
+
+        markDirty(node);
+    }
+
+    /**
+     * Gets the generic measure context for a node (S1, 1.2 additive).
+     *
+     * @param node the node to query
+     * @return the context set through {@link #setNodeContext(NodeId, Object)}, or {@code null}
+     */
+    public Object getNodeContext(NodeId node) {
+        return nodeMeasureContexts.get(node.getId());
     }
 
     // === Child Management ===
@@ -737,17 +879,44 @@ public class TaffyTree {
      * Computes the layout for the tree starting from the given root node.
      */
     public void computeLayout(NodeId rootNode, TaffySize<AvailableSpace> availableSpace) {
-        computeLayoutWithMeasure(rootNode, availableSpace, null);
+        computeLayoutWithMeasureFunction(rootNode, availableSpace, (MeasureFunction) null);
     }
 
     /**
-     * Computes the layout with a custom measure function for all nodes.
+     * Computes the layout with a default new-style measure function (S1, 1.2 additive).
+     *
+     * <p>The default is consulted for every leaf node that has no per-node measure callback of
+     * its own; see {@code LayoutComputer} for the full precedence. This is the new-terminology
+     * counterpart of {@link #computeLayoutWithMeasure(NodeId, TaffySize, MeasureFunc)}; both entry
+     * points share the same layout computation and rounding. It is deliberately a separate method
+     * name (not an overload of {@code computeLayout}/{@code computeLayoutWithMeasure}) so that
+     * existing source passing a bare {@code null} as the third argument keeps compiling against a
+     * single applicable signature.</p>
+     *
+     * @param rootNode               the root of the tree to lay out
+     * @param availableSpace         the space to lay the tree out into
+     * @param defaultMeasureFunction the fallback new-style measure callback, or {@code null}
+     */
+    public void computeLayoutWithMeasureFunction(NodeId rootNode,
+                                                 TaffySize<AvailableSpace> availableSpace,
+                                                 MeasureFunction defaultMeasureFunction) {
+        LayoutComputer computer = new LayoutComputer(this, null, defaultMeasureFunction);
+        computer.computeLayout(rootNode, availableSpace);
+
+        // Round layouts if enabled
+        if (useRounding) {
+            RoundLayout.roundLayout(this, rootNode);
+        }
+    }
+
+    /**
+     * Computes the layout with a custom legacy measure function for all nodes.
      */
     public void computeLayoutWithMeasure(NodeId rootNode, TaffySize<AvailableSpace> availableSpace,
                                           MeasureFunc defaultMeasureFunc) {
         // This will be implemented by the compute module
         // For now, delegate to the LayoutComputer
-        LayoutComputer computer = new LayoutComputer(this, defaultMeasureFunc);
+        LayoutComputer computer = new LayoutComputer(this, defaultMeasureFunc, null);
         computer.computeLayout(rootNode, availableSpace);
         
         // Round layouts if enabled
