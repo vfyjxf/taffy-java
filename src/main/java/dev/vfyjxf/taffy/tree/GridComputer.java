@@ -169,8 +169,14 @@ public class GridComputer {
         boolean crossesFlexibleRow;
 
         // Caches for intrinsic size computation. These caches are only valid for a single run of the track-sizing algorithm.
-        // Cache for the available_space input to intrinsic sizing computation (for cache invalidation)
-        FloatSize availableSpaceCache;
+        // Caches for the available_space input used to compute the intrinsic contributions, one per axis
+        // (GR-08 / upstream #1227). They are recorded when a contribution is actually computed and are
+        // compared by the track-sizing re-run checks to decide whether a contribution can have changed.
+        // A single shared field was wrong: the block-axis measurement clobbered the inline-axis input
+        // (writing a size whose width is NaN), so the row re-run check always saw "input changed" and
+        // re-measured every item.
+        FloatSize inlineContributionInputCache;
+        FloatSize blockContributionInputCache;
         // Cache for the known_dimensions input to intrinsic sizing computation, together with the
         // inputs it was computed for. The min- and max-content contributions of an item are both
         // computed from the same known_dimensions, so sharing the result halves that work
@@ -220,6 +226,9 @@ public class GridComputer {
             }
             float contribution = computeMinContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
             minContentContributionWidth = contribution;
+            // Record the input this contribution was computed for (only on a cache miss, so the
+            // recorded input always matches the cached contribution).
+            inlineContributionInputCache = availableSpace;
             return contribution;
         }
 
@@ -235,6 +244,7 @@ public class GridComputer {
             }
             float contribution = computeMaxContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
             maxContentContributionWidth = contribution;
+            inlineContributionInputCache = availableSpace;
             return contribution;
         }
 
@@ -250,6 +260,7 @@ public class GridComputer {
             }
             float contribution = computeMaxContentContributionHeight(layoutComputer, availableSpace, innerNodeSize);
             maxContentContributionHeight = contribution;
+            blockContributionInputCache = availableSpace;
             return contribution;
         }
 
@@ -734,9 +745,12 @@ public class GridComputer {
             }
         }
 
-        // Clear item available_space_cache after initial column sizing (Rust: items.iter_mut().for_each(|item| item.available_space_cache = None))
+        // Clear the inline-axis contribution input cache after initial column sizing (Rust:
+        // items.iter_mut().for_each(|item| item.grid_area_size_cache = None)): the container's inner
+        // width is now definite, so any input recorded during column sizing is stale.
         for (GridItem item : items) {
-            item.availableSpaceCache = null;
+            item.inlineContributionInputCache = null;
+            item.blockContributionInputCache = null;
             item.clearKnownDimensionsCache();
         }
 
@@ -815,9 +829,10 @@ public class GridComputer {
                 float itemHeight = computeItemAvailableHeight(item, finalRowSizes, finalGap);
                 FloatSize itemAvailSpace = new FloatSize(NaN, itemHeight);
 
-                // Check if available space actually changed
-                boolean availSpaceChanged = item.availableSpaceCache == null ||
-                                            !floatEquals(item.availableSpaceCache.height, itemHeight);
+                // Check if the available space used for the cached inline-axis contribution actually
+                // changed (per-axis cache, GR-08 / #1227)
+                boolean availSpaceChanged = item.inlineContributionInputCache == null ||
+                                            !floatEquals(item.inlineContributionInputCache.height, itemHeight);
 
                 if (!availSpaceChanged) {
                     // Available space didn't change, contribution won't change either
@@ -847,7 +862,7 @@ public class GridComputer {
                 boolean hasChanged = Math.abs(newMinContentContribution - item.minContentContributionWidth) > 0.001f;
 
                 // Update cache
-                item.availableSpaceCache = itemAvailSpace;
+                item.inlineContributionInputCache = itemAvailSpace;
                 item.minContentContributionWidth = newMinContentContribution;
                 item.maxContentContributionWidth = null;
                 item.minimumContributionWidth = null;
@@ -860,7 +875,8 @@ public class GridComputer {
         } else {
             // Clear intrinsic width caches since we're definitely re-running due to percentage tracks
             for (GridItem item : items) {
-                item.availableSpaceCache = null;
+                item.inlineContributionInputCache = null;
+                item.blockContributionInputCache = null;
                 item.minContentContributionWidth = null;
                 item.maxContentContributionWidth = null;
                 item.minimumContributionWidth = null;
@@ -902,9 +918,10 @@ public class GridComputer {
                     float itemWidth = computeItemAvailableWidth(item, finalColumnSizes, finalGap);
                     FloatSize itemAvailSpace = new FloatSize(itemWidth, NaN);
 
-                    // Check if available space actually changed
-                    boolean availSpaceChanged = item.availableSpaceCache == null ||
-                                                !floatEquals(item.availableSpaceCache.width, itemWidth);
+                    // Check if the available space used for the cached block-axis contribution actually
+                    // changed (per-axis cache, GR-08 / #1227)
+                    boolean availSpaceChanged = item.blockContributionInputCache == null ||
+                                                !floatEquals(item.blockContributionInputCache.width, itemWidth);
 
                     if (!availSpaceChanged) {
                         continue;
@@ -933,7 +950,7 @@ public class GridComputer {
                     boolean hasChanged = Math.abs(newMinContentContribution - item.minContentContributionHeight) > 0.001f;
 
                     // Update cache
-                    item.availableSpaceCache = itemAvailSpace;
+                    item.blockContributionInputCache = itemAvailSpace;
                     item.minContentContributionHeight = newMinContentContribution;
                     item.maxContentContributionHeight = null;
                     item.minimumContributionHeight = null;
@@ -946,7 +963,8 @@ public class GridComputer {
             } else {
                 // Clear intrinsic height caches
                 for (GridItem item : items) {
-                    item.availableSpaceCache = null;
+                    item.inlineContributionInputCache = null;
+                    item.blockContributionInputCache = null;
                     item.minContentContributionHeight = null;
                     item.maxContentContributionHeight = null;
                     item.minimumContributionHeight = null;
@@ -2530,7 +2548,6 @@ public class GridComputer {
                         // Use cached contribution - key optimization!
                         // Note: getMinContentContributionWidthCached already includes margin, so don't add again
                         FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                        item.availableSpaceCache = availSpace;
                         minContribution = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
                     }
                     frBaseSizes.set(frIdx, Math.max(frBaseSizes.getFloat(frIdx), minContribution));
@@ -2650,7 +2667,6 @@ public class GridComputer {
                             // Use cached contribution - key optimization!
                             // Note: getMaxContentContributionWidthCached already includes margin
                             FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                            item.availableSpaceCache = availSpace;
                             itemContribution = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
                         }
 
@@ -2766,7 +2782,6 @@ public class GridComputer {
 
                             // Use cached contribution - key optimization!
                             FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                            item.availableSpaceCache = availSpace;
 
                             // Measure max-content using cache
                             // Note: cached methods already include margin
@@ -2997,7 +3012,6 @@ public class GridComputer {
 
                 // Use cached contribution - key optimization!
                 FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                item.availableSpaceCache = availSpace;
 
                 // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
                 FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
@@ -3977,7 +3991,6 @@ public class GridComputer {
                         // Use cached contribution - key optimization!
                         // Note: cached methods already include margin
                         FloatSize availSpace = new FloatSize(colWidth, NaN);
-                        item.availableSpaceCache = availSpace;
                         float contentHeight = item.getMaxContentContributionHeightCached(layoutComputer, availSpace, nodeInnerSize);
 
                         float usedByNonFr = 0f;
@@ -4122,7 +4135,6 @@ public class GridComputer {
                         // Use cached contribution - key optimization!
                         // Note: cached methods already include margin
                         FloatSize availSpace = new FloatSize(gridAreaWidth, NaN);
-                        item.availableSpaceCache = availSpace;
                         height = item.getMaxContentContributionHeightCached(layoutComputer, availSpace, nodeInnerSize);
                     }
                 }

@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * P1 low-cost correctness fixes for the grid algorithm.
@@ -205,6 +206,80 @@ class GridP1Test {
         assertEquals(70.0f, tree.getLayout(root).size().width, EPSILON, "second run width");
         assertEquals(80.0f, tree.getLayout(root).size().height, EPSILON, "second run height");
         assertRect(tree.getLayout(child), 0.0f, 0.0f, 70.0f, 80.0f, "second run child");
+    }
+
+    // ------------------------------------------------------------------
+    // GR-08 (#1227): per-axis track-sizing re-run caches
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("GR-08: the column re-run resolves contributions against the known row sizes")
+    void rerunColumnSizingUsesKnownRowSizes() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = gridStyle();
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.auto());
+        rootStyle.gridTemplateRows = List.of(TrackSizingFunction.fixed(100.0f));
+
+        // height: 100% is indefinite while the columns are being sized, and only resolves once the
+        // rows are known. The column re-run must then recompute this item's width contribution.
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.size = new TaffySize<>(TaffyDimension.auto(), TaffyDimension.percent(1.0f));
+        childStyle.aspectRatio = 2.0f;
+        childStyle.justifySelf = dev.vfyjxf.taffy.style.AlignItems.START;
+        NodeId child = tree.newLeaf(childStyle);
+
+        NodeId root = tree.newWithChildren(rootStyle, child);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // Residual: the container's content-sized width still uses the initial (pre-re-run) column sum
+        // (upstream updates the container size when the intrinsic contribution changed -
+        // grid/mod.rs "intrinsic_column_contribution_changed" block, tracked separately).
+        assertRect(tree.getLayout(child), 0.0f, 0.0f, 200.0f, 100.0f, "re-run sized child");
+    }
+
+    @Test
+    @DisplayName("GR-08: the per-axis contribution caches stay valid across repeated layout runs")
+    void perAxisContributionCachesAreStableAcrossRuns() {
+        TaffyTree tree = new TaffyTree();
+        java.util.concurrent.atomic.AtomicInteger measureCount = new java.util.concurrent.atomic.AtomicInteger();
+
+        TaffyStyle rootStyle = gridStyle();
+        // A percentage column forces the column re-run, which is what exercises the per-axis
+        // contribution input caches.
+        rootStyle.gridTemplateColumns = List.of(
+            TrackSizingFunction.percent(0.5f), TrackSizingFunction.fixed(100.0f));
+        rootStyle.gridTemplateRows = List.of(TrackSizingFunction.auto());
+
+        TaffyStyle itemStyle = new TaffyStyle();
+        itemStyle.gridColumn = new TaffyLine<>(GridPlacement.line(2), GridPlacement.line(3));
+        itemStyle.gridRow = new TaffyLine<>(GridPlacement.line(1), GridPlacement.line(2));
+        NodeId item = tree.newLeafWithMeasure(itemStyle, (knownDimensions, availableSpace) -> {
+            measureCount.incrementAndGet();
+            float width = !Float.isNaN(knownDimensions.width) ? knownDimensions.width : 30.0f;
+            float height = !Float.isNaN(knownDimensions.height) ? knownDimensions.height : 20.0f;
+            return new dev.vfyjxf.taffy.geometry.FloatSize(width, height);
+        });
+
+        NodeId root = tree.newWithChildren(rootStyle, item);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertEquals(100.0f, tree.getLayout(item).size().width, EPSILON, "item width");
+        assertEquals(20.0f, tree.getLayout(item).size().height, EPSILON, "item height");
+
+        int firstRunMeasures = measureCount.get();
+        assertEquals(100.0f, tree.getLayout(root).size().width, EPSILON, "container width");
+        assertEquals(20.0f, tree.getLayout(root).size().height, EPSILON, "container height");
+
+        // Re-running the layout with unchanged styles must not change the result and must not keep
+        // growing the number of measurements (the caches are per-run, not per-tree).
+        tree.markDirty(root);
+        tree.computeLayout(root, TaffySize.maxContent());
+        assertEquals(100.0f, tree.getLayout(item).size().width, EPSILON, "item width (second run)");
+        assertEquals(20.0f, tree.getLayout(item).size().height, EPSILON, "item height (second run)");
+        assertTrue(measureCount.get() - firstRunMeasures <= firstRunMeasures + 4,
+            "second layout run measured " + (measureCount.get() - firstRunMeasures) + " times, first run "
+            + firstRunMeasures);
     }
 
     private static void assertRect(Layout layout, float x, float y, float width, float height, String label) {
