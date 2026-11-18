@@ -2047,9 +2047,16 @@ public class FlexboxComputer {
         for (FlexLine line : lines) {
             // Calculate max baseline for this line (needed for baseline alignment)
             float maxBaseline = 0;
+            // FL-11 (#987): the distance from the baseline-aligned group's baseline to the
+            // cross-end edge of the item ("max_baseline_to_bottom_distance" upstream). In a
+            // wrap-reverse container the cross axis is flipped, so this distance is what anchors
+            // the group to the cross-start edge (visually the bottom of the line).
+            float maxBaselineToBottomDistance = 0;
             for (FlexItem item : line.items) {
                 if (participatesInBaselineAlignment(item, isRow)) {
                     maxBaseline = Math.max(maxBaseline, item.baseline);
+                    float itemCross = isRow ? item.outerTargetSize.height : item.outerTargetSize.width;
+                    maxBaselineToBottomDistance = Math.max(maxBaselineToBottomDistance, itemCross - item.baseline);
                 }
             }
 
@@ -2094,7 +2101,8 @@ public class FlexboxComputer {
 
                 // 14. Align all flex items along the cross-axis (no auto margins)
                 // Use the align_flex_items_along_cross_axis logic from Rust
-                item.offsetCross = computeAlignItemsOffset(item, freeSpace, maxBaseline, isRow, isWrapReverse);
+                item.offsetCross = computeAlignItemsOffset(
+                    item, freeSpace, maxBaseline, maxBaselineToBottomDistance, isRow, isWrapReverse);
             }
         }
     }
@@ -2107,8 +2115,18 @@ public class FlexboxComputer {
      * {@code FLEX_START}/{@code FLEX_END} are flex-relative (they flip). See PA-02.
      * Column containers use the same wrap-reverse flip for the flex-relative values here;
      * any column/writing-mode refinements are tracked separately (P6).
+     * <p>
+     * {@code maxBaselineToBottomDistance} is the largest distance between a baseline-participating
+     * item's baseline and its outer cross-end edge; it anchors the baseline group to the cross-start
+     * edge of a wrap-reverse line (upstream #987, FL-11).
      */
-    private float computeAlignItemsOffset(FlexItem item, float freeSpace, float maxBaseline, boolean isRow, boolean isWrapReverse) {
+    private float computeAlignItemsOffset(
+        FlexItem item,
+        float freeSpace,
+        float maxBaseline,
+        float maxBaselineToBottomDistance,
+        boolean isRow,
+        boolean isWrapReverse) {
         AlignSelf alignSelf = item.alignSelf;
 
         switch (alignSelf) {
@@ -2124,6 +2142,13 @@ public class FlexboxComputer {
                 return freeSpace / 2;
             case BASELINE:
                 if (isRow) {
+                    if (isWrapReverse) {
+                        // FL-11 (#987): in a wrap-reverse container the cross axis is flipped, so the
+                        // baseline-aligned group of items is aligned to the cross-start edge, which is
+                        // the bottom of the line: line_cross - max_baseline_to_bottom_distance - baseline.
+                        float lineCrossSize = freeSpace + item.outerTargetSize.height;
+                        return lineCrossSize - maxBaselineToBottomDistance - item.baseline;
+                    }
                     return maxBaseline - item.baseline;
                 } else {
                     // Until we support vertical writing modes, baseline alignment only makes sense if
