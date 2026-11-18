@@ -167,4 +167,105 @@ public class FlexP3Test {
         assertSize(tree.getLayout(inner), 20f, 80f, "stretched item height");
         assertLocation(tree.getLayout(inner), 0f, 10f, "stretched item position");
     }
+
+    // ==================================================================
+    // FL-12 (#1109 / 3ce6bef): an item participates in baseline alignment
+    // only when align-self is baseline AND neither cross-axis margin is
+    // auto. Auto-margin items must be excluded from baseline measurement,
+    // the line's max baseline, and the container's first baseline.
+    //
+    // Upstream fixtures: align_baseline_child_auto_margin_cross_start /
+    // _cross_end (row 200x100, align-items baseline, three 50px column
+    // items of 40/60/50px height, the third with one auto cross margin).
+    // ==================================================================
+
+    private static TaffyStyle columnItem(float width, float height) {
+        TaffyStyle style = flexBox();
+        style.flexDirection = FlexDirection.COLUMN;
+        style.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
+        return style;
+    }
+
+    @Test
+    @DisplayName("FL-12: auto cross-start margin excludes the item from baseline alignment")
+    void fl12_autoCrossStartMarginExcludedFromBaseline() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(100f));
+
+        NodeId first = tree.newWithChildren(columnItem(50f, 40f), tree.newLeaf(withSize(50f, 20f)));
+        NodeId second = tree.newWithChildren(columnItem(50f, 60f), tree.newLeaf(withSize(50f, 30f)));
+        TaffyStyle thirdStyle = columnItem(50f, 50f);
+        thirdStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.auto(), LengthPercentageAuto.ZERO);
+        NodeId third = tree.newWithChildren(thirdStyle, tree.newLeaf(withSize(50f, 45f)));
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second, third);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 200f, 100f, "root size");
+        // max baseline is the 30px baseline of the second item (the auto-margin item no longer counts).
+        assertLocation(tree.getLayout(first), 0f, 10f, "first baseline item");
+        assertLocation(tree.getLayout(second), 50f, 0f, "second baseline item");
+        // auto margin absorbs the 50px free space in the 100px line.
+        assertLocation(tree.getLayout(third), 100f, 50f, "auto cross-start margin item");
+    }
+
+    @Test
+    @DisplayName("FL-12: auto cross-end margin excludes the item from baseline alignment")
+    void fl12_autoCrossEndMarginExcludedFromBaseline() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(100f));
+
+        NodeId first = tree.newWithChildren(columnItem(50f, 40f), tree.newLeaf(withSize(50f, 20f)));
+        NodeId second = tree.newWithChildren(columnItem(50f, 60f), tree.newLeaf(withSize(50f, 30f)));
+        TaffyStyle thirdStyle = columnItem(50f, 50f);
+        thirdStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.auto());
+        NodeId third = tree.newWithChildren(thirdStyle, tree.newLeaf(withSize(50f, 45f)));
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second, third);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 200f, 100f, "root size");
+        assertLocation(tree.getLayout(first), 0f, 10f, "first baseline item");
+        assertLocation(tree.getLayout(second), 50f, 0f, "second baseline item");
+        assertLocation(tree.getLayout(third), 100f, 0f, "auto cross-end margin item");
+    }
+
+    @Test
+    @DisplayName("FL-12: one baseline item plus an auto-margin baseline item is a no-op")
+    void fl12_singleParticipantWithAutoMarginItemIsNoOp() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(100f));
+
+        NodeId first = tree.newWithChildren(columnItem(50f, 40f), tree.newLeaf(withSize(50f, 20f)));
+        TaffyStyle secondStyle = columnItem(50f, 50f);
+        secondStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.auto(), LengthPercentageAuto.ZERO);
+        NodeId second = tree.newWithChildren(secondStyle, tree.newLeaf(withSize(50f, 45f)));
+
+        NodeId root = tree.newWithChildren(rootStyle, first, second);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 200f, 100f, "root size");
+        // Only one item participates, so baseline alignment is a no-op and the first item stays at the top.
+        assertLocation(tree.getLayout(first), 0f, 0f, "single baseline participant");
+        assertLocation(tree.getLayout(second), 50f, 50f, "auto cross-start margin item");
+    }
 }
+

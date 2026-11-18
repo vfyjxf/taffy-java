@@ -89,6 +89,17 @@ public class FlexboxComputer {
     }
 
     /**
+     * Returns true if the item participates in baseline alignment: it has {@code align-self: baseline}
+     * and neither of its cross-axis margins is {@code auto}.
+     * See <a href="https://www.w3.org/TR/css-flexbox-1/#baseline-participation">baseline participation</a>.
+     */
+    private static boolean participatesInBaselineAlignment(FlexItem item, boolean isRow) {
+        boolean crossStartAuto = isRow ? item.marginIsAuto.top : item.marginIsAuto.left;
+        boolean crossEndAuto = isRow ? item.marginIsAuto.bottom : item.marginIsAuto.right;
+        return item.alignSelf == AlignSelf.BASELINE && !crossStartAuto && !crossEndAuto;
+    }
+
+    /**
      * Computes flexbox layout for a node.
      */
     public LayoutOutput compute(NodeId node, LayoutInput inputs, TaffyStyle style) {
@@ -1600,7 +1611,7 @@ public class FlexboxComputer {
             // Check if any items have baseline alignment
             boolean hasBaselineItem = false;
             for (FlexItem item : line.items) {
-                if (item.alignSelf == AlignSelf.BASELINE) {
+                if (participatesInBaselineAlignment(item, isRow)) {
                     hasBaselineItem = true;
                     break;
                 }
@@ -1612,7 +1623,7 @@ public class FlexboxComputer {
             // Count baseline-aligned items
             int baselineCount = 0;
             for (FlexItem item : line.items) {
-                if (item.alignSelf == AlignSelf.BASELINE) {
+                if (participatesInBaselineAlignment(item, isRow)) {
                     baselineCount++;
                 }
             }
@@ -1625,7 +1636,7 @@ public class FlexboxComputer {
 
             for (FlexItem item : line.items) {
                 // Only calculate baselines for children participating in baseline alignment
-                if (item.alignSelf != AlignSelf.BASELINE) {
+                if (!participatesInBaselineAlignment(item, isRow)) {
                     continue;
                 }
 
@@ -1800,7 +1811,7 @@ public class FlexboxComputer {
             // Calculate max baseline among baseline-aligned items
             float maxBaseline = 0;
             for (FlexItem item : line.items) {
-                if (item.alignSelf == AlignSelf.BASELINE) {
+                if (participatesInBaselineAlignment(item, isRow)) {
                     maxBaseline = Math.max(maxBaseline, item.baseline);
                 }
             }
@@ -1812,11 +1823,9 @@ public class FlexboxComputer {
             // 3. Line cross size is max of these
             float lineCrossSize = 0;
             for (FlexItem item : line.items) {
-                boolean crossStartAuto = isRow ? item.marginIsAuto.top : item.marginIsAuto.left;
-                boolean crossEndAuto = isRow ? item.marginIsAuto.bottom : item.marginIsAuto.right;
                 float itemHypotheticalOuterCross = isRow ? item.hypotheticalOuterSize.height : item.hypotheticalOuterSize.width;
 
-                if (item.alignSelf == AlignSelf.BASELINE && !crossStartAuto && !crossEndAuto) {
+                if (participatesInBaselineAlignment(item, isRow)) {
                     // Baseline-aligned: max_baseline - baseline + hypothetical_outer_cross
                     float contribution = maxBaseline - item.baseline + itemHypotheticalOuterCross;
                     lineCrossSize = Math.max(lineCrossSize, contribution);
@@ -2033,7 +2042,7 @@ public class FlexboxComputer {
             // Calculate max baseline for this line (needed for baseline alignment)
             float maxBaseline = 0;
             for (FlexItem item : line.items) {
-                if (item.alignSelf == AlignSelf.BASELINE) {
+                if (participatesInBaselineAlignment(item, isRow)) {
                     maxBaseline = Math.max(maxBaseline, item.baseline);
                 }
             }
@@ -2520,9 +2529,10 @@ public class FlexboxComputer {
         if (!orderedLines.isEmpty()) {
             FlexLine firstLine = orderedLines.get(0);
             if (!firstLine.items.isEmpty()) {
-                // Look for baseline-aligned item or fall back to first item
+                // Look for a participating baseline item or fall back to the first item.
+                // Column containers keep using the startmost item (FL-13 handles reverse/visual order).
                 for (FlexItem item : firstLine.items) {
-                    if (isRow && item.alignSelf == AlignSelf.BASELINE) {
+                    if (!isRow || participatesInBaselineAlignment(item, isRow)) {
                         firstBaselineItem = item;
                         break;
                     }
