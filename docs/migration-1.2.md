@@ -39,13 +39,13 @@ The columns are:
   [`compat-golden/README.md`](../compat-golden/README.md) documents the format.
 - `Field` — the layout field that changes, such as `location.x`,
   `size.height`, `contentSize.width`, or `order`.
-- `old` / `new` — the value before and after the fix, in the snapshot's units
+- `Old` / `New` — the value before and after the fix, in the snapshot's units
   (four decimal places).
 - `Fix` — the PA item that caused the change.
 - `Reason` — a short explanation of the defect.
 - `Since` — the first version that contains the change (`1.2.0`).
 - `RemoveBy` — when the entry may be deleted; bug-fix entries are permanent
-  ("不删除").
+  ("never").
 
 Procedure:
 
