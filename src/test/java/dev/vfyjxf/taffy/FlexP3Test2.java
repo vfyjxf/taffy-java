@@ -64,6 +64,13 @@ public class FlexP3Test2 {
         return style;
     }
 
+    private static TaffyStyle flexColumn(float width, float height) {
+        TaffyStyle style = flexBox();
+        style.flexDirection = FlexDirection.COLUMN_REVERSE;
+        style.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
+        return style;
+    }
+
     private static TaffyStyle block(float width, float height) {
         TaffyStyle style = new TaffyStyle();
         style.display = TaffyDisplay.BLOCK;
@@ -212,5 +219,91 @@ public class FlexP3Test2 {
         assertLocation(tree.getLayout(second), 60f, 80f, "line 1 second item");
         assertLocation(tree.getLayout(third), 0f, 50f, "line 2 first item (startmost)");
         assertLocation(tree.getLayout(fourth), 60f, 70f, "line 2 second item");
+    }
+
+    // ==================================================================
+    // FL-13 (#1127 / 8b01c6a0): a column container's first baseline is
+    // generated from the visually startmost item, which for
+    // column-reverse is the last item in flex order. The container
+    // baseline then drives the parent's baseline alignment.
+    //
+    // Upstream fixture: flex_container_baseline_column_reverse (outer
+    // 200x200 baseline row; the 60x90 column-reverse item packs its 20px
+    // first item at the bottom and its 30px last item above it, so its
+    // first baseline is 40 + 30 = 70).
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-13: a column-reverse container takes its first baseline from the last item")
+    void fl13_columnReverseContainerBaselineUsesStartmostItem() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.length(200f));
+
+        NodeId reference = tree.newLeaf(withSize(50f, 100f));
+
+        NodeId bottom = tree.newLeaf(withSize(60f, 20f));
+        NodeId top = tree.newLeaf(withSize(60f, 30f));
+        NodeId column = tree.newWithChildren(flexColumn(60f, 90f), bottom, top);
+
+        NodeId root = tree.newWithChildren(rootStyle, reference, column);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 200f, 200f, "root size");
+        assertLocation(tree.getLayout(reference), 0f, 0f, "reference item");
+        // The container baseline is the last item's bottom edge (40 + 30 = 70), so the container
+        // is shifted down by the reference baseline (100) minus 70.
+        assertLocation(tree.getLayout(column), 50f, 30f, "column-reverse container");
+        assertLocation(tree.getLayout(bottom), 0f, 70f, "20px item (flex order first, visually bottom)");
+        assertLocation(tree.getLayout(top), 0f, 40f, "30px item (flex order last, visually top)");
+    }
+
+    // ==================================================================
+    // FL-13 with a reversed cross axis: the column-reverse wrap-reverse
+    // container takes the last line in flex-line order (visually
+    // leftmost under wrap-reverse) and the last item of that line.
+    //
+    // Upstream fixture: flex_container_baseline_column_reverse_wrap_reverse
+    // (outer 300x200 baseline row; the 120x130 column-reverse
+    // wrap-reverse item has two lines: {60,60} and {50,40}).
+    // ==================================================================
+
+    @Test
+    @DisplayName("FL-13: a column-reverse wrap-reverse container takes the startmost line and item")
+    void fl13_columnReverseWrapReverseContainerBaseline() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = flexBox();
+        rootStyle.flexDirection = FlexDirection.ROW;
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(300f), TaffyDimension.length(200f));
+
+        NodeId reference = tree.newLeaf(withSize(50f, 150f));
+
+        TaffyStyle columnStyle = flexColumn(120f, 130f);
+        columnStyle.flexWrap = FlexWrap.WRAP_REVERSE;
+        columnStyle.alignContent = AlignContent.FLEX_START;
+        NodeId first = tree.newLeaf(withSize(40f, 60f));
+        NodeId second = tree.newLeaf(withSize(40f, 60f));
+        NodeId third = tree.newLeaf(withSize(40f, 50f));
+        NodeId fourth = tree.newLeaf(withSize(40f, 40f));
+        NodeId column = tree.newWithChildren(columnStyle, first, second, third, fourth);
+
+        NodeId root = tree.newWithChildren(rootStyle, reference, column);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 300f, 200f, "root size");
+        assertLocation(tree.getLayout(reference), 0f, 0f, "reference item");
+        // Startmost line under wrap-reverse is line 2 ({50,40}) at cross offset 40; its visually
+        // startmost item is the last one (40px tall) at main offset 40, so the container baseline
+        // is 40 + 40 = 80 and the container is shifted down by 150 - 80 = 70.
+        assertLocation(tree.getLayout(column), 50f, 70f, "column-reverse wrap-reverse container");
+        assertLocation(tree.getLayout(first), 80f, 70f, "line 1 first item");
+        assertLocation(tree.getLayout(second), 80f, 10f, "line 1 second item");
+        assertLocation(tree.getLayout(third), 40f, 80f, "line 2 first item");
+        assertLocation(tree.getLayout(fourth), 40f, 40f, "line 2 last item (container baseline)");
     }
 }

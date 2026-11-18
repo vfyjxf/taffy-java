@@ -2560,16 +2560,25 @@ public class FlexboxComputer {
         if (!orderedLines.isEmpty()) {
             FlexLine firstLine = orderedLines.get(0);
             if (!firstLine.items.isEmpty()) {
-                // Look for a participating baseline item or fall back to the first item.
-                // Column containers keep using the startmost item (FL-13 handles reverse/visual order).
-                for (FlexItem item : firstLine.items) {
-                    if (!isRow || participatesInBaselineAlignment(item, isRow)) {
-                        firstBaselineItem = item;
-                        break;
+                if (isRow) {
+                    // Row containers generate their first baseline from the first item that
+                    // participates in baseline alignment, falling back to the first item.
+                    for (FlexItem item : firstLine.items) {
+                        if (participatesInBaselineAlignment(item, isRow)) {
+                            firstBaselineItem = item;
+                            break;
+                        }
                     }
-                }
-                if (firstBaselineItem == null) {
-                    firstBaselineItem = firstLine.items.get(0);
+                    if (firstBaselineItem == null) {
+                        firstBaselineItem = firstLine.items.get(0);
+                    }
+                } else {
+                    // FL-13 (#1127): column containers generate their first baseline from the
+                    // visually startmost item, which for column-reverse is the last item in flex
+                    // order (the items are still in flex order here).
+                    firstBaselineItem = isReverse
+                                        ? firstLine.items.get(firstLine.items.size() - 1)
+                                        : firstLine.items.get(0);
                 }
             }
         }
