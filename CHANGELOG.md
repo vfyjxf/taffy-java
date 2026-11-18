@@ -55,6 +55,17 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   descendant of a 100px-tall content-sized abspos box now measures 50px instead
   of 0. The second pass only runs when an axis was content-derived and only
   invalidates that out-of-flow subtree's cache.
+- **P1 batch (flex / block / grid)** — low-cost upstream fixes: flex intrinsic
+  floors, scaled shrink factor, row/column clamping basis, negative-margin
+  contributions, wrap constraints, unresolved-percentage flex basis, stretch /
+  space-* fallbacks and zero floors; block measurement no longer writes layouts,
+  run-mode propagation, ComputeSize margin outputs, percentage padding/margin
+  bases, min-height margin collapse, own margins in `Layout.margin`, cumulative
+  rounding, aspect-ratio height before child layout and abspos auto margins on
+  the used size; grid track/line/span clamps, per-axis sizing caches, empty-axis
+  content alignment, abspos track-edge resolution and bounded fr loops. In RTL,
+  abspos `justify-self` now follows the writing direction. Generated
+  expectations changed only where upstream regenerated them (BK-13).
 
 ### Source breaking
 

@@ -26,6 +26,15 @@ The fixes in this batch:
 | PA-06 | block | `display: none` descendants are cleared instead of keeping stale layouts. |
 | PA-05 | abspos | Content-sized abspos boxes get a definite-final-size second pass; percentage descendants resolve against it. |
 
+## P1 layout fixes
+
+The 1.2.0 batch also includes the P1 low-cost upstream fixes in flex, block and
+grid. They change layout values only in scenarios that hit the fixed defects;
+generated expectations were updated where upstream regenerated them (notably
+BK-13 cumulative rounding: two generated flex baselines and one relayout
+expectation). In RTL, abspos `justify-self` now follows the writing direction
+(`start` = right edge); in-flow alignment is unchanged.
+
 ## New additive API (usually no action required)
 
 1.2.0 also carries the P0-b contract skeleton. It is additive; existing code

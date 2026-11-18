@@ -59,8 +59,13 @@ snapshot.
 - **Deferred**: B-01 (`LayoutInput.knownDimensionsAreDefinite`) needs a record
   component, so it is part of the 2.0 component change; 1.x measure cache keys
   conservatively compare the full parent size instead.
-- **Next**: P1 low-cost upstream fixes (flex/block/grid/OOF), then P2...P7 per
-  the reviewed work list.
+- **P1 (done, tag `p1-complete`)**: low-cost upstream fixes across flex, block
+  and grid (including abspos track edges and empty-axis alignment), plus the
+  gentest scrollbar/readiness/contract work. Remaining partials are tracked in
+  the workspace analysis (grid rerun container size, BK-15's height-only
+  aspect-ratio derivation, BK-04/BL-07 dependency).
+- **Next**: P2 (cache/tree formalization) and P3 (block semantics/baselines)
+  per the reviewed work list.
 
 The detailed, reviewed change list is produced from the commit ranges in
 `Data/taffy-java/analysis/` and is not checked into this repository.
