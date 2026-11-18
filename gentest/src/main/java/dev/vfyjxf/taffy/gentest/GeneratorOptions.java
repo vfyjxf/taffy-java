@@ -39,6 +39,7 @@ final class GeneratorOptions {
     final Set<String> categories = new LinkedHashSet<>();
     final List<String> filters = new ArrayList<>();
     final Path filterFile;
+    final Path freshnessAllowlist;
     final Path chromeBinary;
     final Path chromeDriver;
     final boolean check;
@@ -66,6 +67,7 @@ final class GeneratorOptions {
         this.categories.addAll(b.categories);
         this.filters.addAll(b.filters);
         this.filterFile = b.filterFile;
+        this.freshnessAllowlist = b.freshnessAllowlist;
         this.chromeBinary = b.chromeBinary;
         this.chromeDriver = b.chromeDriver;
         this.check = b.check;
@@ -117,6 +119,7 @@ final class GeneratorOptions {
         final Set<String> categories = new LinkedHashSet<>();
         final List<String> filters = new ArrayList<>();
         Path filterFile;
+        Path freshnessAllowlist;
         Path chromeBinary;
         Path chromeDriver;
         boolean check;
@@ -171,6 +174,8 @@ final class GeneratorOptions {
                     sawLegacy |= arg.equals("--allowlist");
                     b.filterFile = resolve(cwd, value(args, ++i, arg));
                 }
+                case "--freshness-allowlist" ->
+                        b.freshnessAllowlist = resolve(cwd, value(args, ++i, arg));
                 case "--chrome-binary", "--chromeBinary" -> {
                     sawLegacy |= arg.equals("--chromeBinary");
                     b.chromeBinary = resolve(cwd, value(args, ++i, arg));
@@ -288,6 +293,12 @@ final class GeneratorOptions {
         }
         if (b.check && b.dryRun) {
             throw new UsageException("--check and --dry-run are mutually exclusive");
+        }
+        if (b.freshnessAllowlist != null && !b.check) {
+            throw new UsageException("--freshness-allowlist requires --check");
+        }
+        if (b.freshnessAllowlist != null && b.source == Source.WPT) {
+            throw new UsageException("--freshness-allowlist is taffy-only; use --source taffy or --source all");
         }
         return b.build();
     }
@@ -412,6 +423,8 @@ final class GeneratorOptions {
 
                 Verification:
                   --check                    Generate to a temp dir and byte-compare with --out
+                  --freshness-allowlist <f>  --check: accepted hand edits, one per line:
+                                             <path> | <@DisplayName> | reason=... | since=... | removeBy=...
                   --dry-run                  Discover and print planned work without launching Chrome
 
                 WPT fixture conversion:

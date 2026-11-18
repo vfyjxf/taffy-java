@@ -148,9 +148,11 @@ def committedTaffyDir = new File(outputRoot, 'dev/vfyjxf/taffy/generated')
 def committedCategories = committedTaffyDir.isDirectory()
         ? committedTaffyDir.listFiles().findAll { it.isDirectory() }*.name.sort().join(',')
         : ''
-def checkTaffyArgs = taffyArgs + ['--check']
+def freshnessAllowlist = new File(project.projectDir, 'freshness-allowlist.txt')
+def checkTaffyArgs = taffyArgs + ['--check', '--freshness-allowlist', freshnessAllowlist.absolutePath]
 if (!project.hasProperty('category') && !committedCategories.isBlank()) {
-    checkTaffyArgs = taffyArgs + ['--category', committedCategories, '--check']
+    checkTaffyArgs = taffyArgs + ['--category', committedCategories, '--check',
+                                 '--freshness-allowlist', freshnessAllowlist.absolutePath]
 }
 
 registerGenerator('checkGenerated',
@@ -165,8 +167,160 @@ registerGenerator('checkAll',
         'Byte-compare both generated trees against src/test',
         ['--source', 'all',
          '--taffy-root', taffyRoot.absolutePath,
-         '--wpt-root', wptRoot.absolutePath] + outputArgs + ['--check'],
+         '--wpt-root', wptRoot.absolutePath] + outputArgs
+                + ['--check', '--freshness-allowlist', freshnessAllowlist.absolutePath],
         [taffyRoot, wptRoot])
+
+// check* tasks verify the committed tree; they belong to the verification group.
+['checkGenerated', 'checkWpt', 'checkAll'].each { name ->
+    tasks.named(name) {
+        group = 'verification'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generated-test freshness gate (opt-in; see gentest/README.md)
+//
+// checkGenerated regenerates the committed taffy categories into a temp
+// directory and byte-compares them with src/test/java. Chrome and a Rust taffy
+// checkout are required, so the gate is deliberately NOT part of `check` by
+// default. Opt in with -Ptaffy.checkGenerated=true (or TAFFY_CHECK_GENERATED=true);
+// it is then attached to :gentest:check, which an unqualified `./gradlew check`
+// runs in every project.
+// ---------------------------------------------------------------------------
+def checkGeneratedFreshnessEnabled = {
+    def raw = project.findProperty('taffy.checkGenerated')
+    if (raw == null || raw.toString().isBlank()) {
+        raw = System.getenv('TAFFY_CHECK_GENERATED')
+    }
+    return raw != null && raw.toString().trim().equalsIgnoreCase('true')
+}()
+
+def resolveBuildPath = { String raw ->
+    def file = new File(raw)
+    return file.isAbsolute() ? file : new File(projectRoot, raw)
+}
+
+// Small mirror of ChromeOracle's well-known locations, used only to fail fast
+// with actionable advice instead of falling through to a network probe.
+def detectCommonChrome = {
+    def os = System.getProperty('os.name', '').toLowerCase()
+    def home = System.getProperty('user.home', '')
+    def candidates = []
+    if (os.contains('mac')) {
+        candidates += [
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+                '/Applications/Chromium.app/Contents/MacOS/Chromium',
+                new File(home, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome').path,
+                new File(home, 'Applications/Chromium.app/Contents/MacOS/Chromium').path]
+    } else if (os.contains('win')) {
+        def programFiles = System.getenv('ProgramFiles')
+        def programFilesX86 = System.getenv('ProgramFiles(x86)')
+        def localAppData = System.getenv('LOCALAPPDATA')
+        if (programFiles) {
+            candidates += [new File(programFiles, 'Google/Chrome/Application/chrome.exe').path]
+        }
+        if (programFilesX86) {
+            candidates += [new File(programFilesX86, 'Google/Chrome/Application/chrome.exe').path]
+        }
+        if (localAppData) {
+            candidates += [new File(localAppData, 'Google/Chrome/Application/chrome.exe').path]
+        }
+    } else {
+        candidates += [
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable',
+                '/usr/bin/chromium',
+                '/usr/bin/chromium-browser',
+                '/snap/bin/chromium',
+                '/opt/google/chrome/chrome']
+    }
+    return candidates.find { new File(it).isFile() }
+}
+
+tasks.register('checkGeneratedFreshnessPreflight') {
+    group = 'verification'
+    description = 'Validate the inputs of the opt-in generated-test freshness gate (taffy checkout + Chrome)'
+    onlyIf {
+        if (!checkGeneratedFreshnessEnabled) {
+            logger.lifecycle('Generated-test freshness check is opt-in; skipping preflight.')
+            logger.lifecycle('Enable it with: ./gradlew :gentest:checkGeneratedFreshness ' +
+                    '-Ptaffy.checkGenerated=true -PtaffyRoot=<taffy checkout>')
+            return false
+        }
+        return true
+    }
+    doLast {
+        if (!taffyRoot.isDirectory()) {
+            throw new GradleException("""The generated-test freshness check needs a Rust taffy checkout.
+Missing directory: ${taffyRoot}
+Set -PtaffyRoot=<checkout> (or TAFFY_ROOT) to a checkout containing test_fixtures/ and scripts/.
+The committed generated tests match the historical fixture tree 60601a65^; recreate it with:
+  git -C <taffy clone> archive '60601a65^' test_fixtures scripts | tar -x -C /tmp/taffy-2026-03
+then rerun with -PtaffyRoot=/tmp/taffy-2026-03.""")
+        }
+        def fixtures = new File(taffyRoot, 'test_fixtures')
+        if (!fixtures.isDirectory()) {
+            throw new GradleException("""${fixtures} is not a taffy test_fixtures/ directory.
+Point -PtaffyRoot at the Rust checkout root (the directory that contains test_fixtures/ and scripts/).""")
+        }
+        def chromeHint = 'Install Chrome/Chromium, or pass -PchromeBinary=<path> ' +
+                '(or set TAFFY_CHROME_BINARY/CHROME_BIN/CHROME_PATH).'
+        if (chromeBinary != null && !chromeBinary.toString().isBlank()) {
+            def chrome = resolveBuildPath(chromeBinary.toString())
+            if (!chrome.isFile()) {
+                throw new GradleException("Chrome binary not found: ${chrome}\n" + chromeHint)
+            }
+            logger.lifecycle("[checkGeneratedFreshness] Chrome binary: ${chrome}")
+        } else {
+            def detected = detectCommonChrome()
+            if (detected == null) {
+                throw new GradleException("No Chrome/Chromium binary was found for the generated-test freshness check.\n" + chromeHint)
+            }
+            logger.lifecycle("[checkGeneratedFreshness] Chrome binary: ${detected}")
+        }
+        if (chromeDriver != null && !chromeDriver.toString().isBlank()) {
+            def driver = resolveBuildPath(chromeDriver.toString())
+            if (!driver.isFile()) {
+                throw new GradleException("chromedriver not found: ${driver}\n" +
+                        'Check -PchromeDriver (or TAFFY_CHROME_DRIVER/CHROMEDRIVER).')
+            }
+            logger.lifecycle("[checkGeneratedFreshness] chromedriver: ${driver}")
+        } else {
+            logger.lifecycle('[checkGeneratedFreshness] chromedriver: not supplied; Selenium Manager ' +
+                    'will resolve/download it (network access on first run). ' +
+                    'Pass -PchromeDriver=<path> for a hermetic/offline CI run.')
+        }
+    }
+}
+
+tasks.register('checkGeneratedFreshness') {
+    group = 'verification'
+    description = 'Fail when the committed generated taffy tests are stale ' +
+            '(opt-in: -Ptaffy.checkGenerated=true; needs Chrome and a taffy checkout)'
+    onlyIf {
+        if (!checkGeneratedFreshnessEnabled) {
+            logger.lifecycle('Generated-test freshness check is opt-in; skipping.')
+            logger.lifecycle('Enable it with: ./gradlew :gentest:checkGeneratedFreshness ' +
+                    '-Ptaffy.checkGenerated=true -PtaffyRoot=<taffy checkout> [browser options]')
+            return false
+        }
+        return true
+    }
+    if (checkGeneratedFreshnessEnabled) {
+        dependsOn 'checkGenerated'
+    }
+}
+
+if (checkGeneratedFreshnessEnabled) {
+    tasks.named('checkGenerated') {
+        dependsOn 'checkGeneratedFreshnessPreflight'
+    }
+    tasks.named('check') {
+        dependsOn 'checkGeneratedFreshness'
+    }
+}
 
 // Deprecated alias kept for old build scripts. Prefer genTaffy -Pcategory=...
 registerGenerator('genWptFixtures',
