@@ -2681,11 +2681,16 @@ public class FlexboxComputer {
                 knownDimensions = maybeClamp(maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
 
-            LayoutOutput output = layoutComputer.performChildLayout(
+            TaffySize<AvailableSpace> availableSpace = new TaffySize<>(
+                AvailableSpace.definite(containerSize.width),
+                AvailableSpace.definite(containerSize.height)
+            );
+
+            LayoutOutput measuredOutput = layoutComputer.performChildLayout(
                 childId,
                 knownDimensions,
                 new FloatSize(insetRelativeWidth, insetRelativeHeight),
-                new TaffySize<>(AvailableSpace.definite(containerSize.width), AvailableSpace.definite(containerSize.height)),
+                availableSpace,
                 // Absolute positioned nodes need inherent sizing so that min/max constraints and aspect-ratio
                 // resolution are applied by leaf/layout algorithms.
                 SizingMode.INHERENT_SIZE,
@@ -2694,10 +2699,25 @@ public class FlexboxComputer {
 
             FloatSize finalSize = maybeClamp(
                 new FloatSize(
-                    !isNaN(knownDimensions.width) ? knownDimensions.width : output.size().width,
-                    !isNaN(knownDimensions.height) ? knownDimensions.height : output.size().height
+                    !isNaN(knownDimensions.width) ? knownDimensions.width : measuredOutput.size().width,
+                    !isNaN(knownDimensions.height) ? knownDimensions.height : measuredOutput.size().height
                 ),
                 minSz, maxSz
+            );
+
+            // PA-05: when an axis had to be sized from content, the measured output was produced
+            // against an indefinite containing block. Re-run the child layout with the definite
+            // final size so percentage sizes in its subtree resolve against it; the returned
+            // output supplies the content size (and the descendant layouts) used below, while the
+            // final size, auto margins and offsets keep using `finalSize`.
+            LayoutOutput output = layoutComputer.performDefiniteAbsoluteChildLayout(
+                childId,
+                knownDimensions,
+                finalSize,
+                new FloatSize(insetRelativeWidth, insetRelativeHeight),
+                availableSpace,
+                SizingMode.INHERENT_SIZE,
+                measuredOutput
             );
 
             // Calculate free space and expand auto margins

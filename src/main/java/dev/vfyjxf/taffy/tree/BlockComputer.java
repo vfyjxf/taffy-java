@@ -730,22 +730,24 @@ public class BlockComputer {
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
 
-            LayoutOutput output = layoutComputer.performChildLayout(
+            TaffySize<AvailableSpace> availableSpace = new TaffySize<>(
+                AvailableSpace.definite(TaffyMath.clamp(areaWidth, minSz.width, maxSz.width)),
+                AvailableSpace.definite(TaffyMath.clamp(areaHeight, minSz.height, maxSz.height))
+            );
+
+            LayoutOutput measuredOutput = layoutComputer.performChildLayout(
                 item.nodeId,
                 knownDimensions,
                 new FloatSize(areaWidth, areaHeight),
-                new TaffySize<>(
-                    AvailableSpace.definite(TaffyMath.clamp(areaWidth, minSz.width, maxSz.width)),
-                    AvailableSpace.definite(TaffyMath.clamp(areaHeight, minSz.height, maxSz.height))
-                ),
+                availableSpace,
                 SizingMode.CONTENT_SIZE,
                 new TaffyLine<>(false, false)
             );
 
             FloatSize finalSize = maybeClamp(
                 new FloatSize(
-                    Float.isNaN(knownDimensions.width) ? output.size().width : knownDimensions.width,
-                    Float.isNaN(knownDimensions.height) ? output.size().height : knownDimensions.height
+                    Float.isNaN(knownDimensions.width) ? measuredOutput.size().width : knownDimensions.width,
+                    Float.isNaN(knownDimensions.height) ? measuredOutput.size().height : knownDimensions.height
                 ),
                 minSz, maxSz
             );
@@ -754,6 +756,21 @@ public class BlockComputer {
             finalSize = new FloatSize(
                 Math.max(finalSize.width, paddingBorderSum.width),
                 Math.max(finalSize.height, paddingBorderSum.height)
+            );
+
+            // PA-05: when an axis had to be sized from content, the measured output was produced
+            // against an indefinite containing block. Re-run the child layout with the definite
+            // final size so percentage sizes in its subtree resolve against it; the returned
+            // output supplies the content size (and the descendant layouts) used below, while the
+            // final size, auto margins and location keep using `finalSize`.
+            LayoutOutput output = layoutComputer.performDefiniteAbsoluteChildLayout(
+                item.nodeId,
+                knownDimensions,
+                finalSize,
+                new FloatSize(areaWidth, areaHeight),
+                availableSpace,
+                SizingMode.CONTENT_SIZE,
+                measuredOutput
             );
 
             // Calculate non-auto margin (only count if inset is set on that side)
