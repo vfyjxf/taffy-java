@@ -2009,13 +2009,20 @@ public class FlexboxComputer {
     /**
      * Compute the cross-axis offset for a flex item based on align-self.
      * This follows the Rust align_flex_items_along_cross_axis function exactly.
-     * Note: Java's AlignSelf maps START->FLEX_START and END->FLEX_END in fromAlignItems,
-     * so we don't need separate START/END cases here.
+     * <p>
+     * {@code START}/{@code END} are physical (they never flip with wrap-reverse), while
+     * {@code FLEX_START}/{@code FLEX_END} are flex-relative (they flip). See PA-02.
+     * Column containers use the same wrap-reverse flip for the flex-relative values here;
+     * any column/writing-mode refinements are tracked separately (P6).
      */
     private float computeAlignItemsOffset(FlexItem item, float freeSpace, float maxBaseline, boolean isRow, boolean isWrapReverse) {
         AlignSelf alignSelf = item.alignSelf;
 
         switch (alignSelf) {
+            case START:
+                return 0;
+            case END:
+                return freeSpace;
             case FLEX_START:
                 return isWrapReverse ? freeSpace : 0;
             case FLEX_END:
@@ -2852,8 +2859,15 @@ public class FlexboxComputer {
         } else {
             // Use align-self to position
             // Stretch does not apply to absolutely positioned items, treat as flex-start
-            // AlignSelf enum: AUTO, FLEX_START, FLEX_END, CENTER, BASELINE, STRETCH
+            // AlignSelf enum: AUTO, FLEX_START, FLEX_END, CENTER, BASELINE, STRETCH, START, END
+            // START/END are physical (never flip with wrap-reverse); FLEX_START/FLEX_END are
+            // flex-relative and flip under wrap-reverse (PA-02). AUTO/BASELINE/STRETCH keep their
+            // existing flex-start-like fallback: upstream resolves the "normal" fallback to
+            // flex-start rather than start, and the generated wrap-reverse abspos fixtures rely
+            // on it. Writing-mode/RTL refinements are tracked separately (P6).
             return switch (alignSelf) {
+                case START -> contentBoxCrossStart + marginCrossStart;
+                case END -> containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
                 case AUTO, BASELINE, STRETCH, FLEX_START -> {
                     if (isWrapReverse) yield containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
                     yield contentBoxCrossStart + marginCrossStart;
