@@ -69,6 +69,9 @@ jmh {
 
 test {
     useJUnitPlatform()
+    // Forward the golden-update switch from the Gradle CLI (-D...) to the test JVM.
+    // Usage: ./gradlew test --tests 'dev.vfyjxf.taffy.compat.*' -Dtaffy.compat.updateGolden=true
+    systemProperty 'taffy.compat.updateGolden', System.getProperty('taffy.compat.updateGolden', 'false')
 }
 
 tasks.withType(JavaCompile).configureEach {
