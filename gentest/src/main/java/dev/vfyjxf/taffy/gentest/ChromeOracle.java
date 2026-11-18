@@ -111,6 +111,7 @@ final class ChromeOracle implements AutoCloseable {
         if (currentScrollbarWidth >= 0) {
             return currentScrollbarWidth;
         }
+        float measuredPx;
         try {
             Object result = executeScript(
                     "const el = document.createElement('div');"
@@ -120,15 +121,22 @@ final class ChromeOracle implements AutoCloseable {
                             + "const w = el.offsetWidth - el.clientWidth;"
                             + "el.remove();"
                             + "return w;");
-            currentScrollbarWidth = result instanceof Number n ? n.floatValue() : 0f;
+            measuredPx = result instanceof Number n ? n.floatValue() : 0f;
         } catch (RuntimeException ex) {
-            System.err.println("[warn] could not measure scrollbar width: " + ex.getMessage());
-            currentScrollbarWidth = 0f;
+            throw new IllegalStateException(
+                    "could not measure the scrollbar width on " + currentUrl() + ": " + ex.getMessage(), ex);
         }
-        if (currentScrollbarWidth < 0) {
-            currentScrollbarWidth = 0f;
-        }
+        ScrollbarWidth.verify(measuredPx, currentUrl());
+        currentScrollbarWidth = measuredPx;
         return currentScrollbarWidth;
+    }
+
+    private String currentUrl() {
+        try {
+            return driver.getCurrentUrl();
+        } catch (RuntimeException ex) {
+            return "<unknown page: " + ex.getMessage() + ">";
+        }
     }
 
     static Path resolveChromeBinary(Path explicit) {
