@@ -67,9 +67,13 @@ public final class RoundLayout {
             float absoluteX = cumulativeX + nodeX;
             float absoluteY = cumulativeY + nodeY;
 
-            // Round the position
-            float roundedX = round(nodeX);
-            float roundedY = round(nodeY);
+            // Round the position in cumulative (absolute) coordinates, then convert back to a
+            // parent-relative offset: round(abs) - round(parent_abs). Rounding the relative
+            // offset directly made children of a parent at a fractional offset overlap or leave
+            // 1px gaps, because the parent's own rounded edge did not agree with the sum of the
+            // rounded children offsets (BK-13 / upstream #1189).
+            float roundedX = round(absoluteX) - round(cumulativeX);
+            float roundedY = round(absoluteY) - round(cumulativeY);
 
             // Round size based on accumulated absolute position
             float roundedWidth = round(absoluteX + nodeWidth) - round(absoluteX);
@@ -134,8 +138,9 @@ public final class RoundLayout {
         float absoluteX = cumulativeX + nodeX;
         float absoluteY = cumulativeY + nodeY;
 
-        float roundedX = round(nodeX);
-        float roundedY = round(nodeY);
+        // Cumulative-coordinate rounding (see roundLayout: BK-13 / upstream #1189)
+        float roundedX = round(absoluteX) - round(cumulativeX);
+        float roundedY = round(absoluteY) - round(cumulativeY);
         float roundedWidth = round(absoluteX + nodeWidth) - round(absoluteX);
         float roundedHeight = round(absoluteY + nodeHeight) - round(absoluteY);
 
