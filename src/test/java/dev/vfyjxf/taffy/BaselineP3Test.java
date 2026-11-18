@@ -215,4 +215,127 @@ public class BaselineP3Test {
             "baselines.first is the new source of truth");
     }
 
+    // ==================================================================
+    // CR-07 / #996: block containers propagate the first in-flow baseline
+    // ==================================================================
+
+    @Test
+    @DisplayName("CR-07: a block container propagates its first in-flow child's baseline through nesting")
+    void blockPropagatesFirstInFlowChildBaselineThroughNesting() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leaf = measuredLeaf(tree, 20f, 20f, BASELINE);
+        NodeId inner = tree.newWithChildren(autoBlock(), leaf);
+        NodeId outer = tree.newWithChildren(autoBlock(), inner);
+
+        assertBaseline(BASELINE, layoutOutput(tree, inner), "inner block");
+        assertBaseline(BASELINE, layoutOutput(tree, outer), "outer block");
+    }
+
+    @Test
+    @DisplayName("CR-07: the propagated baseline includes the child's position in the block container")
+    void blockBaselineIncludesChildPosition() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leaf = measuredLeaf(tree, 20f, 20f, BASELINE);
+
+        TaffyStyle outerStyle = autoBlock();
+        outerStyle.padding = new TaffyRect<>(
+            dev.vfyjxf.taffy.style.LengthPercentage.ZERO,
+            dev.vfyjxf.taffy.style.LengthPercentage.ZERO,
+            dev.vfyjxf.taffy.style.LengthPercentage.length(5f),
+            dev.vfyjxf.taffy.style.LengthPercentage.ZERO
+        );
+        NodeId outer = tree.newWithChildren(outerStyle, leaf);
+
+        LayoutOutput output = layoutOutput(tree, outer);
+        assertEquals(5f, tree.getUnroundedLayout(leaf).location().y, EPS, "the child sits below the top padding");
+        assertBaseline(5f + BASELINE, output, "block baseline");
+    }
+
+    @Test
+    @DisplayName("CR-07: a relative offset moves the child but not the container's baseline")
+    void blockBaselineIgnoresChildRelativeOffset() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leaf = measuredLeaf(tree, 30f, 30f, 20f);
+
+        TaffyStyle childStyle = autoBlock();
+        childStyle.position = TaffyPosition.RELATIVE;
+        childStyle.inset = new TaffyRect<>(
+            LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO,
+            LengthPercentageAuto.length(7f), LengthPercentageAuto.AUTO
+        );
+        NodeId child = tree.newWithChildren(childStyle, leaf);
+        NodeId outer = tree.newWithChildren(autoBlock(), child);
+
+        LayoutOutput output = layoutOutput(tree, outer);
+
+        assertEquals(7f, tree.getUnroundedLayout(child).location().y, EPS,
+            "the relatively positioned child is moved down by its inset");
+        // Upstream block_container_baseline_ignores_relative_offset: 0 + 20, not 7 + 20.
+        assertBaseline(20f, output, "the relative offset does not enter the block baseline");
+    }
+
+    @Test
+    @DisplayName("CR-07: the first in-flow child that has a baseline provides it, out-of-flow children do not")
+    void blockUsesFirstInFlowChildWithBaseline() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle absoluteStyle = autoBlock();
+        absoluteStyle.position = TaffyPosition.ABSOLUTE;
+        NodeId absolute = tree.newLeafWithMeasureFunction(absoluteStyle,
+            context -> measured(20f, 20f, 99f));
+
+        NodeId plain = tree.newLeaf(block(20f, 20f));
+        NodeId measuredChild = measuredLeaf(tree, 20f, 20f, BASELINE);
+        NodeId outer = tree.newWithChildren(autoBlock(), absolute, plain, measuredChild);
+
+        LayoutOutput output = layoutOutput(tree, outer);
+
+        assertEquals(20f, tree.getUnroundedLayout(measuredChild).location().y, EPS,
+            "the plain 20px child occupies the first line, the measured child the second");
+        assertEquals(0f, tree.getUnroundedLayout(plain).location().y, EPS, "plain child stays first");
+        // The absolute 99px baseline and the plain child's absent baseline both contribute nothing.
+        assertBaseline(20f + BASELINE, output, "block baseline");
+    }
+
+    @Test
+    @DisplayName("CR-07: a block container without any in-flow baseline reports none")
+    void blockWithoutChildBaselineReportsNone() {
+        TaffyTree tree = new TaffyTree();
+        NodeId child = tree.newLeaf(block(20f, 20f));
+        NodeId outer = tree.newWithChildren(autoBlock(), child);
+
+        assertNoBaseline(layoutOutput(tree, outer), "plain block child contributes no baseline");
+    }
+
+    // ==================================================================
+    // CR-07 / #1126: scroll-container children of block containers
+    // ==================================================================
+
+    @Test
+    @DisplayName("CR-07: a block clamps a scroll-container child's baseline to its border box")
+    void blockClampsScrollContainerChildBaseline() {
+        TaffyTree tree = new TaffyTree();
+        NodeId content = measuredLeaf(tree, 30f, 60f, CONTENT_BASELINE);
+        NodeId scroll = tree.newWithChildren(scrollContainer(30f, SCROLL_HEIGHT), content);
+        NodeId outer = tree.newWithChildren(autoBlock(), scroll);
+
+        // The scroll container itself reports the content baseline it got from its child...
+        assertBaseline(CONTENT_BASELINE, layoutOutput(tree, scroll),
+            "the scroll container's own baseline is unclamped");
+        // ...but its block parent clamps it to the scroll container's border box.
+        assertBaseline(SCROLL_HEIGHT, layoutOutput(tree, outer),
+            "the parent block clamps the scroll-container baseline to [0, height]");
+    }
+
+    @Test
+    @DisplayName("CR-07: an empty scroll-container child synthesizes a baseline at its border-box bottom")
+    void blockSynthesizesScrollContainerChildBaseline() {
+        TaffyTree tree = new TaffyTree();
+        NodeId scroll = tree.newLeaf(scrollContainer(30f, 20f));
+        NodeId outer = tree.newWithChildren(autoBlock(), scroll);
+
+        assertBaseline(20f, layoutOutput(tree, outer),
+            "a scroll container without a baseline synthesizes one at its border-box bottom edge");
+    }
+
 }
