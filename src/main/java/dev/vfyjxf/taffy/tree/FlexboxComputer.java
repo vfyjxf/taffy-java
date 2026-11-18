@@ -1032,7 +1032,6 @@ public class FlexboxComputer {
                             contentContribution = Math.max(contentMainSize, item.flexBasis);
                             contentContribution = TaffyMath.maybeClamp(contentContribution, styleMinMain, styleMaxMain);
                         }
-                        contentContribution = Math.max(contentContribution, mainContentBoxInset);
                     }
 
                     // Calculate content_flex_fraction
