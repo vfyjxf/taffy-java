@@ -12,6 +12,11 @@ import dev.vfyjxf.taffy.util.MeasureFunction;
 import dev.vfyjxf.taffy.util.RoundLayout;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
+import java.io.Writer;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -960,24 +965,77 @@ public class TaffyTree {
     }
 
     /**
-     * Prints a debug representation of the tree.
+     * Writes a debug representation of the computed layout of a subtree to the given writer.
+     *
+     * <p>The output is depth-first, one line per node, with two spaces of indentation per level.
+     * Each line carries the node's debug label followed by every {@link Layout} field:
+     * {@code order}, {@code location}, {@code size}, {@code contentSize},
+     * {@code scrollableOverflow}, {@code scrollbarSize}, {@code border}, {@code padding} and
+     * {@code margin}. A node without a computed layout is written as {@code no layout}. An unknown
+     * root node (or a node that does not exist) writes nothing at all.</p>
+     *
+     * <p>The writer is neither flushed nor closed: the caller owns it. The tree is not modified.</p>
+     *
+     * @param writer the destination to write to
+     * @param root   the root of the subtree to write
+     * @throws IOException          if the writer fails
+     * @throws NullPointerException if {@code writer} is {@code null}
      */
-    public void printTree(NodeId root) {
-        printTreeRecursive(root, 0);
+    public void writeTree(Writer writer, NodeId root) throws IOException {
+        Objects.requireNonNull(writer, "writer");
+        writeTreeRecursive(writer, root, 0);
     }
 
-    private void printTreeRecursive(NodeId node, int depth) {
+    private void writeTreeRecursive(Writer writer, NodeId node, int depth) throws IOException {
         NodeData data = nodes.get(node.getId());
         if (data == null) return;
-        
-        String indent = "  ".repeat(depth);
+
+        StringBuilder line = new StringBuilder("  ".repeat(depth));
+        line.append('[').append(getDebugLabel(node)).append("] ");
+
         Layout layout = getLayout(node);
-        
-        System.out.printf("%s[%s] %s%n", indent, getDebugLabel(node), 
-            layout != null ? layout.toString() : "no layout");
-        
+        if (layout == null) {
+            line.append("no layout");
+        } else {
+            appendLayout(line, layout);
+        }
+        line.append(System.lineSeparator());
+
+        writer.write(line.toString());
+
         for (NodeId child : getChildren(node)) {
-            printTreeRecursive(child, depth + 1);
+            writeTreeRecursive(writer, child, depth + 1);
+        }
+    }
+
+    private static void appendLayout(StringBuilder line, Layout layout) {
+        line.append("order=").append(layout.order())
+            .append(" location=").append(layout.location())
+            .append(" size=").append(layout.size())
+            .append(" contentSize=").append(layout.contentSize())
+            .append(" scrollableOverflow=").append(layout.scrollableOverflow())
+            .append(" scrollbarSize=").append(layout.scrollbarSize())
+            .append(" border=").append(layout.border())
+            .append(" padding=").append(layout.padding())
+            .append(" margin=").append(layout.margin());
+    }
+
+    /**
+     * Prints a debug representation of the tree to {@link System#out}.
+     *
+     * <p>Delegates to {@link #writeTree(Writer, NodeId)} through a buffered writer and flushes it,
+     * so the output is identical to writing to any other writer. {@code System.out} is never
+     * closed and its signature is unchanged.</p>
+     *
+     * @param root the root of the subtree to print
+     */
+    public void printTree(NodeId root) {
+        Writer out = new BufferedWriter(new OutputStreamWriter(System.out));
+        try {
+            writeTree(out, root);
+            out.flush();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to write tree debug representation to System.out", e);
         }
     }
 
