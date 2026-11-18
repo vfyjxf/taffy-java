@@ -609,6 +609,12 @@ public class FlexboxComputer {
             float itemMinCross = isRow ? item.minSize.height : item.minSize.width;
             float itemMaxCross = isRow ? item.maxSize.height : item.maxSize.width;
 
+            // FL-10 (#1234): definite available space is the child's border-box space, so the
+            // parent subtracts the child's margins (auto margins have already resolved to zero).
+            float marginCross = isRow
+                                ? item.margin.top + item.margin.bottom
+                                : item.margin.left + item.margin.right;
+
             // Clamp available space by min- and max- size (matching Rust's determine_flex_base_size)
             AvailableSpace crossAxisAvailableSpace;
             AvailableSpace outerCrossAvail = isRow ? availableSpace.height : availableSpace.width;
@@ -616,8 +622,9 @@ public class FlexboxComputer {
             if (outerCrossAvail.isDefinite()) {
                 float val = outerCrossAvail.getValue();
                 float clamped = !isNaN(crossAxisParentSize) ? crossAxisParentSize : val;
+                // FL-10: subtract the item margin before flooring/clamping (upstream order).
                 // FL-09: clamp the constraint at zero before applying min/max.
-                clamped = Math.max(clamped, 0f);
+                clamped = Math.max(clamped - marginCross, 0f);
                 if (!isNaN(itemMinCross)) clamped = Math.max(clamped, itemMinCross);
                 if (!isNaN(itemMaxCross)) clamped = Math.min(clamped, itemMaxCross);
                 crossAxisAvailableSpace = AvailableSpace.definite(clamped);
@@ -647,14 +654,12 @@ public class FlexboxComputer {
                 boolean crossStartAuto = isRow ? item.marginIsAuto.top : item.marginIsAuto.left;
                 boolean crossEndAuto = isRow ? item.marginIsAuto.bottom : item.marginIsAuto.right;
                 if (!crossStartAuto && !crossEndAuto) {
-                    // Apply cross-axis available space minus margins
+                    // FL-10: the cross available space already excludes the item's margins,
+                    // so it must not be subtracted a second time here.
                     float crossAvailValue = crossAxisAvailableSpace.intoOption();
                     if (!isNaN(crossAvailValue)) {
-                        float marginCross = isRow
-                                            ? (item.margin.top + item.margin.bottom)
-                                            : (item.margin.left + item.margin.right);
                         // FL-09: a stretched item's known cross size is floored at zero.
-                        childKnownCross = Math.max(crossAvailValue - marginCross, 0f);
+                        childKnownCross = Math.max(crossAvailValue, 0f);
                     }
                 }
             }
@@ -971,11 +976,17 @@ public class FlexboxComputer {
                         float crossAxisParentSize = isRow ? nodeInnerSize.height : nodeInnerSize.width;
                         float itemMinCross = isRow ? item.minSize.height : item.minSize.width;
                         float itemMaxCross = isRow ? item.maxSize.height : item.maxSize.width;
+                        // FL-10 (#1234): the child's margin is excluded from its available space.
+                        float marginCross = isRow
+                                            ? item.margin.top + item.margin.bottom
+                                            : item.margin.left + item.margin.right;
 
                         AvailableSpace crossAxisAvailableSpace;
                         if (outerCrossAvail.isDefinite()) {
                             float val = outerCrossAvail.getValue();
                             float clampedCross = !Float.isNaN(crossAxisParentSize) ? crossAxisParentSize : val;
+                            // FL-10: subtract the item margin before flooring/clamping.
+                            clampedCross = Math.max(clampedCross - marginCross, 0f);
                             if (!Float.isNaN(itemMinCross)) clampedCross = Math.max(clampedCross, itemMinCross);
                             if (!Float.isNaN(itemMaxCross)) clampedCross = Math.min(clampedCross, itemMaxCross);
                             crossAxisAvailableSpace = AvailableSpace.definite(clampedCross);
@@ -1007,11 +1018,10 @@ public class FlexboxComputer {
                             if (!crossMarginsAuto && Float.isNaN(crossKnown)) {
                                 float cross = crossAxisAvailableSpace.intoOption();
                                 if (!Float.isNaN(cross)) {
-                                    float marginCross = isRow
-                                                        ? item.margin.top + item.margin.bottom
-                                                        : item.margin.left + item.margin.right;
+                                    // FL-10: the available space already excludes the item's
+                                    // margins; do not subtract them a second time.
                                     // FL-09: a stretched item's known cross size is floored at zero.
-                                    crossKnown = Math.max(cross - marginCross, 0f);
+                                    crossKnown = Math.max(cross, 0f);
                                     if (isRow) {
                                         knownHeight = crossKnown;
                                     } else {
@@ -1481,8 +1491,17 @@ public class FlexboxComputer {
                                        ? item.padding.top + item.padding.bottom + item.border.top + item.border.bottom
                                        : item.padding.left + item.padding.right + item.border.left + item.border.right;
 
-            // Use inner main size as the known main size for child layout
-            float containerMainSize = innerMainSize;
+            // FL-10 (#1234): available space is the child's border-box space, so the item's
+            // margins are already subtracted by the parent.
+            float marginCross = isRow
+                                ? item.margin.top + item.margin.bottom
+                                : item.margin.left + item.margin.right;
+            float marginMain = isRow
+                               ? item.margin.left + item.margin.right
+                               : item.margin.top + item.margin.bottom;
+
+            // Use inner main size as the known main size for child layout (minus the item margin)
+            float containerMainSize = Math.max(innerMainSize - marginMain, 0f);
 
             // Get child's explicit cross size if set
             float itemCross = isRow ? item.size.height : item.size.width;
@@ -1500,8 +1519,9 @@ public class FlexboxComputer {
             // Clamp available space by min/max if definite
             if (availCross.isDefinite()) {
                 float val = availCross.getValue();
+                // FL-10: subtract the item margin before flooring/clamping.
                 // FL-09: clamp the cross constraint at zero before applying min/max.
-                val = Math.max(val, 0f);
+                val = Math.max(val - marginCross, 0f);
                 if (!Float.isNaN(itemMinCross)) val = Math.max(val, itemMinCross);
                 if (!Float.isNaN(itemMaxCross)) val = Math.min(val, itemMaxCross);
                 val = Math.max(val, paddingBorderCross);
@@ -1545,9 +1565,6 @@ public class FlexboxComputer {
                 childInnerCross = Math.max(childInnerCross, paddingBorderCross);
             }
 
-            float marginCross = isRow
-                                ? item.margin.top + item.margin.bottom
-                                : item.margin.left + item.margin.right;
             float childOuterCross = childInnerCross + marginCross;
 
             // Update hypothetical sizes
@@ -1618,9 +1635,18 @@ public class FlexboxComputer {
                     item.hypotheticalInnerSize.height
                 );
 
+                // FL-10 (#1234): the available space passed to the child excludes its margins.
+                float childMarginHorizontal = item.margin.left + item.margin.right;
+                float childMarginVertical = item.margin.top + item.margin.bottom;
+                AvailableSpace childAvailWidth = isNaN(nodeInnerSize.width)
+                                                 ? availableSpace.width
+                                                 : AvailableSpace.definite(nodeInnerSize.width);
+                AvailableSpace childAvailHeight = isNaN(nodeInnerSize.height)
+                                                  ? availableSpace.height
+                                                  : AvailableSpace.definite(nodeInnerSize.height);
                 TaffySize<AvailableSpace> childAvailableSpace = new TaffySize<>(
-                    isNaN(nodeInnerSize.width) ? availableSpace.width : AvailableSpace.definite(nodeInnerSize.width),
-                    isNaN(nodeInnerSize.height) ? availableSpace.height : AvailableSpace.definite(nodeInnerSize.height)
+                    childAvailWidth.maybeSub(childMarginHorizontal).maybeMax(0f),
+                    childAvailHeight.maybeSub(childMarginVertical).maybeMax(0f)
                 );
 
                 LayoutOutput output = layoutComputer.performChildLayout(
@@ -1683,6 +1709,12 @@ public class FlexboxComputer {
                                            ? item.padding.top + item.padding.bottom + item.border.top + item.border.bottom
                                            : item.padding.left + item.padding.right + item.border.left + item.border.right;
 
+                float marginCross = isRow
+                                    ? item.margin.top + item.margin.bottom
+                                    : item.margin.left + item.margin.right;
+                // FL-10 (#1234): the available space passed to the child excludes its margins.
+                float availableCross = Math.max(innerCrossSize - marginCross, 0f);
+
                 float crossSize;
                 if (!Float.isNaN(itemCrossSize)) {
                     crossSize = TaffyMath.clamp(itemCrossSize, itemMinCross, itemMaxCross);
@@ -1694,8 +1726,8 @@ public class FlexboxComputer {
                                                 : new FloatSize(NaN, targetMain);
 
                     TaffySize<AvailableSpace> availSpace = new TaffySize<>(
-                        isRow ? AvailableSpace.definite(targetMain) : AvailableSpace.definite(innerCrossSize),
-                        isRow ? AvailableSpace.definite(innerCrossSize) : AvailableSpace.definite(targetMain)
+                        isRow ? AvailableSpace.definite(targetMain) : AvailableSpace.definite(availableCross),
+                        isRow ? AvailableSpace.definite(availableCross) : AvailableSpace.definite(targetMain)
                     );
 
                     // Use measureChildSize to avoid setting unroundedLayout prematurely
@@ -1712,10 +1744,6 @@ public class FlexboxComputer {
                     crossSize = TaffyMath.clamp(crossSize, itemMinCross, itemMaxCross);
                 }
                 crossSize = Math.max(crossSize, paddingBorderCross);
-
-                float marginCross = isRow
-                                    ? item.margin.top + item.margin.bottom
-                                    : item.margin.left + item.margin.right;
 
                 if (isRow) {
                     item.targetSize = new FloatSize(item.targetSize.width, crossSize);
@@ -2557,11 +2585,19 @@ public class FlexboxComputer {
                     }
                 }
 
+                // FL-10 (#1234): the available space passed to the child excludes its margins.
+                float itemMarginHorizontal = item.margin.left + item.margin.right;
+                float itemMarginVertical = item.margin.top + item.margin.bottom;
+                TaffySize<AvailableSpace> childAvailableSpace = new TaffySize<>(
+                    AvailableSpace.definite(Math.max(containerSize.width - itemMarginHorizontal, 0f)),
+                    AvailableSpace.definite(Math.max(containerSize.height - itemMarginVertical, 0f))
+                );
+
                 LayoutOutput output = layoutComputer.performChildLayout(
                     item.nodeId,
                     knownDimensions,
                     nodeInnerSize,
-                    new TaffySize<>(AvailableSpace.definite(containerSize.width), AvailableSpace.definite(containerSize.height)),
+                    childAvailableSpace,
                     SizingMode.CONTENT_SIZE,
                     new TaffyLine<>(false, false)
                 );
