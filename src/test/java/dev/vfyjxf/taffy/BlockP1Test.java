@@ -9,6 +9,7 @@ import dev.vfyjxf.taffy.style.BoxSizing;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
@@ -16,6 +17,7 @@ import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.LayoutComputer;
+import dev.vfyjxf.taffy.tree.LayoutOutput;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.SizingMode;
 import dev.vfyjxf.taffy.tree.TaffyTree;
@@ -539,6 +541,129 @@ public class BlockP1Test {
 
         assertEquals(50f, measured.height, EPSILON,
             "measured height must include the collapsed 10px/20px margins of the descendants");
+    }
+
+    // === BK-15: definite height from aspect-ratio, and indefinite vertical available space ===
+
+    /**
+     * Upstream fixture {@code block_aspect_ratio_stretch_width} (#965): a stretched-width block
+     * with {@code aspect-ratio: 1} and an automatic height gets a definite 100px height.
+     */
+    @Test
+    @DisplayName("BK-15: aspect-ratio derives a definite block height from the stretched width")
+    void aspectRatioDerivesDefiniteHeight() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.aspectRatio = 1f;
+        TaffyStyle grandchildStyle = blockStyle();
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.length(200f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(child), 100f, 100f, "child");
+        assertSize(tree.getLayout(grandchild), 100f, 0f, "grandchild");
+    }
+
+    /**
+     * Upstream fixture {@code block_aspect_ratio_stretch_width_percentage_child} (#965): the
+     * derived definite height must be available to the children, so a {@code height: 100%} child
+     * resolves to 50% of the width (aspect-ratio 2) instead of collapsing to 0. Before the fix the
+     * height was only derived after the children had already been laid out.
+     */
+    @Test
+    @DisplayName("BK-15: children resolve percentage heights against the aspect-ratio derived height")
+    void aspectRatioDerivedHeightIsAvailableToChildren() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        grandchildStyle.size = size(TaffyDimension.AUTO, TaffyDimension.percent(1f));
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.aspectRatio = 2f;
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.length(200f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(child), 100f, 50f, "child");
+        // height: 100% of the derived 50px height
+        assertSize(tree.getLayout(grandchild), 100f, 50f, "grandchild");
+    }
+
+    /**
+     * Upstream fixture {@code block_aspect_ratio_stretch_width_max_height} (#965): the derived
+     * height is clamped by {@code max-height}.
+     *
+     * <p>The width stays stretched at 100px. The browser additionally transfers the clamped height
+     * back through the ratio to shrink the width to 40px (css-sizing-4); that width transfer is not
+     * part of this port yet (it belongs with the flex/sizing-keyword definiteness work), so this
+     * test pins the height, which is what BK-15 is about.</p>
+     */
+    @Test
+    @DisplayName("BK-15: max-height clamps the aspect-ratio derived height")
+    void aspectRatioDerivedHeightClampedByMaxHeight() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.aspectRatio = 1f;
+        childStyle.maxSize = size(TaffyDimension.AUTO, TaffyDimension.length(40f));
+        TaffyStyle grandchildStyle = blockStyle();
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.length(200f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertEquals(40f, tree.getLayout(child).size().height, EPSILON, "child height is clamped");
+    }
+
+    /**
+     * Upstream #965 (available-space part): the vertical available space handed to the in-flow
+     * children of a block is indefinite, which this port represents as
+     * {@link AvailableSpace#MAX_CONTENT} — not {@code MIN_CONTENT}. A min-content constraint made
+     * descendants believe they were being sized under a min-content constraint: a grid's track
+     * maximisation step then sees zero free space (collapsing auto rows whose only item is a scroll
+     * container), and intrinsic measurements of content (text) are pinned to their minimum.
+     *
+     * <p>The probing measure callback returns one line under a min-content height constraint and
+     * two lines otherwise, so the block's vertical available space is directly observable.</p>
+     */
+    @Test
+    @DisplayName("BK-15: block children are measured with an indefinite (MaxContent) vertical space")
+    void blockChildrenGetIndefiniteVerticalAvailableSpace() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle textStyle = blockStyle();
+        NodeId text = tree.newLeaf(textStyle);
+        tree.setMeasureFunction(text, context -> {
+            AvailableSpace availableHeight = context.input().availableSpace().height;
+            boolean heightConstrained = availableHeight != null && availableHeight.isMinContent();
+            return LayoutOutput.fromOuterSize(new FloatSize(50f, heightConstrained ? 10f : 20f));
+        });
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, text);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertEquals(20f, tree.getLayout(text).size().height, EPSILON,
+            "block flow's vertical axis is indefinite, so the measured content height is not "
+                + "clamped to its min-content line count");
+        assertEquals(20f, tree.getLayout(root).size().height, EPSILON, "root content height");
     }
 
     // === BK-07: abspos auto margins resolve against the used (clamped) size ===

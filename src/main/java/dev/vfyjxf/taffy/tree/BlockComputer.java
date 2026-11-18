@@ -177,6 +177,30 @@ public class BlockComputer {
             return LayoutOutput.fromOuterSize(styledBasedKnownDimensions);
         }
 
+        // css-sizing-4: a definite width plus an `aspect-ratio` makes the height definite. This
+        // must be resolved *before* the content box size and the item list are derived, otherwise
+        // the children are laid out against an unknown height (so their percentage heights resolve
+        // to nothing and a descendant grid's auto rows collapse), and the container's own height is
+        // only corrected afterwards.
+        //
+        // Only the height is derived: the width of a block-level box comes from the parent's
+        // stretch/known width or from the style, and re-deriving a width from a style height would
+        // override a flex item's flex-resolved main size (the Java generated flex aspect-ratio
+        // fixtures pin that browser behaviour). The derived height is clamped by min/max and by the
+        // padding+border sum, exactly like the intrinsic-height path below.
+        // BK-15(a) / upstream #965 (8609e92f).
+        if (runMode == RunMode.PERFORM_LAYOUT && !Float.isNaN(aspectRatio)
+            && Float.isNaN(styledBasedKnownDimensions.height)
+            && !Float.isNaN(styledBasedKnownDimensions.width)) {
+            // Aspect ratio applies to the content box: convert the border-box width into the
+            // content box before dividing, then convert the derived content height back.
+            float arDerivedHeight = (styledBasedKnownDimensions.width - boxSizingAdjustment.width) / aspectRatio
+                                    + boxSizingAdjustment.height;
+            float arHeight = TaffyMath.clamp(arDerivedHeight, minSize.height, maxSize.height);
+            arHeight = Math.max(arHeight, !Float.isNaN(paddingBorderSize.height) ? paddingBorderSize.height : 0);
+            styledBasedKnownDimensions = new FloatSize(styledBasedKnownDimensions.width, arHeight);
+        }
+
         // Compute container content box size (inner size for resolving child percentages)
         float contentBoxInsetWidth = padding.left + padding.right + border.left + border.right
                                      + scrollbarGutter.left + scrollbarGutter.right;
@@ -238,9 +262,12 @@ public class BlockComputer {
 
         float containerOuterHeight = styledBasedKnownDimensions.height;
         if (Float.isNaN(containerOuterHeight)) {
+            // This branch is only reached when the height is auto. In a final layout an
+            // aspect-ratio derived height was already resolved above (so the height is definite
+            // and this branch is skipped); during a measurement the aspect ratio is instead
+            // folded into the content-based height, which is the legacy (content-inclusive)
+            // measurement that flex/grid intrinsic sizing has been verified against.
             float contentHeight = layoutResult.contentHeight;
-            // Apply aspect-ratio: when height is auto and width is known, derive height from AR.
-            // AR applies to the content box, so subtract/add box-sizing adjustment.
             if (!Float.isNaN(aspectRatio) && !Float.isNaN(containerOuterWidth)) {
                 float arDerivedHeight = (containerOuterWidth - boxSizingAdjustment.width) / aspectRatio
                                         + boxSizingAdjustment.height;
@@ -480,9 +507,14 @@ public class BlockComputer {
         TaffyTree tree = layoutComputer.getTree();
         float containerInnerWidth = containerOuterWidth - contentBoxInset.left - contentBoxInset.right;
         FloatSize parentSize = new FloatSize(containerOuterWidth, NaN);
+        // Vertical available space in block flow is indefinite, which this port represents as
+        // MaxContent. Passing MinContent made every descendant grid believe it was being sized
+        // under a min-content constraint, in which the track maximisation step has zero free
+        // space, so auto rows containing only scroll-container items collapsed to zero height.
+        // BK-15(b) / upstream #965.
         TaffySize<AvailableSpace> availableSpace = new TaffySize<>(
             AvailableSpace.definite(containerInnerWidth),
-            AvailableSpace.minContent()
+            AvailableSpace.maxContent()
         );
 
         float committedYOffset = contentBoxInset.top;
