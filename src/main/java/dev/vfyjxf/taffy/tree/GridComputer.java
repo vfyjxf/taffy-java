@@ -56,10 +56,58 @@ import static java.lang.Float.NaN;
  */
 public class GridComputer {
 
+    /**
+     * The maximum number of tracks in each direction from the start of the explicit grid (line 0 in
+     * OriginZero coordinates), and the maximum span of a single grid item.
+     * <p>
+     * Per <a href="https://www.w3.org/TR/css-grid-1/#overlarge-grids">CSS Grid over-large grids</a>
+     * grids are clamped to this many tracks in each axis. Upstream taffy enforces the same limit in
+     * {@code src/compute/grid/types/coordinates.rs} (GR-05 / #986) because it stores grid lines and
+     * spans in {@code i16}/{@code u16}; this port uses {@code int} so the limit is defensive rather
+     * than an overflow requirement, but it must still be enforced so that pathological styles cannot
+     * allocate or iterate over an unbounded number of tracks, lines or cells.
+     */
+    static final int MAX_GRID_TRACKS = 10_000;
+
+    /** The lowest valid grid line in OriginZero coordinates. */
+    static final int MIN_OZ_LINE = -MAX_GRID_TRACKS;
+
+    /** The highest valid grid line in OriginZero coordinates. */
+    static final int MAX_OZ_LINE = MAX_GRID_TRACKS;
+
     private final LayoutComputer layoutComputer;
 
     public GridComputer(LayoutComputer layoutComputer) {
         this.layoutComputer = layoutComputer;
+    }
+
+    /**
+     * Clamp an OriginZero grid line into the limited grid ({@code [-MAX_GRID_TRACKS, MAX_GRID_TRACKS]}).
+     */
+    private static int clampOzLine(long line) {
+        if (line < MIN_OZ_LINE) return MIN_OZ_LINE;
+        if (line > MAX_OZ_LINE) return MAX_OZ_LINE;
+        return (int) line;
+    }
+
+    /**
+     * Clamp a grid item span into the limited grid. A span is at least one track (a zero or negative
+     * span is invalid and is treated as 1, matching upstream's {@code Span(span).clamp(1, MAX_GRID_TRACKS)}).
+     */
+    private static int clampGridSpan(int span) {
+        if (span < 1) return 1;
+        return Math.min(span, MAX_GRID_TRACKS);
+    }
+
+    /**
+     * Saturating addition used when accumulating track counts or line numbers, so that pathological
+     * style values cannot overflow the accumulator.
+     */
+    private static int saturatingAdd(int a, int b) {
+        long sum = (long) a + (long) b;
+        if (sum > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        if (sum < Integer.MIN_VALUE) return Integer.MIN_VALUE;
+        return (int) sum;
     }
 
     /**
@@ -121,8 +169,22 @@ public class GridComputer {
         boolean crossesFlexibleRow;
 
         // Caches for intrinsic size computation. These caches are only valid for a single run of the track-sizing algorithm.
-        // Cache for the available_space input to intrinsic sizing computation (for cache invalidation)
-        FloatSize availableSpaceCache;
+        // Caches for the available_space input used to compute the intrinsic contributions, one per axis
+        // (GR-08 / upstream #1227). They are recorded when a contribution is actually computed and are
+        // compared by the track-sizing re-run checks to decide whether a contribution can have changed.
+        // A single shared field was wrong: the block-axis measurement clobbered the inline-axis input
+        // (writing a size whose width is NaN), so the row re-run check always saw "input changed" and
+        // re-measured every item.
+        FloatSize inlineContributionInputCache;
+        FloatSize blockContributionInputCache;
+        // Cache for the known_dimensions input to intrinsic sizing computation, together with the
+        // inputs it was computed for. The min- and max-content contributions of an item are both
+        // computed from the same known_dimensions, so sharing the result halves that work
+        // (GR-09 / upstream #1226). Must be cleared whenever an input changes (baseline_shim, grid
+        // area size, inner node size); see clearKnownDimensionsCache().
+        FloatSize knownDimensionsCacheGridArea;
+        FloatSize knownDimensionsCacheInnerNodeSize;
+        FloatSize knownDimensionsCache;
         // Cache for the min-content contribution
         Float minContentContributionWidth;
         Float minContentContributionHeight;
@@ -164,6 +226,9 @@ public class GridComputer {
             }
             float contribution = computeMinContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
             minContentContributionWidth = contribution;
+            // Record the input this contribution was computed for (only on a cache miss, so the
+            // recorded input always matches the cached contribution).
+            inlineContributionInputCache = availableSpace;
             return contribution;
         }
 
@@ -179,6 +244,7 @@ public class GridComputer {
             }
             float contribution = computeMaxContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
             maxContentContributionWidth = contribution;
+            inlineContributionInputCache = availableSpace;
             return contribution;
         }
 
@@ -194,6 +260,7 @@ public class GridComputer {
             }
             float contribution = computeMaxContentContributionHeight(layoutComputer, availableSpace, innerNodeSize);
             maxContentContributionHeight = contribution;
+            blockContributionInputCache = availableSpace;
             return contribution;
         }
 
@@ -216,7 +283,7 @@ public class GridComputer {
             }
 
             // Compute known dimensions with stretch alignment and aspect ratio
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic
             // Both axes: Some(size) -> Definite(size), None -> MinContent
@@ -257,7 +324,7 @@ public class GridComputer {
                 return size.width + marginAxisSums.width;
             }
 
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic
             // Both axes: Some(size) -> Definite(size), None -> MaxContent
@@ -297,7 +364,7 @@ public class GridComputer {
                 return size.height + marginAxisSums.height;
             }
 
-            FloatSize knownDimensions = computeKnownDimensions(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic
             // Both axes: Some(size) -> Definite(size), None -> MaxContent
@@ -318,6 +385,36 @@ public class GridComputer {
             );
 
             return measuredSize.height + marginAxisSums.height;
+        }
+
+        /**
+         * Clear the cached known dimensions. Called explicitly wherever an input of
+         * {@link #computeKnownDimensions(FloatSize, FloatSize)} changes (GR-08/GR-09 explicit
+         * invalidation), matching upstream #1226's {@code known_dimensions_cache = None} sites.
+         */
+        private void clearKnownDimensionsCache() {
+            knownDimensionsCacheGridArea = null;
+            knownDimensionsCacheInnerNodeSize = null;
+            knownDimensionsCache = null;
+        }
+
+        /**
+         * Get the known dimensions for the given grid area size, using the cache when it was computed
+         * for exactly the same inputs. This mirrors upstream's {@code known_dimensions_cached}
+         * (GR-09 / #1226): the min-content and max-content contributions of an item are both computed
+         * from the same known dimensions, so the second contribution can reuse the first one's result.
+         */
+        private FloatSize computeKnownDimensionsCached(FloatSize gridAreaSize, FloatSize innerNodeSize) {
+            if (knownDimensionsCache != null
+                && floatSizeEquals(knownDimensionsCacheGridArea, gridAreaSize)
+                && floatSizeEquals(knownDimensionsCacheInnerNodeSize, innerNodeSize)) {
+                return knownDimensionsCache;
+            }
+            FloatSize knownDimensions = computeKnownDimensions(gridAreaSize, innerNodeSize);
+            knownDimensionsCacheGridArea = gridAreaSize;
+            knownDimensionsCacheInnerNodeSize = innerNodeSize;
+            knownDimensionsCache = knownDimensions;
+            return knownDimensions;
         }
 
         /**
@@ -648,9 +745,31 @@ public class GridComputer {
             }
         }
 
-        // Clear item available_space_cache after initial column sizing (Rust: items.iter_mut().for_each(|item| item.available_space_cache = None))
+        // If only the container's width has been requested then the rows do not need to be sized at all,
+        // which avoids measuring the height of every item (and recursively of everything below them).
+        // Column sizing is not re-run when only computing the container's size, so the returned size is
+        // unaffected by skipping the block-axis work.
+        //
+        // TODO(GR-10): unreachable in this port today: LayoutComputer always passes
+        // RequestedAxis.BOTH (see the CR-01 TODOs in LayoutComputer.performChildLayout and
+        // LayoutComputer.measureChildSize), so no caller ever asks for the horizontal axis alone.
+        // Enable this together with the RequestedAxis plumbing (CR-01 / FL-25). Upstream #1219
+        // (9770a07) has the same short-circuit.
+        if (runMode == RunMode.COMPUTE_SIZE && inputs.axis() == RequestedAxis.HORIZONTAL) {
+            float width = Math.max(
+                TaffyMath.clamp(initialColumnSum + contentBoxInset.left + contentBoxInset.right,
+                    minSize.width, maxSize.width),
+                paddingBorderSize.width);
+            return LayoutOutput.fromOuterSize(new FloatSize(width, 0f));
+        }
+
+        // Clear the inline-axis contribution input cache after initial column sizing (Rust:
+        // items.iter_mut().for_each(|item| item.grid_area_size_cache = None)): the container's inner
+        // width is now definite, so any input recorded during column sizing is stale.
         for (GridItem item : items) {
-            item.availableSpaceCache = null;
+            item.inlineContributionInputCache = null;
+            item.blockContributionInputCache = null;
+            item.clearKnownDimensionsCache();
         }
 
         // Resolve baseline-aligned item baselines before row sizing (CSS Grid 11.5.1)
@@ -728,9 +847,10 @@ public class GridComputer {
                 float itemHeight = computeItemAvailableHeight(item, finalRowSizes, finalGap);
                 FloatSize itemAvailSpace = new FloatSize(NaN, itemHeight);
 
-                // Check if available space actually changed
-                boolean availSpaceChanged = item.availableSpaceCache == null ||
-                                            !floatEquals(item.availableSpaceCache.height, itemHeight);
+                // Check if the available space used for the cached inline-axis contribution actually
+                // changed (per-axis cache, GR-08 / #1227)
+                boolean availSpaceChanged = item.inlineContributionInputCache == null ||
+                                            !floatEquals(item.inlineContributionInputCache.height, itemHeight);
 
                 if (!availSpaceChanged) {
                     // Available space didn't change, contribution won't change either
@@ -760,7 +880,7 @@ public class GridComputer {
                 boolean hasChanged = Math.abs(newMinContentContribution - item.minContentContributionWidth) > 0.001f;
 
                 // Update cache
-                item.availableSpaceCache = itemAvailSpace;
+                item.inlineContributionInputCache = itemAvailSpace;
                 item.minContentContributionWidth = newMinContentContribution;
                 item.maxContentContributionWidth = null;
                 item.minimumContributionWidth = null;
@@ -773,10 +893,12 @@ public class GridComputer {
         } else {
             // Clear intrinsic width caches since we're definitely re-running due to percentage tracks
             for (GridItem item : items) {
-                item.availableSpaceCache = null;
+                item.inlineContributionInputCache = null;
+                item.blockContributionInputCache = null;
                 item.minContentContributionWidth = null;
                 item.maxContentContributionWidth = null;
                 item.minimumContributionWidth = null;
+                item.clearKnownDimensionsCache();
             }
         }
 
@@ -814,9 +936,10 @@ public class GridComputer {
                     float itemWidth = computeItemAvailableWidth(item, finalColumnSizes, finalGap);
                     FloatSize itemAvailSpace = new FloatSize(itemWidth, NaN);
 
-                    // Check if available space actually changed
-                    boolean availSpaceChanged = item.availableSpaceCache == null ||
-                                                !floatEquals(item.availableSpaceCache.width, itemWidth);
+                    // Check if the available space used for the cached block-axis contribution actually
+                    // changed (per-axis cache, GR-08 / #1227)
+                    boolean availSpaceChanged = item.blockContributionInputCache == null ||
+                                                !floatEquals(item.blockContributionInputCache.width, itemWidth);
 
                     if (!availSpaceChanged) {
                         continue;
@@ -845,7 +968,7 @@ public class GridComputer {
                     boolean hasChanged = Math.abs(newMinContentContribution - item.minContentContributionHeight) > 0.001f;
 
                     // Update cache
-                    item.availableSpaceCache = itemAvailSpace;
+                    item.blockContributionInputCache = itemAvailSpace;
                     item.minContentContributionHeight = newMinContentContribution;
                     item.maxContentContributionHeight = null;
                     item.minimumContributionHeight = null;
@@ -858,10 +981,12 @@ public class GridComputer {
             } else {
                 // Clear intrinsic height caches
                 for (GridItem item : items) {
-                    item.availableSpaceCache = null;
+                    item.inlineContributionInputCache = null;
+                    item.blockContributionInputCache = null;
                     item.minContentContributionHeight = null;
                     item.maxContentContributionHeight = null;
                     item.minimumContributionHeight = null;
+                    item.clearKnownDimensionsCache();
                 }
             }
 
@@ -897,16 +1022,20 @@ public class GridComputer {
 
             FloatSize containerSize = new FloatSize(containerWidth, containerHeight);
 
-            // Calculate track offsets for absolute positioned children
-            // Track offsets start from padding+border edge (content box)
-            FloatList colOffsets = calculateTrackOffsets(columnSizes, gap.width, padding.left + border.left);
-            FloatList rowOffsets = calculateTrackOffsets(rowSizes, gap.height, padding.top + border.top);
+            // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
+            // logical (from the content box's inline-start) and include the content alignment offset.
+            ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize);
 
             // Get direction for RTL support (resolve INHERIT)
             boolean isRtlEmpty = layoutComputer.resolveDirection(node) == TaffyDirection.RTL;
 
+            GridAxisLines columnLines = new GridAxisLines(columnSizes, alignment.gapX(), alignment.offsetX(),
+                contentBoxInset.left, alignment.innerWidth(), isRtlEmpty);
+            GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
+                contentBoxInset.top, alignment.innerHeight(), false);
+
             // Layout absolutely positioned children even if no regular items
-            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, colOffsets, rowOffsets, isRtlEmpty);
+            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtlEmpty);
 
             // Layout hidden children (display: none)
             List<NodeId> children = tree.getChildren(node);
@@ -929,14 +1058,18 @@ public class GridComputer {
             return LayoutOutput.fromSizesAndBaselines(containerSize, contentSize, new FloatPoint(NaN, NaN));
         }
 
-        // Calculate track offsets for absolute positioned children
-        // Track offsets start from padding+border edge (content box)
-        FloatList columnOffsets = calculateTrackOffsets(columnSizes, gap.width, padding.left + border.left);
-        FloatList rowOffsets = calculateTrackOffsets(rowSizes, gap.height, padding.top + border.top);
+        // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
+        // logical (from the content box's inline-start) and include the content alignment offset.
+        ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize);
 
         // Get direction for RTL/LTR support (resolve INHERIT)
         TaffyDirection direction = layoutComputer.resolveDirection(node);
         boolean isRtl = direction == TaffyDirection.RTL;
+        // The inline axis is reversed in RTL: lines are measured from the right content edge.
+        GridAxisLines columnLines = new GridAxisLines(columnSizes, alignment.gapX(), alignment.offsetX(),
+            contentBoxInset.left, alignment.innerWidth(), isRtl);
+        GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
+            contentBoxInset.top, alignment.innerHeight(), false);
 
         // Place items and calculate final positions
         placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize, style, colCounts, rowCounts, isRtl);
@@ -966,7 +1099,7 @@ public class GridComputer {
         performFinalLayout(items);
 
         // Layout absolutely positioned children
-        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnOffsets, rowOffsets, isRtl);
+        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtl);
 
         // Layout hidden children (display: none)
         List<NodeId> children = tree.getChildren(node);
@@ -1072,36 +1205,176 @@ public class GridComputer {
     }
 
     /**
-     * Calculate track offsets from track sizes and gap.
-     * Each offset is the distance from the start of the grid (border edge) to the start of that track.
-     * Collapsed tracks (size = 0) do not contribute gaps between them and adjacent tracks.
+     * Content-alignment geometry for both axes, used to position absolutely positioned children (OF-08)
+     * and to position the single grid line of an empty axis (GR-14).
+     * <p>
+     * {@code offsetX}/{@code offsetY} are the offsets of the first non-collapsed track from the content
+     * box's inline-start edge, {@code gapX}/{@code gapY} are the gaps used between non-collapsed tracks
+     * (content alignment distributes free space into the gaps for the space-* keywords), and
+     * {@code innerWidth}/{@code innerHeight} are the definite content box sizes (or the used track size
+     * when the container is indefinite in that axis).
      */
-    private FloatList calculateTrackOffsets(FloatList trackSizes, float gap, float borderStart) {
-        FloatList offsets = new FloatArrayList();
-        float currentOffset = borderStart;
-        boolean previousWasNonCollapsed = false;
+    private record ContentAlignment(
+        float offsetX, float gapX, float innerWidth,
+        float offsetY, float gapY, float innerHeight) {}
 
-        for (int i = 0; i < trackSizes.size(); i++) {
-            float trackSize = trackSizes.getFloat(i);
-            boolean isCollapsed = (trackSize == 0);
+    /**
+     * Compute the content alignment (justify-content/align-content) geometry used by the absolute
+     * positioning path. This mirrors the alignment computation performed by {@link #placeItems} so that
+     * absolutely positioned children resolve their grid lines to the same (content-aligned) track edges.
+     */
+    private ContentAlignment computeContentAlignment(
+        TaffyStyle style,
+        FloatList columnSizes,
+        FloatList rowSizes,
+        FloatSize gap,
+        FloatSize nodeInnerSize) {
 
-            // Add gap before this track if:
-            // - This track is not collapsed AND
-            // - The previous track was non-collapsed
-            if (!isCollapsed && previousWasNonCollapsed) {
-                currentOffset += gap;
-            }
-
-            offsets.add(currentOffset);
-            currentOffset += trackSize;
-
-            if (!isCollapsed) {
-                previousWasNonCollapsed = true;
-            }
+        int nonCollapsedColumns = 0;
+        float totalColumnSize = 0f;
+        for (int i = 0; i < columnSizes.size(); i++) {
+            float size = columnSizes.getFloat(i);
+            totalColumnSize += size;
+            if (size > 0) nonCollapsedColumns++;
         }
-        // Add final offset (after all tracks)
-        offsets.add(currentOffset);
-        return offsets;
+        totalColumnSize += gap.width * Math.max(0, nonCollapsedColumns - 1);
+
+        int nonCollapsedRows = 0;
+        float totalRowSize = 0f;
+        for (int i = 0; i < rowSizes.size(); i++) {
+            float size = rowSizes.getFloat(i);
+            totalRowSize += size;
+            if (size > 0) nonCollapsedRows++;
+        }
+        totalRowSize += gap.height * Math.max(0, nonCollapsedRows - 1);
+
+        float innerWidth = !Float.isNaN(nodeInnerSize.width) ? nodeInnerSize.width : totalColumnSize;
+        float innerHeight = !Float.isNaN(nodeInnerSize.height) ? nodeInnerSize.height : totalRowSize;
+        float freeSpaceWidth = innerWidth - totalColumnSize;
+        float freeSpaceHeight = innerHeight - totalRowSize;
+
+        JustifyContent justifyContent = style.getJustifyContent();
+        AlignContent alignContent = style.getAlignContent();
+
+        // An axis without any non-collapsed track still contains a single grid line, which content
+        // alignment positions within the container (GR-14 / upstream #1078).
+        float offsetX = nonCollapsedColumns == 0
+                        ? calculateEmptyAxisAlignmentOffset(justifyContent, freeSpaceWidth)
+                        : calculateContentAlignmentOffset(justifyContent, freeSpaceWidth, nonCollapsedColumns);
+        float offsetY = nonCollapsedRows == 0
+                        ? calculateEmptyAxisAlignmentOffset(alignContent, freeSpaceHeight)
+                        : calculateContentAlignmentOffset(alignContent, freeSpaceHeight, nonCollapsedRows);
+
+        float gapX = calculateAdjustedGap(justifyContent, freeSpaceWidth, nonCollapsedColumns, gap.width);
+        float gapY = calculateAdjustedGap(alignContent, freeSpaceHeight, nonCollapsedRows, gap.height);
+
+        return new ContentAlignment(offsetX, gapX, innerWidth, offsetY, gapY, innerHeight);
+    }
+
+    /**
+     * The offset of the (single) grid line of an axis without any non-collapsed track. The distribution
+     * keywords fall back to their single-item fallbacks (space-* behave like center, stretch and
+     * space-between behave like start), matching upstream's {@code apply_alignment_fallback}
+     * (GR-14 / #1078).
+     */
+    private static float calculateEmptyAxisAlignmentOffset(AlignContent alignment, float freeSpace) {
+        if (alignment == null) return 0;
+        return switch (alignment) {
+            case CENTER -> freeSpace / 2;
+            case END, FLEX_END -> freeSpace;
+            case SPACE_AROUND, SPACE_EVENLY -> freeSpace / 2;
+            case AUTO, START, FLEX_START, STRETCH, SPACE_BETWEEN -> 0;
+        };
+    }
+
+    private static float calculateEmptyAxisAlignmentOffset(JustifyContent alignment, float freeSpace) {
+        if (alignment == null) return 0;
+        return switch (alignment) {
+            case CENTER -> freeSpace / 2;
+            case END, FLEX_END -> freeSpace;
+            case SPACE_AROUND, SPACE_EVENLY -> freeSpace / 2;
+            case START, FLEX_START, STRETCH, SPACE_BETWEEN -> 0;
+        };
+    }
+
+    /**
+     * The grid line positions of one axis, used to resolve absolutely positioned children (OF-08).
+     * <p>
+     * Positions are logical: measured from the content box's inline-start edge (the left content edge for
+     * LTR, the right content edge for RTL) and growing towards the inline-end, with the content alignment
+     * offset and the space-* gap distribution already applied. {@link #physical(float)} converts a logical
+     * position into container coordinates.
+     * <p>
+     * Grid lines used by absolutely positioned children resolve to the edges of the tracks adjacent to the
+     * line rather than to the raw gutter offset (upstream #1071):
+     * <ul>
+     *   <li>as a start edge, a line resolves to the start of the first non-collapsed track that follows it;</li>
+     *   <li>as an end edge, a line resolves to the end of the last non-collapsed track that precedes it.</li>
+     * </ul>
+     * so that free space distributed by align-content/justify-content is not included in the grid area, and
+     * gutters adjacent to collapsed tracks (which overlap) are not counted twice (upstream #1266).
+     */
+    private static final class GridAxisLines {
+        private final float[] starts;   // logical start position of each track; the last entry is the end of the grid
+        private final float[] ends;     // logical end position of each track
+        private final boolean[] nonCollapsed;
+        private final float origin;
+        private final float innerSize;
+        private final boolean reversed;
+
+        GridAxisLines(FloatList trackSizes, float adjustedGap, float firstTrackOffset,
+                      float origin, float innerSize, boolean reversed) {
+            int trackCount = trackSizes.size();
+            this.starts = new float[trackCount + 1];
+            this.ends = new float[trackCount];
+            this.nonCollapsed = new boolean[trackCount];
+            this.origin = origin;
+            this.innerSize = innerSize;
+            this.reversed = reversed;
+
+            float position = firstTrackOffset;
+            for (int i = 0; i < trackCount; i++) {
+                boolean isNonCollapsed = trackSizes.getFloat(i) > 0;
+                nonCollapsed[i] = isNonCollapsed;
+                // Only non-collapsed tracks separated from the previous non-collapsed track by a gutter
+                // receive a gap; gaps adjacent to collapsed tracks overlap and are not counted.
+                if (i > 0 && isNonCollapsed && nonCollapsed[i - 1]) {
+                    position += adjustedGap;
+                }
+                starts[i] = position;
+                if (isNonCollapsed) {
+                    position += trackSizes.getFloat(i);
+                }
+                ends[i] = position;
+            }
+            starts[trackCount] = position;
+        }
+
+        /** Convert a logical position (from the inline-start edge) into container coordinates. */
+        float physical(float logical) {
+            return reversed ? origin + innerSize - logical : origin + logical;
+        }
+
+        /** The physical position of a grid line used as a start edge. */
+        float startEdge(int lineIndex) {
+            int from = Math.max(0, lineIndex);
+            for (int i = from; i < nonCollapsed.length; i++) {
+                if (nonCollapsed[i]) return physical(starts[i]);
+            }
+            return physical(starts[starts.length - 1]);
+        }
+
+        /** The physical position of a grid line used as an end edge. */
+        float endEdge(int lineIndex) {
+            for (int i = Math.min(lineIndex, nonCollapsed.length) - 1; i >= 0; i--) {
+                if (nonCollapsed[i]) return physical(ends[i]);
+            }
+            // No track precedes this line: resolve to the start of the first track that follows it.
+            for (int i = Math.max(0, lineIndex); i < nonCollapsed.length; i++) {
+                if (nonCollapsed[i]) return physical(starts[i]);
+            }
+            return physical(starts[starts.length - 1]);
+        }
     }
 
     /**
@@ -1277,24 +1550,23 @@ public class GridComputer {
             endIndex = resolveGridLine(end.getLineNumber(), explicitTrackCount);
         }
         if (start.isSpan()) {
-            span = start.getValue();
+            span = clampGridSpan(start.getValue());
         }
         if (end.isSpan()) {
-            span = end.getValue();
+            span = clampGridSpan(end.getValue());
         }
 
         // If we have start and end, compute span
         if (startIndex != null && endIndex != null) {
-            span = endIndex - startIndex;
-            if (span < 1) span = 1;
+            span = clampGridSpan(endIndex - startIndex);
         }
         // If we have start and span but no end
         else if (startIndex != null && end.isSpan()) {
-            endIndex = startIndex + span;
+            endIndex = clampOzLine((long) startIndex + span);
         }
         // If we have end and span but no start
         else if (endIndex != null && start.isSpan()) {
-            startIndex = endIndex - span;
+            startIndex = clampOzLine((long) endIndex - span);
         }
 
         return new GridPlacementResult(startIndex, endIndex, span);
@@ -1322,14 +1594,16 @@ public class GridComputer {
             return null;
         } else if (lineNumber > 0) {
             // Positive: line 1 = origin-zero 0, line 2 = origin-zero 1, etc.
-            return lineNumber - 1;
+            // Clamped into the limited grid (GR-05 / #986).
+            return clampOzLine((long) lineNumber - 1);
         } else {
             // Negative: line -1 = last line (explicitTrackCount), line -2 = second to last, etc.
             // explicitLineCount = explicitTrackCount + 1
             // line -1 -> explicitTrackCount + 1 + (-1) = explicitTrackCount
             // line -2 -> explicitTrackCount + 1 + (-2) = explicitTrackCount - 1
-            int explicitLineCount = explicitTrackCount + 1;
-            return explicitLineCount + lineNumber;
+            // Clamped into the limited grid (GR-05 / #986).
+            long explicitLineCount = (long) explicitTrackCount + 1;
+            return clampOzLine(explicitLineCount + lineNumber);
         }
     }
 
@@ -1361,16 +1635,22 @@ public class GridComputer {
         }
 
         if (autoRepeat == null) {
-            // No auto-repetition, just expand normally
+            // No auto-repetition, just expand normally. The expanded template is truncated at the
+            // track limit so that a large explicit repetition count cannot create an unbounded
+            // number of tracks (GR-05 / #986 "clamp auto-repeat tracks at their insertion point").
             List<TrackSizingFunction> result = new ArrayList<>();
             for (GridTemplateComponent comp : template) {
                 if (comp.isSingle()) {
+                    if (result.size() >= MAX_GRID_TRACKS) break;
                     result.add(comp.getSingle());
                 } else if (comp.isRepeat()) {
                     GridRepetition repeat = comp.getRepeat();
                     int count = repeat.getCount();
                     for (int i = 0; i < count; i++) {
-                        result.addAll(repeat.getTracks());
+                        for (TrackSizingFunction track : repeat.getTracks()) {
+                            if (result.size() >= MAX_GRID_TRACKS) return result;
+                            result.add(track);
+                        }
                     }
                 }
             }
@@ -1434,31 +1714,88 @@ public class GridComputer {
                     numRepetitions = 1;
                 } else {
                     float remainingSpace = containerSize - firstRepUsedSpace;
-                    int extraReps = (int) Math.floor(remainingSpace / perRepTotal);
-                    numRepetitions = 1 + extraReps;
+                    // Clamp to the track limit before the float->int cast so that a huge (or
+                    // infinite) container size cannot saturate to a negative value.
+                    numRepetitions = 1 + Math.min(MAX_GRID_TRACKS, (int) Math.floor(remainingSpace / perRepTotal));
                 }
             }
         }
 
-        // Build result with expanded repetitions
+        // Clamp the number of repetitions based on the auto-repeat's insertion point so that tracks
+        // before it are preserved and tracks after it are truncated in source order
+        // (https://www.w3.org/TR/css-grid-1/#overlarge-grids).
+        int autoRepeatInsertionPoint = autoRepeatInsertionPoint(template, autoRepeatIndex);
+        numRepetitions = clampAutoRepetitionCount(autoRepeatInsertionPoint, autoRepeat.getTrackCount(), numRepetitions);
+
+        // Build result with expanded repetitions, truncating the expanded template at the track limit.
         List<TrackSizingFunction> result = new ArrayList<>();
         for (int i = 0; i < template.size(); i++) {
             GridTemplateComponent comp = template.get(i);
             if (i == autoRepeatIndex) {
                 // Expand auto-repetition
                 for (int j = 0; j < numRepetitions; j++) {
-                    result.addAll(autoRepeat.getTracks());
+                    for (TrackSizingFunction track : autoRepeat.getTracks()) {
+                        if (result.size() >= MAX_GRID_TRACKS) return result;
+                        result.add(track);
+                    }
                 }
             } else if (comp.isSingle()) {
+                if (result.size() >= MAX_GRID_TRACKS) return result;
                 result.add(comp.getSingle());
             } else if (comp.isRepeat()) {
                 GridRepetition repeat = comp.getRepeat();
                 for (int j = 0; j < repeat.getCount(); j++) {
-                    result.addAll(repeat.getTracks());
+                    for (TrackSizingFunction track : repeat.getTracks()) {
+                        if (result.size() >= MAX_GRID_TRACKS) return result;
+                        result.add(track);
+                    }
                 }
             }
         }
         return result;
+    }
+
+    /**
+     * The number of tracks declared by the template before the auto-repetition at {@code autoRepeatIndex}.
+     * Used to clamp the auto-repetition into the limited grid while preserving source order (GR-05 / #986).
+     */
+    private static int autoRepeatInsertionPoint(List<GridTemplateComponent> template, int autoRepeatIndex) {
+        int insertionPoint = 0;
+        for (int i = 0; i < template.size() && i < autoRepeatIndex; i++) {
+            GridTemplateComponent comp = template.get(i);
+            if (comp.isSingle()) {
+                insertionPoint = saturatingAdd(insertionPoint, 1);
+            } else if (comp.isRepeat() && !comp.getRepeat().isAutoRepetition()) {
+                GridRepetition repeat = comp.getRepeat();
+                insertionPoint = saturatingAdd(insertionPoint,
+                    (int) Math.min(Integer.MAX_VALUE, (long) repeat.getCount() * repeat.getTrackCount()));
+            }
+        }
+        return Math.min(insertionPoint, MAX_GRID_TRACKS);
+    }
+
+    /**
+     * Clamp an auto-repetition count into the limited grid: the tracks that follow the auto-repetition
+     * are truncated in source order, so the number of repetitions is capped by the number of tracks
+     * that remain after the insertion point (GR-05 / #986).
+     *
+     * @param insertionPoint       number of tracks declared before the auto-repetition
+     * @param tracksPerRepetition  number of tracks in a single repetition
+     * @param repetitions          the (content-sized) number of repetitions that fit in the container
+     * @return the number of repetitions to emit (0 when there is no room for any track)
+     */
+    private static int clampAutoRepetitionCount(int insertionPoint, int tracksPerRepetition, int repetitions) {
+        if (tracksPerRepetition <= 0) {
+            // A repetition with no tracks emits nothing; keep a single repetition so the template is
+            // still considered expanded rather than vanishing silently.
+            return Math.max(1, repetitions);
+        }
+        int remainingTracks = MAX_GRID_TRACKS - insertionPoint;
+        if (remainingTracks <= 0) {
+            return 0;
+        }
+        int maxRepetitions = (int) (((long) remainingTracks + tracksPerRepetition - 1) / tracksPerRepetition);
+        return Math.max(1, Math.min(repetitions, maxRepetitions));
     }
 
     /**
@@ -1495,12 +1832,14 @@ public class GridComputer {
             }
             // Count tracks before auto-fit
             if (comp.isSingle()) {
-                tracksBefore++;
+                tracksBefore = saturatingAdd(tracksBefore, 1);
             } else if (comp.isRepeat()) {
                 GridRepetition repeat = comp.getRepeat();
-                tracksBefore += repeat.getCount() * repeat.getTrackCount();
+                tracksBefore = saturatingAdd(tracksBefore,
+                    (int) Math.min(Integer.MAX_VALUE, (long) repeat.getCount() * repeat.getTrackCount()));
             }
         }
+        tracksBefore = Math.min(tracksBefore, MAX_GRID_TRACKS);
 
         if (autoFit == null) {
             return null;
@@ -1560,13 +1899,18 @@ public class GridComputer {
                     numRepetitions = 1;
                 } else {
                     float remainingSpace = containerSize - firstRepUsedSpace;
-                    int extraReps = (int) Math.floor(remainingSpace / perRepTotal);
-                    numRepetitions = 1 + extraReps;
+                    // Clamp to the track limit before the float->int cast (see expandAutoRepetition).
+                    numRepetitions = 1 + Math.min(MAX_GRID_TRACKS, (int) Math.floor(remainingSpace / perRepTotal));
                 }
             }
         }
 
-        int totalAutoFitTracks = numRepetitions * autoFit.getTrackCount();
+        // Clamp the auto-fit repetitions exactly like expandAutoRepetition so that the collapsed
+        // range stays aligned with the expanded template (GR-05 / #986).
+        numRepetitions = clampAutoRepetitionCount(tracksBefore, autoFit.getTrackCount(), numRepetitions);
+
+        int totalAutoFitTracks = (int) Math.min((long) numRepetitions * autoFit.getTrackCount(),
+            Math.max(0, MAX_GRID_TRACKS - tracksBefore));
         return new AutoFitInfo(tracksBefore, totalAutoFitTracks, autoFit.getTrackCount());
     }
 
@@ -1644,7 +1988,9 @@ public class GridComputer {
      */
     private TrackCounts computeColumnCounts(List<GridItem> items, List<TrackSizingFunction> expandedCols) {
         // Check explicit columns from expanded template (after auto-fill/auto-fit expansion)
-        int explicitCols = (expandedCols != null && !expandedCols.isEmpty()) ? expandedCols.size() : 0;
+        // Clamped into the limited grid (GR-05 / #986).
+        int explicitCols = (expandedCols != null && !expandedCols.isEmpty())
+                           ? Math.min(expandedCols.size(), MAX_GRID_TRACKS) : 0;
 
         // Scan items for min (negative implicit) and max (positive implicit) positions
         int minCol = 0;  // Minimum OriginZero position (can be negative)
@@ -1655,18 +2001,22 @@ public class GridComputer {
             if (item.columnStart != null) {
                 // Has definite start position
                 minCol = Math.min(minCol, item.columnStart);
-                int itemEnd = item.columnStart + item.columnSpan;
+                int itemEnd = clampOzLine((long) item.columnStart + item.columnSpan);
                 maxCol = Math.max(maxCol, itemEnd);
             } else if (item.columnEnd != null) {
                 // Has definite end position but auto start
-                int itemStart = item.columnEnd - item.columnSpan;
+                int itemStart = clampOzLine((long) item.columnEnd - item.columnSpan);
                 minCol = Math.min(minCol, itemStart);
                 maxCol = Math.max(maxCol, item.columnEnd);
             } else {
                 // Fully auto - track max span for later
-                maxSpan = Math.max(maxSpan, item.columnSpan);
+                maxSpan = Math.max(maxSpan, clampGridSpan(item.columnSpan));
             }
         }
+
+        // Clamp the item lines into the limited grid before deriving the implicit track counts.
+        minCol = Math.max(MIN_OZ_LINE, minCol);
+        maxCol = Math.min(MAX_OZ_LINE, maxCol);
 
         // Compute negative implicit tracks (for items positioned before line 0)
         int negativeImplicit = minCol < 0 ? -minCol : 0;
@@ -1681,8 +2031,12 @@ public class GridComputer {
         // Ensure we have enough tracks for the max span of any indefinitely placed item
         int totalTracks = negativeImplicit + explicitCols + positiveImplicit;
         if (totalTracks < maxSpan) {
-            positiveImplicit = maxSpan - negativeImplicit - explicitCols;
+            positiveImplicit = Math.max(0, maxSpan - negativeImplicit - explicitCols);
         }
+
+        // Clamp the total track count so that the grid remains within the limited grid
+        // (implicit lines stay within [MIN_OZ_LINE, MAX_OZ_LINE]).
+        positiveImplicit = Math.min(positiveImplicit, Math.max(0, MAX_OZ_LINE - explicitCols));
 
         return new TrackCounts(negativeImplicit, explicitCols, positiveImplicit);
     }
@@ -1697,7 +2051,9 @@ public class GridComputer {
      */
     private TrackCounts computeRowCounts(List<GridItem> items, List<TrackSizingFunction> expandedRows) {
         // Check explicit rows from expanded template (after auto-fill/auto-fit expansion)
-        int explicitRows = (expandedRows != null && !expandedRows.isEmpty()) ? expandedRows.size() : 0;
+        // Clamped into the limited grid (GR-05 / #986).
+        int explicitRows = (expandedRows != null && !expandedRows.isEmpty())
+                           ? Math.min(expandedRows.size(), MAX_GRID_TRACKS) : 0;
 
         // Scan items for min (negative implicit) and max (positive implicit) positions
         int minRow = 0;
@@ -1707,17 +2063,21 @@ public class GridComputer {
         for (GridItem item : items) {
             if (item.rowStart != null) {
                 minRow = Math.min(minRow, item.rowStart);
-                int itemEnd = item.rowStart + item.rowSpan;
+                int itemEnd = clampOzLine((long) item.rowStart + item.rowSpan);
                 maxRow = Math.max(maxRow, itemEnd);
             } else if (item.rowEnd != null) {
-                int itemStart = item.rowEnd - item.rowSpan;
+                int itemStart = clampOzLine((long) item.rowEnd - item.rowSpan);
                 minRow = Math.min(minRow, itemStart);
                 maxRow = Math.max(maxRow, item.rowEnd);
             } else {
                 // Fully auto - track max span for later
-                maxSpan = Math.max(maxSpan, item.rowSpan);
+                maxSpan = Math.max(maxSpan, clampGridSpan(item.rowSpan));
             }
         }
+
+        // Clamp the item lines into the limited grid before deriving the implicit track counts.
+        minRow = Math.max(MIN_OZ_LINE, minRow);
+        maxRow = Math.min(MAX_OZ_LINE, maxRow);
 
         // Compute negative and positive implicit tracks
         int negativeImplicit = minRow < 0 ? -minRow : 0;
@@ -1730,8 +2090,12 @@ public class GridComputer {
         // Ensure we have enough tracks for the max span of any indefinitely placed item
         int totalTracks = negativeImplicit + explicitRows + positiveImplicit;
         if (totalTracks < maxSpan) {
-            positiveImplicit = maxSpan - negativeImplicit - explicitRows;
+            positiveImplicit = Math.max(0, maxSpan - negativeImplicit - explicitRows);
         }
+
+        // Clamp the total track count so that the grid remains within the limited grid
+        // (implicit lines stay within [MIN_OZ_LINE, MAX_OZ_LINE]).
+        positiveImplicit = Math.min(positiveImplicit, Math.max(0, MAX_OZ_LINE - explicitRows));
 
         return new TrackCounts(negativeImplicit, explicitRows, positiveImplicit);
     }
@@ -1996,16 +2360,29 @@ public class GridComputer {
 
         /**
          * Expand the matrix to fit the given OriginZero range.
+         * <p>
+         * The expansion is clamped into the limited grid (GR-05 / #986): the number of leading
+         * implicit tracks is capped at {@link #MAX_GRID_TRACKS} and the explicit + trailing implicit
+         * tracks are capped at {@link #MAX_OZ_LINE}, so {@link TrackCounts} derived from the matrix
+         * always describe lines within {@code [MIN_OZ_LINE, MAX_OZ_LINE]}.
          */
         private void expandToFit(int ozColStart, int ozRowStart, int colSpan, int rowSpan) {
-            int ozColEnd = ozColStart + colSpan;
-            int ozRowEnd = ozRowStart + rowSpan;
+            long ozColEnd = (long) ozColStart + colSpan;
+            long ozRowEnd = (long) ozRowStart + rowSpan;
 
             // Calculate required expansion
-            int reqNegCols = Math.max(-ozColStart - colCounts.negativeImplicit, 0);
-            int reqPosCols = Math.max(ozColEnd - (colCounts.explicit + colCounts.positiveImplicit), 0);
-            int reqNegRows = Math.max(-ozRowStart - rowCounts.negativeImplicit, 0);
-            int reqPosRows = Math.max(ozRowEnd - (rowCounts.explicit + rowCounts.positiveImplicit), 0);
+            int reqNegCols = (int) Math.max(-(long) ozColStart - colCounts.negativeImplicit, 0);
+            int reqPosCols = (int) Math.max(ozColEnd - (colCounts.explicit + colCounts.positiveImplicit), 0);
+            int reqNegRows = (int) Math.max(-(long) ozRowStart - rowCounts.negativeImplicit, 0);
+            int reqPosRows = (int) Math.max(ozRowEnd - (rowCounts.explicit + rowCounts.positiveImplicit), 0);
+
+            // Clamp the expansion into the limited grid
+            reqNegCols = Math.min(reqNegCols, Math.max(0, MAX_GRID_TRACKS - colCounts.negativeImplicit));
+            reqNegRows = Math.min(reqNegRows, Math.max(0, MAX_GRID_TRACKS - rowCounts.negativeImplicit));
+            reqPosCols = Math.min(reqPosCols,
+                Math.max(0, MAX_OZ_LINE - (colCounts.explicit + colCounts.positiveImplicit)));
+            reqPosRows = Math.min(reqPosRows,
+                Math.max(0, MAX_OZ_LINE - (rowCounts.explicit + rowCounts.positiveImplicit)));
 
             if (reqNegCols == 0 && reqPosCols == 0 && reqNegRows == 0 && reqPosRows == 0) {
                 return;  // No expansion needed
@@ -2033,6 +2410,10 @@ public class GridComputer {
 
         /**
          * Mark an area as occupied, expanding the matrix if needed.
+         * <p>
+         * The marked range is clamped to the matrix bounds so that a placement that was clamped
+         * into the limited grid (and therefore lies partially outside the matrix) cannot write out
+         * of bounds.
          */
         void markArea(int ozColStart, int ozRowStart, int colSpan, int rowSpan) {
             expandToFit(ozColStart, ozRowStart, colSpan, rowSpan);
@@ -2040,8 +2421,13 @@ public class GridComputer {
             int colIdx = colToIndex(ozColStart);
             int rowIdx = rowToIndex(ozRowStart);
 
-            for (int r = rowIdx; r < rowIdx + rowSpan; r++) {
-                for (int c = colIdx; c < colIdx + colSpan; c++) {
+            int numCols = cells.length == 0 ? 0 : cells[0].length;
+            int numRows = cells.length;
+            int colEnd = Math.min(numCols, (int) Math.min(Integer.MAX_VALUE, (long) colIdx + colSpan));
+            int rowEnd = Math.min(numRows, (int) Math.min(Integer.MAX_VALUE, (long) rowIdx + rowSpan));
+
+            for (int r = Math.max(0, rowIdx); r < rowEnd; r++) {
+                for (int c = Math.max(0, colIdx); c < colEnd; c++) {
                     cells[r][c] = true;
                 }
             }
@@ -2328,7 +2714,6 @@ public class GridComputer {
                         // Use cached contribution - key optimization!
                         // Note: getMinContentContributionWidthCached already includes margin, so don't add again
                         FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                        item.availableSpaceCache = availSpace;
                         minContribution = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
                     }
                     frBaseSizes.set(frIdx, Math.max(frBaseSizes.getFloat(frIdx), minContribution));
@@ -2448,7 +2833,6 @@ public class GridComputer {
                             // Use cached contribution - key optimization!
                             // Note: getMaxContentContributionWidthCached already includes margin
                             FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                            item.availableSpaceCache = availSpace;
                             itemContribution = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
                         }
 
@@ -2564,7 +2948,6 @@ public class GridComputer {
 
                             // Use cached contribution - key optimization!
                             FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                            item.availableSpaceCache = availSpace;
 
                             // Measure max-content using cache
                             // Note: cached methods already include margin
@@ -2795,7 +3178,6 @@ public class GridComputer {
 
                 // Use cached contribution - key optimization!
                 FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                item.availableSpaceCache = availSpace;
 
                 // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
                 FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
@@ -3284,6 +3666,14 @@ public class GridComputer {
         float flexFraction;
         boolean changed;
 
+        // Every restart of the algorithm treats at least one more flexible track as inflexible, so a
+        // valid hypothetical fr size is always found within frValues.size() + 1 iterations. Non-finite
+        // values (which can arise from non-finite style inputs) break that invariant because comparisons
+        // against NaN are always false, so the iteration count is bounded to guarantee termination
+        // (GR-20 / upstream #1036 c579c315).
+        int maxIterations = frValues.size() + 1;
+        int iteration = 0;
+
         // Iterate until no tracks need to be made inflexible
         do {
             changed = false;
@@ -3328,7 +3718,7 @@ public class GridComputer {
                     }
                 }
             }
-        } while (changed);
+        } while (changed && ++iteration < maxIterations);
 
         return Math.max(0, flexFraction);
     }
@@ -3502,6 +3892,10 @@ public class GridComputer {
             for (GridItem item : rowItems) {
                 if (!Float.isNaN(item.baseline)) {
                     item.baselineShim = rowMaxBaseline - item.baseline;
+                    // The baseline shim is part of the item's margin sums, which feed into its known
+                    // dimensions, so any cached known dimensions are stale after this point
+                    // (upstream #1226 clears known_dimensions_cache here for the same reason).
+                    item.clearKnownDimensionsCache();
                 }
             }
         }
@@ -3666,9 +4060,15 @@ public class GridComputer {
                     isInflexible.add(false);
                 }
 
-                // Iterative algorithm: tracks with content > fr*fraction become inflexible
+                // Iterative algorithm: tracks with content > fr*fraction become inflexible.
+                // Each pass marks at least one more track inflexible, so the loop always terminates within
+                // sizes.size() + 1 passes unless the inputs are non-finite (NaN comparisons are always
+                // false), which is why the iteration count is bounded explicitly here
+                // (GR-20 / upstream #1036 c579c315).
                 boolean changed = true;
-                while (changed) {
+                int flexIterations = 0;
+                int maxFlexIterations = sizes.size() + 1;
+                while (changed && flexIterations++ < maxFlexIterations) {
                     changed = false;
                     float remainingForFr = availableForFr - usedByInflexible;
                     float flexFraction = currentTotalFr > 0 ? remainingForFr / currentTotalFr : 0f;
@@ -3771,7 +4171,6 @@ public class GridComputer {
                         // Use cached contribution - key optimization!
                         // Note: cached methods already include margin
                         FloatSize availSpace = new FloatSize(colWidth, NaN);
-                        item.availableSpaceCache = availSpace;
                         float contentHeight = item.getMaxContentContributionHeightCached(layoutComputer, availSpace, nodeInnerSize);
 
                         float usedByNonFr = 0f;
@@ -3916,7 +4315,6 @@ public class GridComputer {
                         // Use cached contribution - key optimization!
                         // Note: cached methods already include margin
                         FloatSize availSpace = new FloatSize(gridAreaWidth, NaN);
-                        item.availableSpaceCache = availSpace;
                         height = item.getMaxContentContributionHeightCached(layoutComputer, availSpace, nodeInnerSize);
                     }
                 }
@@ -4007,6 +4405,11 @@ public class GridComputer {
 
             int col = getItemColumnWithCounts(item, i, numColumns, colCounts);
             int row = getItemRowWithCounts(item, i, numColumns, rowCounts);
+
+            // Clamp into the grid so that a placement clamped by the limited grid (GR-05) cannot
+            // index past the track arrays.
+            col = Math.max(0, Math.min(col, numColumns - 1));
+            row = Math.max(0, Math.min(row, numRows - 1));
 
             // Calculate span - number of tracks item covers
             int colSpan = item.columnSpan;
@@ -4390,8 +4793,8 @@ public class GridComputer {
         float scrollbarGutterY,
         TrackCounts colCounts,
         TrackCounts rowCounts,
-        FloatList columnOffsets,
-        FloatList rowOffsets,
+        GridAxisLines columnLines,
+        GridAxisLines rowLines,
         boolean isRtl) {
         TaffyTree tree = layoutComputer.getTree();
 
@@ -4418,13 +4821,14 @@ public class GridComputer {
                 gridRow = namedLineResolver.resolveRowNames(gridRow);
             }
 
-            // Calculate grid area based on grid placement
+            // Calculate grid area based on grid placement (physical container coordinates)
             FloatRect gridArea = resolveAbsoluteGridArea(
                 gridCol, gridRow,
                 colCounts, rowCounts,
-                columnOffsets, rowOffsets,
+                columnLines, rowLines,
                 containerSize, border,
-                scrollbarGutterX, scrollbarGutterY
+                scrollbarGutterX, scrollbarGutterY,
+                isRtl
             );
 
             float areaWidth = gridArea.right - gridArea.left;
@@ -4517,18 +4921,10 @@ public class GridComputer {
             AlignItems justifySelf = childStyle.justifySelf;
             AlignItems alignSelf = childStyle.getAlignSelf();
 
-            // For RTL, we need to flip the grid area horizontally within the container
-            // grid-column: 1 in RTL means the rightmost column
-            FloatRect effectiveGridArea = gridArea;
-            if (isRtl) {
-                // In RTL, flip the left/right of the grid area
-                // gridArea.left becomes containerSize.width - gridArea.right
-                // gridArea.right becomes containerSize.width - gridArea.left
-                float newLeft = containerSize.width - gridArea.right;
-                float newRight = containerSize.width - gridArea.left;
-                effectiveGridArea = new FloatRect(newLeft, newRight, gridArea.top, gridArea.bottom);
-            }
-            float effectiveAreaWidth = effectiveGridArea.right - effectiveGridArea.left;
+            // The grid area is already resolved to physical container coordinates (the logical start/end
+            // lines were mirrored for RTL in resolveAbsoluteGridArea), so only the self-alignment keywords
+            // need to be interpreted relative to the writing direction.
+            float effectiveAreaWidth = gridArea.right - gridArea.left;
 
             // Compute offset in horizontal axis
             float xInArea;
@@ -4537,14 +4933,18 @@ public class GridComputer {
             } else if (!Float.isNaN(right)) {
                 xInArea = effectiveAreaWidth - right - finalSize.width - margin.right;
             } else {
-                // Use alignment-based offset
+                // Use alignment-based offset. In RTL the inline-start edge is the right edge of the area,
+                // so START/FLEX_START resolve to the right and END/FLEX_END to the left.
                 float freeSpaceX = effectiveAreaWidth - finalSize.width - margin.left - margin.right;
-                if (justifySelf == AlignItems.END || justifySelf == AlignItems.FLEX_END) {
-                    xInArea = freeSpaceX + margin.left;
-                } else if (justifySelf == AlignItems.CENTER) {
+                boolean alignsToStart = justifySelf == null || justifySelf == AlignItems.START
+                                        || justifySelf == AlignItems.FLEX_START || justifySelf == AlignItems.AUTO;
+                boolean alignsToEnd = justifySelf == AlignItems.END || justifySelf == AlignItems.FLEX_END;
+                if (justifySelf == AlignItems.CENTER) {
                     xInArea = freeSpaceX / 2 + margin.left;
+                } else if (isRtl ? alignsToStart : alignsToEnd) {
+                    xInArea = freeSpaceX + margin.left;
                 } else {
-                    // START, FLEX_START, STRETCH, BASELINE - all start at margin.left
+                    // START/FLEX_START (LTR), END/FLEX_END (RTL), STRETCH, BASELINE: start of the area
                     xInArea = margin.left;
                 }
             }
@@ -4569,7 +4969,7 @@ public class GridComputer {
             }
 
             // Convert to container coordinates
-            float x = effectiveGridArea.left + xInArea;
+            float x = gridArea.left + xInArea;
             float y = gridArea.top + yInArea;
 
             TaffyPoint<Overflow> overflow = childStyle.getOverflow();
@@ -4616,12 +5016,13 @@ public class GridComputer {
         TaffyLine<GridPlacement> gridRow,
         TrackCounts colCounts,
         TrackCounts rowCounts,
-        FloatList columnOffsets,
-        FloatList rowOffsets,
+        GridAxisLines columnLines,
+        GridAxisLines rowLines,
         FloatSize containerSize,
         FloatRect border,
         float scrollbarGutterX,
-        float scrollbarGutterY) {
+        float scrollbarGutterY,
+        boolean isRtl) {
 
         // Resolve column placement
         Integer colStart = resolveAbsoluteGridLine(gridCol.start, gridCol.end, colCounts, true);
@@ -4631,19 +5032,22 @@ public class GridComputer {
         Integer rowStart = resolveAbsoluteGridLine(gridRow.start, gridRow.end, rowCounts, true);
         Integer rowEnd = resolveAbsoluteGridLine(gridRow.end, gridRow.start, rowCounts, false);
 
-        // Get offset values, falling back to border edges
-        float left = colStart != null && colStart >= 0 && colStart < columnOffsets.size()
-                     ? columnOffsets.getFloat(colStart)
-                     : border.left;
-        float right = colEnd != null && colEnd >= 0 && colEnd < columnOffsets.size()
-                      ? columnOffsets.getFloat(colEnd)
-                      : containerSize.width - border.right - scrollbarGutterX;
-        float top = rowStart != null && rowStart >= 0 && rowStart < rowOffsets.size()
-                    ? rowOffsets.getFloat(rowStart)
-                    : border.top;
-        float bottom = rowEnd != null && rowEnd >= 0 && rowEnd < rowOffsets.size()
-                       ? rowOffsets.getFloat(rowEnd)
-                       : containerSize.height - border.bottom - scrollbarGutterY;
+        // A grid line used as an edge resolves to the edge of the adjacent track rather than to the raw
+        // gutter offset, so that content alignment free space is excluded from the grid area
+        // (upstream #1071/#1266). In RTL the item's physical left edge derives from its logical end line
+        // and its physical right edge from its logical start line (upstream's RTL branch).
+        float left;
+        float right;
+        if (isRtl) {
+            left = colEnd != null ? columnLines.endEdge(colEnd) : border.left + scrollbarGutterX;
+            right = colStart != null ? columnLines.startEdge(colStart) : containerSize.width - border.right;
+        } else {
+            left = colStart != null ? columnLines.startEdge(colStart) : border.left;
+            right = colEnd != null ? columnLines.endEdge(colEnd) : containerSize.width - border.right - scrollbarGutterX;
+        }
+
+        float top = rowStart != null ? rowLines.startEdge(rowStart) : border.top;
+        float bottom = rowEnd != null ? rowLines.endEdge(rowEnd) : containerSize.height - border.bottom - scrollbarGutterY;
 
         return new FloatRect(left, right, top, bottom);
     }
@@ -5034,6 +5438,20 @@ public class GridComputer {
     /**
      * Compare two nullable Float values for equality with tolerance.
      */
+    /**
+     * Compare two sizes exactly, treating {@code NaN} as equal to {@code NaN}. Used for cache keys,
+     * where a value must be identical rather than approximately equal.
+     */
+    private static boolean floatSizeEquals(FloatSize a, FloatSize b) {
+        if (a == null || b == null) return a == b;
+        return floatEqualsExactly(a.width, b.width) && floatEqualsExactly(a.height, b.height);
+    }
+
+    private static boolean floatEqualsExactly(float a, float b) {
+        if (Float.isNaN(a) || Float.isNaN(b)) return Float.isNaN(a) && Float.isNaN(b);
+        return a == b;
+    }
+
     private static boolean floatEquals(float a, float b) {
         if (Float.isNaN(a) && Float.isNaN(b)) return true;
         if (Float.isNaN(a) || Float.isNaN(b)) return false;
