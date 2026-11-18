@@ -6,25 +6,45 @@ package dev.vfyjxf.taffy.style;
 public enum AlignSelf {
     /** Use the parent's align-items value */
     AUTO,
-    /** Items are aligned at the start of the cross axis */
+    /** Items are aligned at the flex-relative start of the cross axis (flips with flex-wrap: wrap-reverse) */
     FLEX_START,
-    /** Items are aligned at the end of the cross axis */
+    /** Items are aligned at the flex-relative end of the cross axis (flips with flex-wrap: wrap-reverse) */
     FLEX_END,
     /** Items are aligned at the center of the cross axis */
     CENTER,
     /** Items are aligned at the baseline */
     BASELINE,
     /** Items are stretched to fill the cross axis */
-    STRETCH;
+    STRETCH,
+    /**
+     * Items are aligned at the physical start of the cross axis.
+     * <p>
+     * Unlike {@link #FLEX_START}, this is not affected by {@code flex-wrap: wrap-reverse};
+     * it always resolves to the cross-start edge of the container.
+     */
+    START,
+    /**
+     * Items are aligned at the physical end of the cross axis.
+     * <p>
+     * Unlike {@link #FLEX_END}, this is not affected by {@code flex-wrap: wrap-reverse};
+     * it always resolves to the cross-end edge of the container.
+     */
+    END;
 
     /**
      * Creates an AlignSelf from an AlignItems value.
+     * <p>
+     * {@link AlignItems#START}/{@link AlignItems#END} are kept distinct from the
+     * flex-relative {@link AlignItems#FLEX_START}/{@link AlignItems#FLEX_END}:
+     * they differ under {@code flex-wrap: wrap-reverse}.
      */
     public static AlignSelf fromAlignItems(AlignItems alignItems) {
         if (alignItems == null || alignItems == AlignItems.AUTO) return STRETCH;
         return switch (alignItems) {
-            case FLEX_START, START -> FLEX_START;
-            case FLEX_END, END -> FLEX_END;
+            case START -> START;
+            case END -> END;
+            case FLEX_START -> FLEX_START;
+            case FLEX_END -> FLEX_END;
             case CENTER -> CENTER;
             case BASELINE -> BASELINE;
             case STRETCH -> STRETCH;
@@ -37,11 +57,13 @@ public enum AlignSelf {
      */
     public AlignItems toAlignItems() {
         return switch (this) {
+            case START -> AlignItems.START;
+            case END -> AlignItems.END;
             case FLEX_START -> AlignItems.FLEX_START;
             case FLEX_END -> AlignItems.FLEX_END;
             case CENTER -> AlignItems.CENTER;
             case BASELINE -> AlignItems.BASELINE;
-            default -> AlignItems.STRETCH;
+            case STRETCH, AUTO -> AlignItems.STRETCH;
         };
     }
 }
