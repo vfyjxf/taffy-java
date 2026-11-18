@@ -8,11 +8,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * Unified entry point for taffy fixture and WPT test generation.
@@ -70,6 +72,11 @@ public final class Generator {
             return 0;
         }
 
+        // Read (and validate) the allowlist before paying the Chrome startup cost.
+        List<FreshnessAllowlist.Entry> freshnessAllowlist = options.freshnessAllowlist == null
+                ? List.of()
+                : FreshnessAllowlist.read(options.freshnessAllowlist);
+
         Path outputRoot = options.outRoot;
         Path temporaryRoot = null;
         if (options.check) {
@@ -99,7 +106,9 @@ public final class Generator {
                 }
                 if (options.check) {
                     Path expected = options.outRoot.resolve(packagePath(options.taffyPackage()));
-                    return compareTrees(expected, packageRoot) ? 0 : 1;
+                    return compareTrees(expected, packageRoot,
+                            "./gradlew :gentest:genTaffy -PtaffyRoot=<taffy checkout>",
+                            freshnessAllowlist) ? 0 : 1;
                 }
             } else {
                 Path packageRoot = outputRoot.resolve(packagePath(options.wptPackage()));
@@ -113,7 +122,9 @@ public final class Generator {
                 }
                 if (options.check) {
                     Path expected = options.outRoot.resolve(packagePath(options.wptPackage()));
-                    return compareTrees(expected, packageRoot) ? 0 : 1;
+                    return compareTrees(expected, packageRoot,
+                            "./gradlew :gentest:genWpt -PwptRoot=<wpt checkout>",
+                            freshnessAllowlist) ? 0 : 1;
                 }
             }
         } finally {
@@ -184,9 +195,25 @@ public final class Generator {
     /**
      * Byte-compare the generated tree against the committed tree.
      *
-     * @return true when every generated file exists and is byte-identical
+     * <p>Normally every file must be byte-identical. Files listed in
+     * {@code allowlist} are compared method by method instead: the named
+     * generated methods are skipped and reported, while every other byte must
+     * still match. An allowlisted method that no longer differs is reported as
+     * stale and fails the check, so an exception cannot silently keep
+     * validating nothing.</p>
+     *
+     * @return true when every generated file exists and matches, apart from the
+     *         explicitly allowlisted hand edits
      */
-    static boolean compareTrees(Path expectedRoot, Path actualRoot) throws IOException {
+    static boolean compareTrees(Path expectedRoot, Path actualRoot, String refreshCommand,
+                                List<FreshnessAllowlist.Entry> allowlist) throws IOException {
+        Map<Path, List<FreshnessAllowlist.Entry>> allowlistByFile = new LinkedHashMap<>();
+        for (FreshnessAllowlist.Entry entry : allowlist) {
+            allowlistByFile.computeIfAbsent(entry.relativePath(), key -> new ArrayList<>()).add(entry);
+        }
+        Set<FreshnessAllowlist.Entry> visitedEntries = new LinkedHashSet<>();
+        Set<String> refreshCategories = new TreeSet<>();
+
         List<Path> actualFiles = listJava(actualRoot);
         if (actualFiles.isEmpty()) {
             System.err.println("CHECK FAILED: no generated files under " + actualRoot);
@@ -194,6 +221,7 @@ public final class Generator {
         }
         int compared = 0;
         int differences = 0;
+        int allowedEdits = 0;
         Set<Path> actualRelative = new LinkedHashSet<>();
         Set<Path> touchedDirs = new LinkedHashSet<>();
 
@@ -208,15 +236,29 @@ public final class Generator {
             if (!Files.isRegularFile(expected)) {
                 System.err.println("CHECK FAILED: missing expected file " + expected);
                 differences++;
+                addCategory(refreshCategories, relative);
                 continue;
             }
-            byte[] expectedBytes = Files.readAllBytes(expected);
-            byte[] actualBytes = Files.readAllBytes(actual);
             compared++;
-            if (!Arrays.equals(expectedBytes, actualBytes)) {
+            List<FreshnessAllowlist.Entry> fileAllowlist = allowlistByFile.get(relative);
+            if (fileAllowlist == null || fileAllowlist.isEmpty()) {
+                byte[] expectedBytes = Files.readAllBytes(expected);
+                byte[] actualBytes = Files.readAllBytes(actual);
+                if (!Arrays.equals(expectedBytes, actualBytes)) {
+                    differences++;
+                    addCategory(refreshCategories, relative);
+                    System.err.println("CHECK FAILED: differs: " + expected);
+                    printDiff(expected, expectedBytes, actualBytes);
+                }
+                continue;
+            }
+            AllowlistedComparison comparison = compareAllowlistedFile(
+                    expected, actual, relative, fileAllowlist, visitedEntries);
+            if (comparison.passed()) {
+                allowedEdits += comparison.allowedEdits();
+            } else {
                 differences++;
-                System.err.println("CHECK FAILED: differs: " + expected);
-                printDiff(expected, expectedBytes, actualBytes);
+                addCategory(refreshCategories, relative);
             }
         }
 
@@ -226,14 +268,252 @@ public final class Generator {
             if (parent != null && touchedDirs.contains(parent) && !actualRelative.contains(relative)) {
                 System.err.println("CHECK FAILED: stale committed file not generated: " + expected);
                 differences++;
+                addCategory(refreshCategories, relative);
             }
         }
 
+        for (FreshnessAllowlist.Entry entry : allowlist) {
+            if (visitedEntries.contains(entry)) {
+                continue;
+            }
+            // A category filter can leave an allowlisted file outside this run.
+            // Report it, but only fail when the committed tree has no such file
+            // at all (a typo or an entry left behind after a rename).
+            Path committedFile = expectedRoot.resolve(entry.relativePath());
+            if (Files.isRegularFile(committedFile)) {
+                System.out.println("[info] freshness allowlist entry not evaluated "
+                        + "(file outside this check): " + entry.relativePath()
+                        + " :: " + entry.method());
+                continue;
+            }
+            differences++;
+            System.err.println("CHECK FAILED: allowlist entry matches no generated method: "
+                    + entry.relativePath() + " :: " + entry.method()
+                    + " [removeBy=" + entry.removeBy() + "]");
+        }
+
         if (differences == 0) {
-            System.out.println("CHECK PASSED: " + compared + " file(s) byte-identical under " + expectedRoot);
+            String suffix = allowedEdits == 0 ? ""
+                    : " (" + allowedEdits + " allowlisted hand edit(s) skipped)";
+            System.out.println("CHECK PASSED: " + compared + " file(s) byte-identical under "
+                    + expectedRoot + suffix);
             return true;
         }
-        System.err.println("CHECK FAILED: " + differences + " difference(s) across " + compared + " compared file(s)");
+        System.err.println("CHECK FAILED: " + differences + " difference(s) across " + compared
+                + " compared file(s)");
+        String categoryArg = refreshCategories.isEmpty()
+                ? ""
+                : " -Pcategory=" + String.join(",", refreshCategories);
+        System.err.println("Refresh with: " + refreshCommand + categoryArg
+                + " and commit the regenerated files (never edit generated tests by hand).");
+        return false;
+    }
+
+    private record AllowlistedComparison(boolean passed, int allowedEdits) {}
+
+    private record MethodBlock(String displayName, String methodName, int startLine, int endLine) {}
+
+    private record NumberedLine(int number, String text) {}
+
+    /**
+     * Compare one file, skipping the method blocks named by the allowlist.
+     * Every allowlisted method must suppress a real difference: an entry whose
+     * block matches (or does not exist on one side) is stale and fails the check.
+     */
+    private static AllowlistedComparison compareAllowlistedFile(
+            Path expected, Path actual, Path relative,
+            List<FreshnessAllowlist.Entry> entries,
+            Set<FreshnessAllowlist.Entry> visitedEntries) throws IOException {
+        byte[] expectedBytes = Files.readAllBytes(expected);
+        byte[] actualBytes = Files.readAllBytes(actual);
+        if (containsCarriageReturn(expectedBytes) || containsCarriageReturn(actualBytes)) {
+            System.err.println("CHECK FAILED: differs (CR bytes; allowlist comparison is line based): " + expected);
+            printDiff(expected, expectedBytes, actualBytes);
+            return new AllowlistedComparison(false, 0);
+        }
+        List<String> expectedLines = splitLines(expectedBytes);
+        List<String> actualLines = splitLines(actualBytes);
+        Map<String, MethodBlock> expectedBlocks = parseMethodBlocks(expectedLines);
+        Map<String, MethodBlock> actualBlocks = parseMethodBlocks(actualLines);
+
+        boolean failed = false;
+        int allowed = 0;
+        List<int[]> expectedSkips = new ArrayList<>();
+        List<int[]> actualSkips = new ArrayList<>();
+        for (FreshnessAllowlist.Entry entry : entries) {
+            visitedEntries.add(entry);
+            MethodBlock expectedBlock = expectedBlocks.get(entry.method());
+            MethodBlock actualBlock = actualBlocks.get(entry.method());
+            if (expectedBlock == null || actualBlock == null) {
+                failed = true;
+                System.err.println("CHECK FAILED: allowlist entry matches no test method on one side: "
+                        + relative + " :: " + entry.method()
+                        + " (expected=" + (expectedBlock != null)
+                        + ", actual=" + (actualBlock != null)
+                        + ", removeBy=" + entry.removeBy() + ")");
+                continue;
+            }
+            String expectedBlockText = blockText(expectedLines, expectedBlock);
+            String actualBlockText = blockText(actualLines, actualBlock);
+            if (expectedBlockText.equals(actualBlockText)) {
+                failed = true;
+                System.err.println("CHECK FAILED: stale allowlist entry (regeneration already matches): "
+                        + relative + " :: " + entry.method()
+                        + " [since=" + entry.since() + ", removeBy=" + entry.removeBy() + "]");
+                continue;
+            }
+            expectedSkips.add(new int[]{expectedBlock.startLine(), expectedBlock.endLine()});
+            actualSkips.add(new int[]{actualBlock.startLine(), actualBlock.endLine()});
+            allowed++;
+            System.out.println("allowlisted hand edit skipped: " + relative + " :: " + entry.method()
+                    + " (" + entry.reason() + ")");
+        }
+
+        boolean matches = printNumberedDiff(
+                expected,
+                remainingLines(expectedLines, expectedSkips),
+                remainingLines(actualLines, actualSkips));
+        if (!matches || failed) {
+            return new AllowlistedComparison(false, 0);
+        }
+        return new AllowlistedComparison(true, allowed);
+    }
+
+    private static void addCategory(Set<String> categories, Path relative) {
+        if (relative.getNameCount() > 1) {
+            categories.add(relative.getName(0).toString());
+        }
+    }
+
+    private static boolean containsCarriageReturn(byte[] bytes) {
+        for (byte value : bytes) {
+            if (value == '\r') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<String> splitLines(byte[] bytes) {
+        return Arrays.asList(new String(bytes, StandardCharsets.UTF_8).split("\n", -1));
+    }
+
+    private static String blockText(List<String> lines, MethodBlock block) {
+        return String.join("\n", lines.subList(block.startLine(), block.endLine()));
+    }
+
+    private static Map<String, MethodBlock> parseMethodBlocks(List<String> lines) {
+        Map<String, MethodBlock> blocks = new LinkedHashMap<>();
+        int classClosingBrace = -1;
+        for (int i = lines.size() - 1; i >= 0; i--) {
+            if (lines.get(i).equals("}")) {
+                classClosingBrace = i;
+                break;
+            }
+        }
+        int start = -1;
+        String displayName = null;
+        String methodName = null;
+        for (int i = 0; i < lines.size(); i++) {
+            if (!lines.get(i).equals("    @Test")) {
+                continue;
+            }
+            if (start >= 0 && methodName != null) {
+                addMethodBlock(blocks, displayName, methodName, start, i);
+            }
+            start = i;
+            displayName = null;
+            methodName = null;
+            for (int j = i + 1; j < Math.min(i + 5, lines.size()); j++) {
+                String line = lines.get(j).trim();
+                if (displayName == null && line.startsWith("@DisplayName(")) {
+                    int prefix = line.indexOf("(\"");
+                    int suffix = line.lastIndexOf("\")");
+                    if (prefix >= 0 && suffix > prefix + 2) {
+                        displayName = line.substring(prefix + 2, suffix);
+                    }
+                }
+                if (methodName == null && line.startsWith("void ")) {
+                    int paren = line.indexOf('(', 5);
+                    if (paren > 5) {
+                        methodName = line.substring(5, paren).trim();
+                    }
+                }
+            }
+        }
+        if (start >= 0 && methodName != null) {
+            int end = classClosingBrace > start ? classClosingBrace : lines.size();
+            addMethodBlock(blocks, displayName, methodName, start, end);
+        }
+        return blocks;
+    }
+
+    private static void addMethodBlock(Map<String, MethodBlock> blocks, String displayName,
+                                       String methodName, int start, int end) {
+        MethodBlock block = new MethodBlock(displayName, methodName, start, end);
+        blocks.put(methodName, block);
+        if (displayName != null) {
+            blocks.putIfAbsent(displayName, block);
+        }
+    }
+
+    private static List<NumberedLine> remainingLines(List<String> lines, List<int[]> skips) {
+        List<NumberedLine> remaining = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) {
+            boolean skipped = false;
+            for (int[] skip : skips) {
+                if (i >= skip[0] && i < skip[1]) {
+                    skipped = true;
+                    break;
+                }
+            }
+            if (!skipped) {
+                remaining.add(new NumberedLine(i + 1, lines.get(i)));
+            }
+        }
+        return remaining;
+    }
+
+    /**
+     * Print the first differences between two numbered line sequences.
+     *
+     * @return true when the sequences are equal
+     */
+    private static boolean printNumberedDiff(Path expected, List<NumberedLine> expectedLines,
+                                             List<NumberedLine> actualLines) {
+        List<String[]> differences = new ArrayList<>();
+        int i = 0;
+        int j = 0;
+        while (i < expectedLines.size() || j < actualLines.size()) {
+            NumberedLine left = i < expectedLines.size() ? expectedLines.get(i) : null;
+            NumberedLine right = j < actualLines.size() ? actualLines.get(j) : null;
+            if (left != null && right != null && left.text().equals(right.text())) {
+                i++;
+                j++;
+                continue;
+            }
+            if (differences.size() < 20) {
+                differences.add(new String[]{
+                        left == null ? "<eof>" : Integer.toString(left.number()),
+                        left == null ? "<missing>" : left.text(),
+                        right == null ? "<eof>" : Integer.toString(right.number()),
+                        right == null ? "<missing>" : right.text()});
+            }
+            if (left != null) {
+                i++;
+            }
+            if (right != null) {
+                j++;
+            }
+        }
+        if (differences.isEmpty()) {
+            return true;
+        }
+        System.err.println("CHECK FAILED: differs (after allowlisted methods): " + expected);
+        for (String[] difference : differences) {
+            System.err.println("  line " + difference[0] + " expected: " + difference[1]);
+            System.err.println("  line " + difference[2] + " actual  : " + difference[3]);
+        }
         return false;
     }
 

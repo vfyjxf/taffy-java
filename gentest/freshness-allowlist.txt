@@ -1,0 +1,16 @@
+# Hand-edited generated test methods accepted by :gentest:checkGeneratedFreshness.
+#
+# Format (one entry per line, '|'-separated, no '|' inside fields):
+#   <relative path under the generated root> | <@DisplayName or method name> |
+#   reason=<why the committed expectation is kept> | since=<when/where> |
+#   removeBy=<when the entry must be deleted>
+#
+# Rules:
+#  * Only individual generated methods may be listed; whole-file exclusions are not supported.
+#  * Every entry must suppress a real difference. If regeneration already matches the
+#    committed method, the freshness check reports a stale entry and FAILS.
+#  * A hit always prints: allowlisted hand edit skipped: <file> :: <method> (<reason>)
+#  * Remove the entry in the same change that regenerates the affected category.
+#
+flex/FlexTest.java | align_baseline_child_margin_percent__border_box | reason=BK-13 cumulative relative rounding: upstream #1189 regenerated the fixture expectation from y=1 to y=0, while the historical 60601a65^ helper still measures y=1 | since=2026-11-19 a9490f8 (P1 BK-13) | removeBy=regenerate from a taffy tree at/after upstream #1189 (or drop the BK-13 override when the fixture tree is updated)
+flex/FlexTest.java | align_baseline_child_margin_percent__content_box | reason=BK-13 cumulative relative rounding: upstream #1189 regenerated the fixture expectation from y=1 to y=0, while the historical 60601a65^ helper still measures y=1 | since=2026-11-19 a9490f8 (P1 BK-13) | removeBy=regenerate from a taffy tree at/after upstream #1189 (or drop the BK-13 override when the fixture tree is updated)
