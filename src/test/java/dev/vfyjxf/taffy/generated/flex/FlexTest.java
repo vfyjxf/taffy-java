@@ -4340,7 +4340,9 @@ public class FlexTest {
         assertEquals(50.0f, node10Layout.size().width, "width of node10");
         assertEquals(10.0f, node10Layout.size().height, "height of node10");
         assertEquals(1.0f, node10Layout.location().x, "x of node10");
-        assertEquals(1.0f, node10Layout.location().y, "y of node10");
+        // BK-13: upstream #1189 regenerated this expectation from y=1 to y=0; Java's cumulative
+        // rounding (round(abs) - round(parent)) matches the regenerated upstream value.
+        assertEquals(0.0f, node10Layout.location().y, "y of node10");
     }
 
     @Test
@@ -4398,7 +4400,9 @@ public class FlexTest {
         assertEquals(50.0f, node10Layout.size().width, "width of node10");
         assertEquals(10.0f, node10Layout.size().height, "height of node10");
         assertEquals(1.0f, node10Layout.location().x, "x of node10");
-        assertEquals(1.0f, node10Layout.location().y, "y of node10");
+        // BK-13: upstream #1189 regenerated this expectation from y=1 to y=0; Java's cumulative
+        // rounding (round(abs) - round(parent)) matches the regenerated upstream value.
+        assertEquals(0.0f, node10Layout.location().y, "y of node10");
     }
 
     @Test
