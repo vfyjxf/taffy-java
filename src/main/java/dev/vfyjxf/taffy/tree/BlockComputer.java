@@ -245,6 +245,17 @@ public class BlockComputer {
 
         FloatSize finalOuterSize = new FloatSize(containerOuterWidth, containerOuterHeight);
 
+        // CSS2 §8.3.1: the bottom margin of a block with `height: auto` collapses with its last
+        // in-flow child's bottom margin only if the box's `min-height` is less than the box's
+        // used height. When `min-height` determines the used height, the last child's bottom
+        // margin no longer adjoins the box's bottom edge, so it stays inside the box instead of
+        // collapsing with the box's own bottom margin. (`max-height` has no such effect.)
+        // BK-05 / upstream #1082.
+        boolean heightConstrainedByMinHeight =
+            !Float.isNaN(minSize.height) && minSize.height > 0f && minSize.height >= containerOuterHeight;
+        boolean ownBottomMarginCollapsesWithChildren =
+            ownMarginsCollapseWithChildren.end && !heightConstrainedByMinHeight;
+
         if (runMode == RunMode.COMPUTE_SIZE) {
             return LayoutOutput.fromOuterSize(finalOuterSize);
         }
@@ -301,7 +312,7 @@ public class BlockComputer {
         }
 
         CollapsibleMarginSet bottomMargin;
-        if (ownMarginsCollapseWithChildren.end) {
+        if (ownBottomMarginCollapsesWithChildren) {
             bottomMargin = layoutResult.lastChildBottomMarginSet;
         } else {
             float marginBottom = Resolve.resolveLpaOrZero(style.getMargin().bottom, parentSize.width);

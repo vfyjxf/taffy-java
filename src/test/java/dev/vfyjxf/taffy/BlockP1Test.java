@@ -140,4 +140,133 @@ public class BlockP1Test {
         // auto width fills the containing block minus the non-auto horizontal margin
         assertSize(childLayout, 54f, 10f, "child");
     }
+
+    // === BK-05: min-height determining the used height stops bottom-margin collapsing ===
+
+    /**
+     * Upstream fixture {@code block_margin_y_last_child_collapse_blocked_by_min_height} (#1082).
+     *
+     * <p>The outer box's used height (40) comes from {@code min-height}, so its last child's
+     * 20px bottom margin must not collapse with its own 10px bottom margin; the sibling is placed
+     * after the 10px margin (not after the 20px one).</p>
+     */
+    @Test
+    @DisplayName("BK-05: min-height determining the used height blocks bottom-margin collapsing")
+    void minHeightDeterminingUsedHeightBlocksBottomMarginCollapse() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        grandchildStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        grandchildStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(20f));
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.minSize = size(TaffyDimension.AUTO, TaffyDimension.length(40f));
+        childStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10f));
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle siblingStyle = blockStyle();
+        siblingStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        NodeId sibling = tree.newLeaf(siblingStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, child, sibling);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 60f, "root");
+        assertLocation(tree.getLayout(child), 0f, 0f, "child");
+        assertSize(tree.getLayout(child), 50f, 40f, "child");
+        assertLocation(tree.getLayout(grandchild), 0f, 0f, "grandchild");
+        assertSize(tree.getLayout(grandchild), 50f, 10f, "grandchild");
+        // 40 (child) + 10 (child's own bottom margin, the collapsed-through 20px one is inside)
+        assertLocation(tree.getLayout(sibling), 0f, 50f, "sibling");
+        assertSize(tree.getLayout(sibling), 50f, 10f, "sibling");
+    }
+
+    /**
+     * Upstream fixture {@code block_margin_y_last_child_collapse_not_blocked_by_smaller_min_height}
+     * (#1082, control case): when {@code min-height} is smaller than the content height the last
+     * child's bottom margin still collapses with the box's own bottom margin.
+     */
+    @Test
+    @DisplayName("BK-05: a min-height smaller than the used height still collapses the bottom margin")
+    void smallerMinHeightStillCollapsesBottomMargin() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        grandchildStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(20f));
+        grandchildStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(30f));
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.minSize = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        childStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(10f));
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle siblingStyle = blockStyle();
+        siblingStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        NodeId sibling = tree.newLeaf(siblingStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, child, sibling);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 60f, "root");
+        assertSize(tree.getLayout(child), 50f, 20f, "child");
+        assertSize(tree.getLayout(grandchild), 50f, 20f, "grandchild");
+        // 20 (child) + 30 (max of the adjoining 30/10 margins)
+        assertLocation(tree.getLayout(sibling), 0f, 50f, "sibling");
+    }
+
+    /**
+     * Upstream fixture {@code block_margin_y_collapse_through_child_blocked_by_parent_min_height}
+     * (#1082): the child's only grandchild collapses through, its 20px bottom margin stays inside
+     * the min-height sized parent, so the sibling follows at y = 50.
+     */
+    @Test
+    @DisplayName("BK-05: a collapsed-through child margin does not escape a min-height parent")
+    void collapsedThroughChildMarginBlockedByParentMinHeight() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        grandchildStyle.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.length(20f));
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.minSize = size(TaffyDimension.AUTO, TaffyDimension.length(30f));
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle siblingStyle = blockStyle();
+        siblingStyle.size = size(TaffyDimension.AUTO, TaffyDimension.length(10f));
+        NodeId sibling = tree.newLeaf(siblingStyle);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(50f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, child, sibling);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(root), 50f, 60f, "root");
+        // 20 is the min-height parent's own top margin set, which is the collapsed-through
+        // grandchild's 20px bottom margin
+        assertLocation(tree.getLayout(child), 0f, 20f, "child");
+        assertSize(tree.getLayout(child), 50f, 30f, "child");
+        assertLocation(tree.getLayout(grandchild), 0f, 0f, "grandchild");
+        assertSize(tree.getLayout(grandchild), 50f, 0f, "grandchild");
+        assertLocation(tree.getLayout(sibling), 0f, 50f, "sibling");
+    }
 }
