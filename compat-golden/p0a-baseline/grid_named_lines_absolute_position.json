@@ -38,7 +38,7 @@
       },
       "contentSize": {
         "width": 200.0000,
-        "height": 150.0000
+        "height": 80.0000
       },
       "scrollWidth": 0.0000,
       "scrollHeight": 0.0000
@@ -47,12 +47,12 @@
       "path": "root/children[0]",
       "order": 0,
       "location": {
-        "x": 0.0000,
-        "y": 0.0000
+        "x": 10.0000,
+        "y": 10.0000
       },
       "size": {
-        "width": 200.0000,
-        "height": 150.0000
+        "width": 100.0000,
+        "height": 70.0000
       },
       "margin": {
         "left": 0.0000,
@@ -83,12 +83,12 @@
       "path": "root/children[1]",
       "order": 0,
       "location": {
-        "x": 0.0000,
+        "x": 50.0000,
         "y": 0.0000
       },
       "size": {
-        "width": 200.0000,
-        "height": 150.0000
+        "width": 150.0000,
+        "height": 30.0000
       },
       "margin": {
         "left": 0.0000,
@@ -119,12 +119,12 @@
       "path": "root/children[2]",
       "order": 0,
       "location": {
-        "x": 0.0000,
-        "y": 0.0000
+        "x": 10.0000,
+        "y": 10.0000
       },
       "size": {
-        "width": 200.0000,
-        "height": 150.0000
+        "width": 100.0000,
+        "height": 70.0000
       },
       "margin": {
         "left": 0.0000,
