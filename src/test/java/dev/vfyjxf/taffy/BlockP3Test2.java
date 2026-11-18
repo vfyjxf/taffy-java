@@ -1,19 +1,27 @@
 package dev.vfyjxf.taffy;
 
+import dev.vfyjxf.taffy.geometry.FloatPoint;
 import dev.vfyjxf.taffy.geometry.FloatSize;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.tree.LayoutComputer;
 import dev.vfyjxf.taffy.tree.LayoutOutput;
 import dev.vfyjxf.taffy.tree.NodeId;
+import dev.vfyjxf.taffy.tree.SizingMode;
 import dev.vfyjxf.taffy.tree.TaffyTree;
+import dev.vfyjxf.taffy.util.MeasureFunc;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * P3 block follow-up tests: the replaced-child min-content contribution cap (BK-12 / upstream
@@ -122,5 +130,113 @@ public class BlockP3Test2 {
 
         assertEquals(INTRINSIC, tree.getLayout(root).size().width, EPS,
             "only compressible replaced children get the min-content width cap");
+    }
+
+    // ==================================================================
+    // LEAF-BASELINE: PerformLayout must measure fixed-size leaves so a
+    // MeasureFunction can report its baseline (upstream leaf.rs gating)
+    // ==================================================================
+
+    private static final float LEAF_SIZE = 20f;
+    private static final float MEASURE_BASELINE = 12f;
+
+    private static TaffyStyle fixedLeafStyle() {
+        TaffyStyle style = block();
+        style.size = new TaffySize<>(
+            TaffyDimension.length(LEAF_SIZE),
+            TaffyDimension.length(LEAF_SIZE)
+        );
+        return style;
+    }
+
+    private static LayoutOutput measuredBaselineLeaf(float baseline) {
+        return LayoutOutput.fromSizesAndBaselines(
+            new FloatSize(LEAF_SIZE, LEAF_SIZE),
+            FloatSize.zero(),
+            new FloatPoint(Float.NaN, baseline)
+        );
+    }
+
+    /** Runs a full layout on {@code node} and returns its output (the container's baseline lives here). */
+    private static LayoutOutput layoutOutput(TaffyTree tree, NodeId node) {
+        LayoutComputer computer = new LayoutComputer(tree, (MeasureFunc) null);
+        return computer.performChildLayout(
+            node,
+            FloatSize.none(),
+            FloatSize.none(),
+            TaffySize.maxContent(),
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+    }
+
+    private static void assertBaseline(float expected, LayoutOutput output, String message) {
+        assertTrue(output.baselines() != null && output.baselines().hasFirst(),
+            message + ": expected a first baseline, got " + output.baselines());
+        assertEquals(expected, output.baselines().first().y, EPS, message + " (baselines.first.y)");
+        assertEquals(expected, output.firstBaselines().y, EPS, message + " (legacy firstBaselines.y)");
+    }
+
+    private static void assertNoBaseline(LayoutOutput output, String message) {
+        assertTrue(Float.isNaN(output.baselines().first().y), message + " (baselines.first.y)");
+        assertTrue(Float.isNaN(output.firstBaselines().y), message + " (legacy firstBaselines.y)");
+    }
+
+    @Test
+    @DisplayName("LEAF-BASELINE: a fixed-size leaf's MeasureFunction baseline reaches the parent output")
+    void fixedSizeLeafReportsMeasureBaselineInPerformLayout() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leaf = tree.newLeafWithMeasureFunction(fixedLeafStyle(),
+            context -> measuredBaselineLeaf(MEASURE_BASELINE));
+        NodeId root = tree.newWithChildren(block(), leaf);
+
+        LayoutOutput output = layoutOutput(tree, root);
+
+        assertBaseline(MEASURE_BASELINE, output,
+            "PerformLayout must measure the fixed-size leaf instead of short-circuiting");
+        assertEquals(LEAF_SIZE, tree.getUnroundedLayout(leaf).size().width, EPS,
+            "the known 20px width is still the final size");
+        assertEquals(LEAF_SIZE, tree.getUnroundedLayout(leaf).size().height, EPS,
+            "the known 20px height is still the final size");
+    }
+
+    @Test
+    @DisplayName("LEAF-BASELINE: a fixed-size leaf without a measure callback keeps reporting no baseline")
+    void fixedSizeLeafWithoutMeasureKeepsNoBaseline() {
+        TaffyTree tree = new TaffyTree();
+        NodeId leaf = tree.newLeaf(fixedLeafStyle());
+        NodeId root = tree.newWithChildren(block(), leaf);
+
+        LayoutOutput output = layoutOutput(tree, root);
+
+        assertNoBaseline(output, "a plain block leaf has no measure callback and therefore no baseline");
+        assertEquals(LEAF_SIZE, tree.getUnroundedLayout(leaf).size().width, EPS);
+        assertEquals(LEAF_SIZE, tree.getUnroundedLayout(leaf).size().height, EPS);
+    }
+
+    @Test
+    @DisplayName("LEAF-BASELINE: ComputeSize skips the measure callback for a known-size leaf")
+    void computeSizeSkipsMeasureForKnownSizeLeaf() {
+        TaffyTree tree = new TaffyTree();
+        AtomicInteger measureCalls = new AtomicInteger();
+        NodeId leaf = tree.newLeafWithMeasureFunction(fixedLeafStyle(), context -> {
+            measureCalls.incrementAndGet();
+            return measuredBaselineLeaf(MEASURE_BASELINE);
+        });
+        LayoutComputer computer = new LayoutComputer(tree, (MeasureFunc) null);
+
+        FloatSize size = computer.measureChildSize(
+            leaf,
+            FloatSize.none(),
+            FloatSize.none(),
+            TaffySize.maxContent(),
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+
+        assertEquals(0, measureCalls.get(),
+            "ComputeSize with both dimensions known and collapse-preventing styles returns early");
+        assertEquals(LEAF_SIZE, size.width, EPS);
+        assertEquals(LEAF_SIZE, size.height, EPS);
     }
 }

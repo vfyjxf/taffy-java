@@ -527,50 +527,33 @@ public class LayoutComputer {
             (!Float.isNaN(nodeSize.height) && nodeSize.height > 0) ||
             (!Float.isNaN(nodeMinSize.height) && nodeMinSize.height > 0);
 
-        // If both dimensions are known, return early (but ensure size is at least padding+border, WITHOUT scrollbar)
-        // Scrollbar gutter reduces content area but doesn't inflate explicit size
-        if (!Float.isNaN(styledBasedKnownDimensions.width) && !Float.isNaN(styledBasedKnownDimensions.height)) {
+        // Return early when both dimensions are known only while *measuring* a leaf whose styles
+        // already prevent it from being collapsed through. PerformLayout must not take this
+        // shortcut: a fixed-size leaf still runs its measure callback so that a MeasureFunction can
+        // report its baseline (the final size still comes from the known dimensions), and a
+        // ComputeSize pass without collapse-preventing styles must also measure so the main path can
+        // report marginsCanCollapseThrough. This mirrors upstream leaf.rs:
+        //   if run_mode == RunMode::ComputeSize && has_styles_preventing_being_collapsed_through
+        // LEAF-BASELINE / CR-07.
+        if (inputs.runMode() == RunMode.COMPUTE_SIZE
+            && hasStylesPreventingBeingCollapsedThrough
+            && !Float.isNaN(styledBasedKnownDimensions.width)
+            && !Float.isNaN(styledBasedKnownDimensions.height)) {
+            // Ensure the size is at least padding+border, WITHOUT scrollbar.
+            // Scrollbar gutter reduces content area but doesn't inflate explicit size.
             FloatSize size = new FloatSize(
                 Math.max(styledBasedKnownDimensions.width, paddingBorderSize.width),
                 Math.max(styledBasedKnownDimensions.height, paddingBorderSize.height)
             );
-            // For early return, we need to compute marginsCanCollapseThrough
-            // If styles already prevent collapse through, return false immediately
-            // Otherwise, if size.height == 0, we need to check if node has content (e.g., text)
-            // by calling the measure function
-            boolean canCollapseThrough;
-            if (hasStylesPreventingBeingCollapsedThrough) {
-                canCollapseThrough = false;
-            } else if (size.height == 0) {
-                // Call measure with null height to get actual content height
-                // This determines if there's a "line box" that prevents collapse through.
-                // This early-return path goes through the same measure selection order as the main
-                // leaf path, but only the measured content height is consumed: the returned
-                // baselines/scrollable overflow are not attached to the style-sized output.
-                FloatSize measureKnownDimensions = new FloatSize(
-                    TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
-                    Float.NaN  // Pass null height to get actual content height
-                );
-                LayoutOutput measuredOutput = measureLeaf(
-                    node, inputs, style, measureKnownDimensions, availableSpace);
-                if (measuredOutput != null) {
-                    float measuredHeight = Float.isNaN(measuredOutput.size().height)
-                                          ? 0f
-                                          : measuredOutput.size().height;
-                    canCollapseThrough = measuredHeight == 0;
-                } else {
-                    canCollapseThrough = true;
-                }
-            } else {
-                canCollapseThrough = false;
-            }
+            // hasStylesPreventingBeingCollapsedThrough is true here, so the leaf cannot be
+            // collapsed through and there is no need to probe the measure callback.
             return new LayoutOutput(
                 size,
                 FloatSize.zero(),
                 new FloatPoint(Float.NaN, Float.NaN),
                 CollapsibleMarginSet.ZERO,
                 CollapsibleMarginSet.ZERO,
-                canCollapseThrough
+                false
             );
         }
 
@@ -653,8 +636,42 @@ public class LayoutComputer {
 
         FloatSize size = new FloatSize(width, height);
 
+        // A leaf that reaches the main path with both dimensions already known (PerformLayout after
+        // the gated early return, or ComputeSize without collapse-preventing styles) keeps those
+        // dimensions verbatim: the caller resolved them against its own layout, and the generic
+        // clamp/aspect-ratio steps above can re-resolve them (e.g. a ContentSize flex target whose
+        // style min/max or aspect ratio must not be applied a second time). The measure callback is
+        // still consulted for baselines, content size and the collapse-through probe.
+        // LEAF-BASELINE / CR-07.
+        if (!Float.isNaN(styledBasedKnownDimensions.width)
+            && !Float.isNaN(styledBasedKnownDimensions.height)) {
+            size = new FloatSize(
+                Math.max(styledBasedKnownDimensions.width, paddingBorderSize.width),
+                Math.max(styledBasedKnownDimensions.height, paddingBorderSize.height)
+            );
+        }
+
         // Compute marginsCanCollapseThrough: true if no styles prevent it, height is 0, and measured height is 0
         float measuredHeight = Float.isNaN(measuredSize.height) ? 0f : measuredSize.height;
+        // When both dimensions are known the main measure callback received the known height
+        // (0), which masks content (a line box) inside a zero-height box. Probe once with an
+        // unknown height, exactly like the old early-return path did, so margin collapsing stays
+        // content-based. This branch is only reached now that the early return is limited to
+        // ComputeSize + collapse-preventing styles. LEAF-BASELINE / CR-07.
+        if (!hasStylesPreventingBeingCollapsedThrough
+            && size.height == 0
+            && !Float.isNaN(styledBasedKnownDimensions.width)
+            && !Float.isNaN(styledBasedKnownDimensions.height)) {
+            FloatSize collapseProbeKnownDimensions = new FloatSize(
+                TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
+                Float.NaN
+            );
+            LayoutOutput probeOutput = measureLeaf(
+                node, inputs, style, collapseProbeKnownDimensions, availableSpace);
+            measuredHeight = probeOutput != null && !Float.isNaN(probeOutput.size().height)
+                             ? probeOutput.size().height
+                             : 0f;
+        }
         boolean canCollapseThrough = !hasStylesPreventingBeingCollapsedThrough
                                      && size.height == 0
                                      && measuredHeight == 0;
