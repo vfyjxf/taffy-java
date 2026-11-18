@@ -32,19 +32,19 @@ The allowlist is a table in which one row describes one changed field group in
 one frozen scenario; a row may cover several nodes when they change together.
 The columns are:
 
-- `场景` (scenario) — the case name, matching
+- `Scenario` — the case name, matching
   `compat-golden/p0a-baseline/<scenario>.json`.
-- `路径` (path) — `nodes/<n>`, the zero-based index into that case's `nodes`
+- `Path` — `nodes/<n>`, the zero-based index into that case's `nodes`
   array. The JSON also carries stable tree paths (`root/children[0]/...`);
   [`compat-golden/README.md`](../compat-golden/README.md) documents the format.
-- `字段` (field) — the layout field that changes, such as `location.x`,
+- `Field` — the layout field that changes, such as `location.x`,
   `size.height`, `contentSize.width`, or `order`.
 - `old` / `new` — the value before and after the fix, in the snapshot's units
   (four decimal places).
-- `修复` (fix) — the PA item that caused the change.
-- `原因` (reason) — a short explanation of the defect.
-- `since` — the first version that contains the change (`1.2.0`).
-- `removeBy` — when the entry may be deleted; bug-fix entries are permanent
+- `Fix` — the PA item that caused the change.
+- `Reason` — a short explanation of the defect.
+- `Since` — the first version that contains the change (`1.2.0`).
+- `RemoveBy` — when the entry may be deleted; bug-fix entries are permanent
   ("不删除").
 
 Procedure:
