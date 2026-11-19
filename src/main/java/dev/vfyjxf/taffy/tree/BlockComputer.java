@@ -13,6 +13,7 @@ import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
 import dev.vfyjxf.taffy.style.Clear;
+import dev.vfyjxf.taffy.style.Contain;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyFloat;
 import dev.vfyjxf.taffy.style.TaffyDirection;
@@ -140,6 +141,12 @@ public class BlockComputer {
          */
         TaffyDisplay display = TaffyDisplay.BLOCK;
         /**
+         * The child's CSS contain flags. Layout and paint containment make the child establish an
+         * independent formatting context, so its floats stay inside it, external floats are only
+         * avoided (never entered) and its margins never collapse through the parent's edges.
+         */
+        Contain contain = Contain.NONE;
+        /**
          * The child's CSS {@code clear} value. Floats pass it to the placement algorithm; normal
          * in-flow boxes use it to move below cleared floats.
          */
@@ -197,6 +204,12 @@ public class BlockComputer {
         float scrollbarGutterBottom = overflow.x == Overflow.SCROLL ? scrollbarWidth : 0f;
         FloatRect scrollbarGutter = new FloatRect(0f, scrollbarGutterRight, 0f, scrollbarGutterBottom);
 
+        // Layout and paint containment: both make this box establish an independent formatting
+        // context (the same layout effect as display: flow-root), while layout containment
+        // additionally suppresses the box's baseline. Size/inline-size containment have no layout
+        // effect (upstream #1128 does not implement size containment). Upstream #1128.
+        Contain contain = style.getContain();
+
         FloatSize paddingBorderSize = new FloatSize(
             padding.left + padding.right + border.left + border.right,
             padding.top + padding.bottom + border.top + border.bottom
@@ -228,7 +241,8 @@ public class BlockComputer {
         boolean establishesNewBlockFormattingContext =
             style.getDisplay() == TaffyDisplay.FLOW_ROOT ||
             style.getOverflow().x.isScrollContainer() ||
-            style.getOverflow().y.isScrollContainer();
+            style.getOverflow().y.isScrollContainer() ||
+            contain.establishesIndependentFormattingContext();
 
         // Determine margin collapsing behaviour.
         //
@@ -723,6 +737,14 @@ public class BlockComputer {
         ScrollableOverflow scrollableOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
             accumulatedOverflow, clientSize, rtl, false, scrollContainer);
 
+        // Layout containment suppresses the box's baseline for baseline-alignment purposes: the
+        // box is treated as having no baseline, so a baseline-aligning parent (or any baseline-
+        // consuming ancestor) synthesizes one from its border box instead of using its content's.
+        // Upstream #1128 (Contain::suppresses_baseline). Paint containment does NOT suppress it.
+        if (contain.suppressesBaseline()) {
+            firstBaseline = NaN;
+        }
+
         // The final layout output carries the container's first baseline. The ComputeSize returns
         // above deliberately stay baseline-less: upstream returns LayoutOutput::from_outer_size
         // there too (block.rs:482/488/651/656), and only a full layout produces baselines.
@@ -854,6 +876,7 @@ public class BlockComputer {
             item.alignSelf = childStyle.getAlignSelf();
             item.floatStyle = childStyle.getFloat();
             item.display = childStyle.getDisplay();
+            item.contain = childStyle.getContain();
             item.clear = childStyle.getClear();
             item.direction = layoutComputer.resolveDirection(childId);
             item.widthIsAuto = childStyle.getSize().width.isAuto();
@@ -1256,11 +1279,16 @@ public class BlockComputer {
             // the estimated border-box y and whose x-insets position its border box inside the
             // parent's content box. flow-root/scroll/table and other display types establish
             // their own formatting context and are laid out without a context.
+            // A child that establishes its own formatting context (layout/paint containment) is
+            // deliberately excluded: it contains its own floats and only avoids the parent's, so
+            // sharing the parent's FloatContext would leak floats across the boundary. Upstream
+            // #1128's is_in_same_bfc gate.
             BlockContext childBlockContext = null;
             if (item.display == TaffyDisplay.BLOCK
                 && !item.isTable
                 && !item.overflow.x.isScrollContainer()
-                && !item.overflow.y.isScrollContainer()) {
+                && !item.overflow.y.isScrollContainer()
+                && !item.contain.establishesIndependentFormattingContext()) {
                 float childWidth = knownDimensions.width;
                 float childLeftInset = contentBoxInset.left + itemNonAutoMargin.left;
                 float childRightInset = containerOuterWidth - childLeftInset
