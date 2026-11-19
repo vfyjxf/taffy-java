@@ -2526,7 +2526,16 @@ public class FlexboxComputer {
                 boolean crossEndAuto = isRow ? item.marginIsAuto.bottom : item.marginIsAuto.right;
                 boolean marginsAreNotAuto = !crossStartAuto && !crossEndAuto;
 
-                if (shouldStretch && crossSizeIsAuto && marginsAreNotAuto) {
+                // ST-01 (#1099): a cross size of 'stretch' stretches to the flex line like
+                // align-self: stretch, but regardless of the alignment style (upstream's
+                // is_stretched predicate). align-self: stretch keeps its auto-size probe.
+                TaffyStyle itemStyle = tree.getStyle(item.nodeId);
+                TaffyDimension crossDimStyle = isRow ? itemStyle.getSize().height : itemStyle.getSize().width;
+                boolean crossIsStretch = crossDimStyle != null && crossDimStyle.isStretch();
+                boolean stretchesCross = marginsAreNotAuto
+                        && (crossIsStretch || (shouldStretch && crossSizeIsAuto));
+
+                if (stretchesCross) {
                     // Stretch the item to fill the line's cross size
                     float marginCross = isRow
                                         ? item.margin.top + item.margin.bottom
@@ -2551,10 +2560,9 @@ public class FlexboxComputer {
 
                     // If the item has an aspect ratio and its main-axis size was auto in the style,
                     // derive the main-axis size from the stretched cross size via aspect ratio.
-                    TaffyStyle childStyle = tree.getStyle(item.nodeId);
-                    Float aspectRatio = childStyle.getAspectRatio();
+                    Float aspectRatio = itemStyle.getAspectRatio();
                     if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
-                        TaffyDimension mainDimStyle = isRow ? childStyle.getSize().width : childStyle.getSize().height;
+                        TaffyDimension mainDimStyle = isRow ? itemStyle.getSize().width : itemStyle.getSize().height;
                         boolean mainSizeIsAuto = mainDimStyle == null || mainDimStyle.isAuto();
                         if (mainSizeIsAuto) {
                             float derivedMain = isRow

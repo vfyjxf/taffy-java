@@ -1,12 +1,14 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.CalcExpression;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.LengthPercentage;
+import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyStyle;
@@ -663,6 +665,60 @@ public class SizingKeywordP5Test {
                             call.availableSpaces().height.isDefinite()
                                     && Math.abs(call.availableSpaces().height.getValue() - 150f) < EPSILON),
                     "no percentage limit is resolved without a basis");
+        }
+
+        @Test
+        @DisplayName("height: stretch fills the flex line regardless of align-self")
+        void crossStretchFillsLineRegardlessOfAlignment() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style -> {
+                style.alignSelf = AlignItems.START;
+                style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.stretch());
+            });
+
+            assertEquals(100f, layout.size().height, EPSILON,
+                    "cross size stretch wins over a non-stretch align-self");
+        }
+
+        @Test
+        @DisplayName("height: stretch is clamped by the cross min/max sizes")
+        void crossStretchIsClampedByMinMax() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style -> {
+                style.alignSelf = AlignItems.START;
+                style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.stretch());
+                style.maxSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(60f));
+            });
+
+            assertEquals(60f, layout.size().height, EPSILON);
+        }
+
+        @Test
+        @DisplayName("height: stretch does not stretch with auto cross margins")
+        void crossStretchDoesNotStretchWithAutoMargins() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style -> {
+                style.alignSelf = AlignItems.START;
+                style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.stretch());
+                style.margin = new TaffyRect<>(
+                        LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+                        LengthPercentageAuto.auto(), LengthPercentageAuto.auto());
+            });
+
+            assertEquals(80f, layout.size().height, EPSILON,
+                    "auto cross margins keep the measured content height");
+        }
+
+        @Test
+        @DisplayName("legacy align-self: stretch with auto height still stretches")
+        void legacyAlignStretchAutoHeightStillStretches() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style -> {
+                style.alignSelf = AlignItems.STRETCH;
+                style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
+            });
+
+            assertEquals(100f, layout.size().height, EPSILON);
         }
     }
 
