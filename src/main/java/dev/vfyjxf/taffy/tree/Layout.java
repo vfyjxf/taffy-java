@@ -13,13 +13,16 @@ import dev.vfyjxf.taffy.geometry.FloatSize;
  * @param contentSize        The width and height of the content inside the node.
  *                           This may be larger than the size of the node in the case of overflowing content.
  *                           Legacy 1.x component kept for compatibility; 2.0 removes it in favour of
- *                           {@link #scrollableOverflow()}.
+ *                           {@link #scrollableOverflow()}. After the P4 integration the scroll-size
+ *                           getters only fall back to it for layouts built by hand through the
+ *                           compatibility constructors.
  * @param scrollableOverflow The scrollable overflow rectangle of the node (T1/T2 additive component).
- *                           The leaf path computes it in P4 (SO-01/SO-02) and {@code RoundLayout}
- *                           rounds it; a block, flex or grid layout built by an algorithm still
- *                           carries {@link ScrollableOverflow#ZERO} until that algorithm's SO-01
- *                           wiring lands. {@link #scrollWidth()}/{@link #scrollHeight()} still derive
- *                           from {@code contentSize} until then; 2.0 removes {@code contentSize}.
+ *                           The block, flex and grid algorithms populate it (P4/SO-01/SO-02), the
+ *                           measured-leaf path computes it, and {@code RoundLayout} rounds it.
+ *                           {@link #scrollWidth()}/{@link #scrollHeight()} derive the reachable
+ *                           scroll range from it; {@link ScrollableOverflow#ZERO} doubles as the
+ *                           1.2 compatibility placeholder for hand-built layouts. 2.0 removes
+ *                           {@code contentSize}.
  * @param scrollbarSize      The size of the scrollbars in each dimension. If there is no scrollbar then the size will be zero.
  * @param border             The size of the borders of the node
  * @param padding            The size of the padding of the node
@@ -147,16 +150,37 @@ public record Layout(
     /**
      * Return the maximum horizontal scroll offset of the node.
      *
-     * <p>The reachable extent of the content is the content extent less the width of the padding
-     * box, floored at zero, so it must not depend on which edge a border sits on: both
-     * {@code border.left} and {@code border.right} are added (P4/SO-03, upstream #1007).</p>
+     * <p>This is the magnitude of the reachable scroll range, as in upstream taffy #1372
+     * (SO-01/SO-03). When the node carries a {@link #scrollableOverflow() scrollable overflow
+     * rectangle} the range is derived from it rather than from the legacy
+     * {@link #contentSize()} component:</p>
+     * <ul>
+     *   <li>a reversed x scroll origin (RTL) reports {@code -overflow.left()}: the content end is
+     *       on the physical left, so the reachable range is how far it extends past the client
+     *       area's left edge;</li>
+     *   <li>a normal origin reports the content extent beyond the padding-box end edge, floored at
+     *       zero: {@code max(0, overflow.right() + min(scrollbar.width, size.width) - size.width
+     *       + border.left + border.right)}. The reachable extent is the content extent less the
+     *       width of the padding box, so it must not depend on which edge a border sits on: both
+     *       {@code border.left} and {@code border.right} are added (upstream #1007).</li>
+     * </ul>
      *
-     * <p><b>1.2 status:</b> still the legacy {@link #contentSize()} formula. The scrollable-overflow
-     * rectangle already existing in {@link #scrollableOverflow()} replaces it once the block, flex
-     * and grid algorithms populate that rectangle (SO-01); the reversed scroll origins are only
-     * expressible through that rectangle, so the two models are not mixed here.</p>
+     * <p><b>1.2 compatibility path:</b> a {@code Layout} built by hand through the compatibility
+     * constructors (or {@link #Layout()}) carries {@link ScrollableOverflow#ZERO}, which this port
+     * treats as "no scrollable-overflow data". Such a value keeps the legacy
+     * {@code contentSize}-based formula so that 1.x source and binaries observe the same numbers;
+     * layouts produced by {@code computeLayout} always carry the rectangle (possibly an empty
+     * one) and use the new model. 2.0 removes {@code contentSize} and this fallback together.</p>
      */
     public float scrollWidth() {
+        if (hasScrollableOverflow()) {
+            if (scrollableOverflow.reversedX()) {
+                return -scrollableOverflow.left();
+            }
+            return Math.max(0f, scrollableOverflow.right()
+                               + Math.min(scrollbarSize.width, size.width)
+                               - size.width + border.left + border.right);
+        }
         return Math.max(0, contentSize.width + Math.min(scrollbarSize.width, size.width)
                            - size.width + border.left + border.right);
     }
@@ -164,16 +188,46 @@ public record Layout(
     /**
      * Return the maximum vertical scroll offset of the node.
      *
-     * <p>The reachable extent of the content is the content extent less the height of the padding
-     * box, floored at zero, so it must not depend on which edge a border sits on: both
-     * {@code border.top} and {@code border.bottom} are added (P4/SO-03, upstream #1007).</p>
-     *
-     * <p><b>1.2 status:</b> still the legacy {@link #contentSize()} formula; see
-     * {@link #scrollWidth()} for the pending scrollable-overflow switch.</p>
+     * <p>See {@link #scrollWidth()} for the model: a reversed y scroll origin (a bottom-to-top
+     * block flow, i.e. {@code column-reverse}/{@code wrap-reverse}) reports
+     * {@code -overflow.top()}; a normal origin reports the content extent beyond the padding-box
+     * bottom edge, floored at zero, adding both {@code border.top} and {@code border.bottom}
+     * (upstream #1007/#1372). The legacy {@code contentSize}-based formula remains only on the
+     * 1.2 compatibility path described by {@link #scrollWidth()}; 2.0 removes it.</p>
      */
     public float scrollHeight() {
+        if (hasScrollableOverflow()) {
+            if (scrollableOverflow.reversedY()) {
+                return -scrollableOverflow.top();
+            }
+            return Math.max(0f, scrollableOverflow.bottom()
+                               + Math.min(scrollbarSize.height, size.height)
+                               - size.height + border.top + border.bottom);
+        }
         return Math.max(0, contentSize.height + Math.min(scrollbarSize.height, size.height)
                            - size.height + border.top + border.bottom);
+    }
+
+    /**
+     * Whether this layout carries scrollable-overflow data rather than the 1.2 compatibility
+     * placeholder.
+     *
+     * <p>{@link ScrollableOverflow#ZERO} (all edges zero, no reversed origin) is the value the
+     * compatibility constructors supply, so it means "a 1.x caller built this layout and did not
+     * provide an overflow rectangle". A computed rectangle that happens to be empty is
+     * indistinguishable from it and is also treated as the legacy path, where both formulas agree
+     * on zero.</p>
+     */
+    private boolean hasScrollableOverflow() {
+        if (scrollableOverflow == null) {
+            return false;
+        }
+        return scrollableOverflow.left() != 0f
+               || scrollableOverflow.right() != 0f
+               || scrollableOverflow.top() != 0f
+               || scrollableOverflow.bottom() != 0f
+               || scrollableOverflow.reversedX()
+               || scrollableOverflow.reversedY();
     }
 
     // === Getter methods ===
