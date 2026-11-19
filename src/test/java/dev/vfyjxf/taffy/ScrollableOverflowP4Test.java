@@ -4,9 +4,21 @@ import dev.vfyjxf.taffy.geometry.FloatPoint;
 import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffyPoint;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
+import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.Overflow;
+import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDirection;
+import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.tree.Baselines;
+import dev.vfyjxf.taffy.tree.CollapsibleMarginSet;
 import dev.vfyjxf.taffy.tree.Layout;
+import dev.vfyjxf.taffy.tree.LayoutOutput;
+import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.ScrollableOverflow;
+import dev.vfyjxf.taffy.tree.TaffyTree;
+import dev.vfyjxf.taffy.util.RoundLayout;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -634,6 +646,155 @@ public class ScrollableOverflowP4Test {
             "a -0.0 edge must survive rounding with its sign"
         );
         assertContainsOrigin(rounded);
+    }
+
+    // === SO-05: leaf content size and Layout/LayoutOutput wiring ===
+
+    private static TaffyStyle leafStyle(float width, float height, TaffyDirection direction,
+                                        TaffyPoint<Overflow> overflow) {
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
+        style.padding = new TaffyRect<>(
+            LengthPercentage.length(10f),
+            LengthPercentage.length(20f),
+            LengthPercentage.length(5f),
+            LengthPercentage.length(15f)
+        );
+        style.direction = direction;
+        style.overflow = overflow;
+        return style;
+    }
+
+    @Test
+    @DisplayName("non_scroll_leaf_content_size_excludes_end_padding")
+    void nonScrollLeafContentSizeExcludesEndPadding() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId node = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.LTR, VISIBLE),
+            (knownDimensions, availableSpace) -> new FloatSize(50f, 20f)
+        );
+
+        tree.computeLayout(node, TaffySize.maxContent());
+        Layout layout = tree.getLayout(node);
+
+        // start padding + measured: 10 + 50 (not 10 + 50 + 20); 5 + 20 (not 5 + 20 + 15).
+        assertEquals(60f, layout.contentSize().width, EPSILON);
+        assertEquals(25f, layout.contentSize().height, EPSILON);
+        assertEquals(60f, layout.scrollableOverflow().right(), EPSILON);
+        assertEquals(25f, layout.scrollableOverflow().bottom(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("scroll_container_leaf_content_size_includes_end_padding")
+    void scrollContainerLeafContentSizeIncludesEndPadding() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId node = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.LTR, SCROLL),
+            (knownDimensions, availableSpace) -> new FloatSize(50f, 20f)
+        );
+
+        tree.computeLayout(node, TaffySize.maxContent());
+        Layout layout = tree.getLayout(node);
+
+        assertEquals(80f, layout.contentSize().width, EPSILON, "10 + 50 + 20");
+        assertEquals(40f, layout.contentSize().height, EPSILON, "5 + 20 + 15");
+        assertEquals(80f, layout.scrollableOverflow().right(), EPSILON);
+        assertEquals(40f, layout.scrollableOverflow().bottom(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("rtl_leaf_content_size_swaps_start_and_end_padding")
+    void rtlLeafContentSizeSwapsStartAndEndPadding() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId nonScroll = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.RTL, VISIBLE),
+            (knownDimensions, availableSpace) -> new FloatSize(50f, 20f)
+        );
+        NodeId scroll = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.RTL, SCROLL),
+            (knownDimensions, availableSpace) -> new FloatSize(50f, 20f)
+        );
+
+        tree.computeLayout(nonScroll, TaffySize.maxContent());
+        assertEquals(70f, tree.getLayout(nonScroll).contentSize().width, EPSILON,
+            "RTL start padding is the physical right one: 20 + 50");
+
+        tree.computeLayout(scroll, TaffySize.maxContent());
+        assertEquals(80f, tree.getLayout(scroll).contentSize().width, EPSILON, "20 + 50 + 10");
+    }
+
+    @Test
+    @DisplayName("overflowing_leaf_reports_scrollable_overflow_and_scroll_size")
+    void overflowingLeafReportsScrollableOverflowAndScrollSize() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId node = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.LTR, SCROLL),
+            (knownDimensions, availableSpace) -> new FloatSize(300f, 200f)
+        );
+
+        tree.computeLayout(node, TaffySize.maxContent());
+        Layout layout = tree.getLayout(node);
+
+        assertEquals(100f, layout.size().width, EPSILON);
+        assertEquals(100f, layout.size().height, EPSILON);
+        assertEquals(330f, layout.contentSize().width, EPSILON, "10 + 300 + 20");
+        assertEquals(220f, layout.contentSize().height, EPSILON, "5 + 200 + 15");
+        assertEquals(330f, layout.scrollableOverflow().right(), EPSILON);
+        assertEquals(220f, layout.scrollableOverflow().bottom(), EPSILON);
+        assertEquals(230f, layout.scrollWidth(), EPSILON, "content 330 less the 100px padding box");
+        assertEquals(120f, layout.scrollHeight(), EPSILON, "content 220 less the 100px padding box");
+    }
+
+    @Test
+    @DisplayName("rtl_overflowing_leaf_mirrors_the_overflow_rectangle")
+    void rtlOverflowingLeafMirrorsTheOverflowRectangle() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId node = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.RTL, SCROLL),
+            (knownDimensions, availableSpace) -> new FloatSize(300f, 200f)
+        );
+
+        tree.computeLayout(node, TaffySize.maxContent());
+        Layout layout = tree.getLayout(node);
+
+        ScrollableOverflow overflow = layout.scrollableOverflow();
+        assertTrue(overflow.reversedX(), "RTL puts the scroll origin at the right edge");
+        assertEquals(100f, overflow.right(), EPSILON, "the mirrored rectangle ends at the client width");
+        assertEquals(-230f, overflow.left(), EPSILON, "client width 100 - content end 330");
+        assertEquals(230f, layout.scrollWidth(), EPSILON);
+        assertEquals(120f, layout.scrollHeight(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("measure_reported_overflow_wins_over_the_computed_leaf_rectangle")
+    void measuredOverflowWinsOverComputedLeafOverflow() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        ScrollableOverflow reported = new ScrollableOverflow(
+            new FloatRect(0f, 60f, 0f, 25f), false, false);
+        NodeId node = tree.newLeafWithMeasureFunction(
+            leafStyle(100f, 100f, TaffyDirection.LTR, VISIBLE),
+            context -> new LayoutOutput(
+                new FloatSize(50f, 20f),
+                FloatSize.zero(),
+                reported,
+                new FloatPoint(Float.NaN, Float.NaN),
+                Baselines.NONE,
+                CollapsibleMarginSet.ZERO,
+                CollapsibleMarginSet.ZERO,
+                false
+            )
+        );
+
+        tree.computeLayout(node, TaffySize.maxContent());
+
+        assertEquals(60f, tree.getLayout(node).scrollableOverflow().right(), EPSILON);
+        assertEquals(25f, tree.getLayout(node).scrollableOverflow().bottom(), EPSILON);
     }
 
     @Test

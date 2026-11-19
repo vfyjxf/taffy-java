@@ -15,9 +15,11 @@ import dev.vfyjxf.taffy.geometry.FloatSize;
  *                           Legacy 1.x component kept for compatibility; 2.0 removes it in favour of
  *                           {@link #scrollableOverflow()}.
  * @param scrollableOverflow The scrollable overflow rectangle of the node (T1/T2 additive component).
- *                           Always {@link ScrollableOverflow#ZERO} in 1.2: no layout algorithm populates
- *                           it yet, and {@link #scrollWidth()}/{@link #scrollHeight()} still derive from
- *                           {@code contentSize}. P4 wires the algorithms; 2.0 removes {@code contentSize}.
+ *                           The leaf path computes it in P4 (SO-01/SO-02) and {@code RoundLayout}
+ *                           rounds it; a block, flex or grid layout built by an algorithm still
+ *                           carries {@link ScrollableOverflow#ZERO} until that algorithm's SO-01
+ *                           wiring lands. {@link #scrollWidth()}/{@link #scrollHeight()} still derive
+ *                           from {@code contentSize} until then; 2.0 removes {@code contentSize}.
  * @param scrollbarSize      The size of the scrollbars in each dimension. If there is no scrollbar then the size will be zero.
  * @param border             The size of the borders of the node
  * @param padding            The size of the padding of the node
