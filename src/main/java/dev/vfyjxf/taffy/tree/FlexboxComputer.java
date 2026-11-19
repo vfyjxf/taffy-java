@@ -26,6 +26,7 @@ import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
+import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
 import java.util.ArrayList;
@@ -87,6 +88,15 @@ public class FlexboxComputer {
         List<FlexItem> items;
         float crossSize;
         float offsetCross;
+    }
+
+    /**
+     * The result of the final layout pass (P4/SO-01/SO-02).
+     *
+     * @param firstBaseline      the container's first vertical baseline, or {@link Float#NaN} when absent
+     * @param scrollableOverflow the container's finalized scrollable overflow rectangle
+     */
+    private record FinalLayoutResult(float firstBaseline, ScrollableOverflow scrollableOverflow) {
     }
 
     /**
@@ -186,6 +196,27 @@ public class FlexboxComputer {
             overflow.x == Overflow.SCROLL ? scrollbarWidth : 0f
         );
 
+        // P4/SO-01/SO-02: the scrollable overflow rectangle is produced by the final layout pass
+        // below. The flags and frames it needs are fixed here.
+        // A scroll container clips unreachable overflow in both axes (upstream #1118: Hidden/Scroll
+        // in either axis clips both).
+        boolean isScrollContainer = ScrollableOverflowUtil.isScrollContainer(overflow);
+        boolean isRtl = direction == TaffyDirection.RTL;
+        // Upstream #1372 `scroll_origin_reversed`: the flex main-axis reversal and the
+        // wrap-reverse cross reversal, transposed for column containers; RTL puts the inline scroll
+        // origin on the physical right edge.
+        boolean mainReversed = flexDirection.isReverse();
+        boolean reversedX = (isRow ? mainReversed : isWrapReverse) ^ isRtl;
+        boolean reversedY = isRow ? isWrapReverse : mainReversed;
+        // The offset from the border box to the client area (upstream `padding_box_inset`).
+        // Scrollbar gutters sit on the inline-end side: the physical right in LTR, left in RTL.
+        FloatRect paddingBoxInset = new FloatRect(
+            border.left + (isRtl ? scrollbarGutter.width : 0f),
+            border.right + (isRtl ? 0f : scrollbarGutter.width),
+            border.top,
+            border.bottom + scrollbarGutter.height
+        );
+
         // Content box inset - includes padding, border, and scrollbar gutter
         FloatRect contentBoxInset = new FloatRect(
             padding.left + border.left,
@@ -220,14 +251,19 @@ public class FlexboxComputer {
                 return LayoutOutput.fromOuterSize(containerSize);
             }
 
+            List<NodeId> children = tree.getChildren(node);
+            FloatSize clientSize = computeClientSize(containerSize, border, scrollbarGutter);
+            ScrollableOverflowUtil.Container overflowContainer = new ScrollableOverflowUtil.Container(
+                isScrollContainer, clientSize, reversedX, reversedY, padding);
+
             // Still need to layout absolute children even if no flow children.
             // When justify-content is unspecified, use START for absolute positioning (matches previous null-sentinel behavior).
             JustifyContent jc = style.justifyContent != AlignContent.AUTO ? style.getJustifyContent() : JustifyContent.START;
-            layoutAbsoluteChildren(node, containerSize, contentBoxInset, flexDirection,
-                style.getAlignItems(), jc, isWrapReverse, border, scrollbarGutter);
+            FloatRect absoluteOverflow = layoutAbsoluteChildren(
+                node, containerSize, contentBoxInset, flexDirection, style.getAlignItems(), jc,
+                isWrapReverse, border, scrollbarGutter, paddingBoxInset, overflowContainer);
 
             // Layout hidden children (display: none)
-            List<NodeId> children = tree.getChildren(node);
             for (int order = 0; order < children.size(); order++) {
                 NodeId child = children.get(order);
                 if (tree.getStyle(child).getBoxGenerationMode() == BoxGenerationMode.NONE) {
@@ -243,8 +279,37 @@ public class FlexboxComputer {
                 }
             }
 
-            FloatSize contentSize = computeContentSizeFromChildren(node);
-            return LayoutOutput.fromSizesAndBaselines(containerSize, contentSize, new FloatPoint(NaN, NaN));
+            FloatSize contentSize = computeContentSizeFromChildren(node, border);
+
+            // P4/SO-01/SO-02: a container with no children at all follows upstream's
+            // `compute_empty_container_layout` (only RTL reaches the client width). This branch is
+            // normally unreachable because LayoutComputer routes child_count == 0 to the leaf path,
+            // but it keeps the empty-container semantics if that routing changes. A container whose
+            // children are all out of flow or hidden still runs the regular final-layout unions
+            // (RTL client width, scroll-container end padding) and unions the absolute children's
+            // contributions on top.
+            FloatRect accumulated;
+            if (children.isEmpty()) {
+                accumulated = isRtl
+                              ? new FloatRect(0f, Math.max(0f, clientSize.width), 0f, 0f)
+                              : FloatRect.zero();
+            } else {
+                accumulated = addContainerOverflow(absoluteOverflow, containerSize, padding, border,
+                    scrollbarGutter, isRtl, isScrollContainer);
+            }
+            ScrollableOverflow scrollableOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
+                accumulated, clientSize, reversedX, reversedY, isScrollContainer);
+            FloatPoint noBaseline = new FloatPoint(NaN, NaN);
+            return new LayoutOutput(
+                containerSize,
+                contentSize,
+                scrollableOverflow,
+                noBaseline,
+                Baselines.fromFirst(noBaseline),
+                CollapsibleMarginSet.ZERO,
+                CollapsibleMarginSet.ZERO,
+                false
+            );
         }
 
         // Determine flex base size and hypothetical main size
@@ -372,8 +437,16 @@ public class FlexboxComputer {
         // Align items on cross axis (must be after lines are stretched)
         alignItemsOnCrossAxis(flexLines, flexDirection, isWrapReverse);
 
-        // Perform final layout and get container baseline
-        float firstVerticalBaseline = performFinalLayout(flexLines, node, containerSize, contentBoxInset, gap, style, flexDirection, direction, isWrapReverse);
+        // Perform the final layout pass: it positions every flex item and every out-of-flow
+        // child and accumulates their scrollable overflow contributions into the container's
+        // rectangle (P4/SO-01/SO-02), then finalizes it.
+        FloatSize clientSize = computeClientSize(containerSize, border, scrollbarGutter);
+        ScrollableOverflowUtil.Container overflowContainer = new ScrollableOverflowUtil.Container(
+            isScrollContainer, clientSize, reversedX, reversedY, padding);
+        FinalLayoutResult finalLayout = performFinalLayout(
+            flexLines, node, containerSize, contentBoxInset, gap, style, flexDirection,
+            isWrapReverse, border, padding, scrollbarGutter, paddingBoxInset, overflowContainer,
+            isRtl, isScrollContainer, reversedX, reversedY);
 
         // Layout hidden children (display: none)
         List<NodeId> children = tree.getChildren(node);
@@ -392,11 +465,40 @@ public class FlexboxComputer {
             }
         }
 
-        FloatSize contentSize = computeContentSizeFromChildren(node);
-        return LayoutOutput.fromSizesAndBaselines(containerSize, contentSize, new FloatPoint(NaN, firstVerticalBaseline));
+        FloatSize contentSize = computeContentSizeFromChildren(node, border);
+        FloatPoint firstBaseline = new FloatPoint(NaN, finalLayout.firstBaseline());
+        return new LayoutOutput(
+            containerSize,
+            contentSize,
+            finalLayout.scrollableOverflow(),
+            firstBaseline,
+            Baselines.fromFirst(firstBaseline),
+            CollapsibleMarginSet.ZERO,
+            CollapsibleMarginSet.ZERO,
+            false
+        );
     }
 
-    private FloatSize computeContentSizeFromChildren(NodeId node) {
+    /**
+     * Aggregates the legacy 1.x {@code contentSize} component from the final child layouts.
+     *
+     * <p><b>P4/SO-03 (#1007):</b> the legacy content-size contribution of a flex child used to be
+     * measured from the container's border box, which inflated it by the leading border. It is now
+     * measured from the padding-box origin (the scroll origin), so the container's leading border
+     * is subtracted from the child location. This is what makes {@link Layout#scrollWidth()} /
+     * {@link Layout#scrollHeight()}, whose merged formula adds both borders, report the same range
+     * for a border on either edge.</p>
+     *
+     * <p><b>RTL:</b> upstream #1007 mirrored the contribution into inline-start coordinates at the
+     * same time, but the #1372 model that this port's {@link ScrollableOverflow} follows measures
+     * scrollable overflow in physical coordinates and carries RTL in its reversed-origin flags.
+     * The legacy field is a physical extent here and is not mirrored (2.0 removes it).</p>
+     *
+     * @param node            the flex container
+     * @param containerBorder the container's resolved border
+     * @return the legacy content size
+     */
+    private FloatSize computeContentSizeFromChildren(NodeId node, FloatRect containerBorder) {
         TaffyTree tree = layoutComputer.getTree();
         FloatSize contentSize = FloatSize.zero();
 
@@ -407,9 +509,13 @@ public class FlexboxComputer {
             Layout childLayout = tree.getUnroundedLayout(childId);
             if (childLayout == null) continue;
 
+            FloatPoint childLocation = childLayout.location();
             FloatSize childContentSize = childLayout.contentSize() != null ? childLayout.contentSize() : childLayout.size();
             FloatSize contribution = ContentSizeUtil.computeContentSizeContribution(
-                childLayout.location(),
+                new FloatPoint(
+                    childLocation.x - containerBorder.left,
+                    childLocation.y - containerBorder.top
+                ),
                 childLayout.size(),
                 childContentSize,
                 childStyle.getOverflow()
@@ -2511,9 +2617,16 @@ public class FlexboxComputer {
     }
 
     /**
-     * Performs final layout of all flex items and returns the container's first vertical baseline.
+     * Performs the final layout pass of all flex items.
+     *
+     * <p>Besides positioning the items and the out-of-flow children, this pass accumulates their
+     * scrollable overflow contributions in the container's padding-box frame (upstream #1372
+     * {@code final_layout_pass}) and finalizes the container's {@link ScrollableOverflow}
+     * (P4/SO-01/SO-02).</p>
+     *
+     * @return the container's first vertical baseline and its finalized scrollable overflow
      */
-    private float performFinalLayout(
+    private FinalLayoutResult performFinalLayout(
         List<FlexLine> lines,
         NodeId node,
         FloatSize containerSize,
@@ -2521,15 +2634,25 @@ public class FlexboxComputer {
         FloatSize gap,
         TaffyStyle containerStyle,
         FlexDirection flexDirection,
-        TaffyDirection direction,
-        boolean isWrapReverse) {
+        boolean isWrapReverse,
+        FloatRect border,
+        FloatRect padding,
+        FloatSize scrollbarGutter,
+        FloatRect paddingBoxInset,
+        ScrollableOverflowUtil.Container overflowContainer,
+        boolean isRtl,
+        boolean isScrollContainer,
+        boolean reversedX,
+        boolean reversedY) {
 
         TaffyTree tree = layoutComputer.getTree();
         boolean isRow = flexDirection.isRow();
         boolean isReverse = flexDirection.isReverse();
-        boolean isRtl = direction == TaffyDirection.RTL;
 
         float mainGap = isRow ? gap.width : gap.height;
+
+        // Union of the children's contributions, in this container's padding-box frame.
+        FloatRect overflowRect = FloatRect.zero();
 
         // Content box offset
         // For RTL column layouts, cross axis starts from the right edge
@@ -2715,11 +2838,16 @@ public class FlexboxComputer {
                     firstVerticalBaseline = item.baseline;
                 }
 
+                // Canonical 9-component constructor: the item's own scrollable overflow is carried
+                // on its layout instead of being dropped by the legacy 8-component overload.
+                ScrollableOverflow childOverflow =
+                    output.scrollableOverflow() != null ? output.scrollableOverflow() : ScrollableOverflow.ZERO;
                 Layout layout = new Layout(
                     item.order,
                     new FloatPoint(x, y),
                     actualSize,
                     output.contentSize() != null ? output.contentSize() : actualSize,
+                    childOverflow,
                     scrollbarSize,
                     item.border,
                     item.padding,
@@ -2728,6 +2856,23 @@ public class FlexboxComputer {
 
                 tree.setUnroundedLayout(item.nodeId, layout);
 
+                // P4/SO-01/SO-02: accumulate the item's contribution in this container's
+                // padding-box frame. `location - paddingBoxInset` is #1007's border correction in
+                // the physical #1372 model (scrollbar gutter included, no RTL mirroring). The full
+                // resolved margin is passed: auto margins have already been assigned by the
+                // free-space distribution and only the end side extends a scroll container's
+                // padding, which the shared helper clamps at zero.
+                FloatRect contribution = ScrollableOverflowUtil.computeContribution(
+                    new FloatPoint(x - paddingBoxInset.left, y - paddingBoxInset.top),
+                    actualSize,
+                    childOverflow.rect(),
+                    item.border,
+                    item.overflow,
+                    overflowContainer,
+                    item.margin
+                );
+                overflowRect = ScrollableOverflowUtil.union(overflowRect, contribution);
+
                 float marginMain = isRow
                     ? item.margin.left + item.margin.right
                     : item.margin.top + item.margin.bottom;
@@ -2735,29 +2880,51 @@ public class FlexboxComputer {
             }
         }
 
-        // Layout absolutely positioned children
-        // Need border and scrollbar gutter for absolute layout
-        FloatRect border = Resolve.resolveRectOrZero(containerStyle.getBorder(), containerSize.width);
-        float scrollbarWidth = containerStyle.getScrollbarWidth();
-        TaffyPoint<Overflow> overflow = containerStyle.getOverflow();
-        FloatSize scrollbarGutter = new FloatSize(
-            overflow.y == Overflow.SCROLL ? scrollbarWidth : 0f,
-            overflow.x == Overflow.SCROLL ? scrollbarWidth : 0f
-        );
+        // P4/SO-01/SO-02: the container's own contribution (RTL client width and, for a scroll
+        // container, its own end padding) is a union on top of the in-flow items, matching
+        // upstream #1372's final_layout_pass.
+        FloatRect accumulated = addContainerOverflow(overflowRect, containerSize, padding, border,
+            scrollbarGutter, isRtl, isScrollContainer);
 
+        // Layout absolutely positioned children and union their contributions. An absolutely
+        // positioned box does not extend the container's padding (upstream oof.rs passes a zero
+        // margin and a zero-padding container), so only its own border box/overflow propagates.
         // When justify-content is unspecified, use START for absolute positioning (matches previous null-sentinel behavior).
         JustifyContent jc = containerStyle.justifyContent != AlignContent.AUTO ? containerStyle.getJustifyContent() : JustifyContent.START;
-        layoutAbsoluteChildren(node, containerSize, contentBoxInset, flexDirection,
-            containerStyle.getAlignItems(), jc, isWrapReverse, border, scrollbarGutter);
+        FloatRect absoluteOverflow = layoutAbsoluteChildren(
+            node, containerSize, contentBoxInset, flexDirection, containerStyle.getAlignItems(), jc,
+            isWrapReverse, border, scrollbarGutter, paddingBoxInset, overflowContainer);
+        accumulated = ScrollableOverflowUtil.union(accumulated, absoluteOverflow);
 
-        return firstVerticalBaseline;
+        ScrollableOverflow scrollableOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
+            accumulated,
+            computeClientSize(containerSize, border, scrollbarGutter),
+            reversedX,
+            reversedY,
+            isScrollContainer
+        );
+        return new FinalLayoutResult(firstVerticalBaseline, scrollableOverflow);
     }
 
-    private void layoutAbsoluteChildren(NodeId node, FloatSize containerSize, FloatRect contentBoxInset,
-                                        FlexDirection flexDirection, AlignItems alignItems, JustifyContent justifyContent,
-                                        boolean isWrapReverse, FloatRect border, FloatSize scrollbarGutter) {
+    private FloatRect layoutAbsoluteChildren(NodeId node, FloatSize containerSize, FloatRect contentBoxInset,
+                                             FlexDirection flexDirection, AlignItems alignItems, JustifyContent justifyContent,
+                                             boolean isWrapReverse, FloatRect border, FloatSize scrollbarGutter,
+                                             FloatRect paddingBoxInset,
+                                             ScrollableOverflowUtil.Container overflowContainer) {
         TaffyTree tree = layoutComputer.getTree();
         boolean isRow = flexDirection.isRow();
+        FloatRect overflowRect = FloatRect.zero();
+
+        // Out-of-flow boxes do not extend their containing block's padding (upstream oof.rs uses
+        // a zero-padding container), so a separate container description is used for their
+        // contributions. The clipping rules and the physical frame are the same.
+        ScrollableOverflowUtil.Container absoluteContainer = new ScrollableOverflowUtil.Container(
+            overflowContainer.parentIsScrollContainer(),
+            overflowContainer.parentSize(),
+            overflowContainer.reversedX(),
+            overflowContainer.reversedY(),
+            FloatRect.zero()
+        );
 
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
@@ -2941,11 +3108,14 @@ public class FlexboxComputer {
                 overflow.x == Overflow.SCROLL ? childStyle.getScrollbarWidth() : 0f
             );
 
+            ScrollableOverflow childOverflow =
+                output.scrollableOverflow() != null ? output.scrollableOverflow() : ScrollableOverflow.ZERO;
             Layout layout = new Layout(
                 0,
                 new FloatPoint(x, y),
                 finalSize,
                 output.contentSize(),
+                childOverflow,
                 scrollbarSize,
                 itemBorder,
                 itemPadding,
@@ -2953,7 +3123,90 @@ public class FlexboxComputer {
             );
 
             tree.setUnroundedLayout(childId, layout);
+
+            // P4/SO-01/SO-02: absolute children contribute from the padding-box frame as well. The
+            // shared helper receives a zero margin (upstream oof.rs passes Rect::ZERO), so their
+            // margins never extend or shrink the container's reachable region.
+            FloatRect contribution = ScrollableOverflowUtil.computeContribution(
+                new FloatPoint(x - paddingBoxInset.left, y - paddingBoxInset.top),
+                finalSize,
+                childOverflow.rect(),
+                itemBorder,
+                overflow,
+                absoluteContainer,
+                FloatRect.zero()
+            );
+            overflowRect = ScrollableOverflowUtil.union(overflowRect, contribution);
         }
+
+        return overflowRect;
+    }
+
+    /**
+     * The client-area extent of a node: its border box less its border and scrollbar gutters
+     * (upstream #1372's {@code finalize_scrollable_overflow} extent argument).
+     *
+     * <p>Scrollbar gutters are transposed in this port ({@code scrollbarGutter.width} is the space
+     * reserved by a vertical scrollbar), so each component is subtracted from the matching
+     * physical axis.</p>
+     *
+     * @param containerSize   the border-box size
+     * @param border          the resolved border
+     * @param scrollbarGutter the reserved scrollbar space
+     * @return the client-area size (possibly negative for degenerate boxes; the finalizer clamps)
+     */
+    private static FloatSize computeClientSize(FloatSize containerSize, FloatRect border, FloatSize scrollbarGutter) {
+        return new FloatSize(
+            containerSize.width - border.horizontalAxisSum() - scrollbarGutter.width,
+            containerSize.height - border.verticalAxisSum() - scrollbarGutter.height
+        );
+    }
+
+    /**
+     * Adds a container's own scrollable overflow contribution to its accumulated rectangle
+     * (upstream #1372 {@code final_layout_pass}).
+     *
+     * <p>In RTL the physical x scroll origin is the right edge, so the rectangle always reaches the
+     * client width: the reachable region of a reversed axis is the negative extent measured from
+     * that origin. A scroll container additionally contributes its own end-side padding, which
+     * matters when no child reaches it (for example a container whose children are all out of
+     * flow). The union never shrinks an accumulator that already extends further, so a container
+     * whose content overflows keeps the larger child-driven extent.</p>
+     *
+     * @param accumulated       the union of the children's contributions, in the padding-box frame
+     * @param containerSize     the node's border-box size
+     * @param padding           the node's resolved padding
+     * @param border            the node's resolved border
+     * @param scrollbarGutter   the reserved scrollbar space
+     * @param isRtl             whether the node's resolved direction is right-to-left
+     * @param isScrollContainer whether the node clips unreachable overflow
+     * @return the rectangle including the container's own contribution
+     */
+    private static FloatRect addContainerOverflow(
+        FloatRect accumulated,
+        FloatSize containerSize,
+        FloatRect padding,
+        FloatRect border,
+        FloatSize scrollbarGutter,
+        boolean isRtl,
+        boolean isScrollContainer) {
+        float clientWidth = Math.max(0f, containerSize.width - border.horizontalAxisSum() - scrollbarGutter.width);
+        FloatRect result = accumulated == null ? FloatRect.zero() : accumulated;
+        if (isRtl) {
+            result = ScrollableOverflowUtil.union(result, new FloatRect(0f, clientWidth, 0f, 0f));
+        }
+        if (isScrollContainer) {
+            // The physical left padding is the inline-end padding in RTL; in LTR the same end
+            // padding starts at the physical right edge. The start-side padding is already part of
+            // the child positions and must not be added a second time.
+            result = ScrollableOverflowUtil.union(result, new FloatRect(
+                isRtl ? Math.min(clientWidth - padding.left, 0f) : 0f,
+                isRtl ? clientWidth : padding.right,
+                0f,
+                padding.bottom
+            ));
+        }
+        return result;
     }
 
     private FloatRect resolveMarginToOption(TaffyRect<LengthPercentageAuto> margin, float parentWidth) {
