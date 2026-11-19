@@ -43,6 +43,7 @@ import it.unimi.dsi.fastutil.ints.IntList;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static java.lang.Float.NaN;
 
@@ -1224,6 +1225,11 @@ public class GridComputer {
             GridAxisLines rowLines = new GridAxisLines(rowSizes, rowGeometry, alignment.gapY(),
                 alignment.offsetY(), contentBoxInset.top, alignment.innerHeight(), false);
 
+            // Record the additive detailed grid view before the out-of-flow pass, like upstream
+            // (#1131/#1167). An all-collapsed or empty axis still has one grid line.
+            tree.setDetailedGridInfo(node, buildDetailedGridInfo(namedLineResolver, colCounts, rowCounts,
+                columnLines, rowLines, items));
+
             // Layout absolutely positioned children even if no regular items. Their overflow is
             // accumulated in the container's padding-box frame and merged below (upstream oof.rs).
             FloatRect absoluteOverflowRect = layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX,
@@ -1277,6 +1283,11 @@ public class GridComputer {
             alignment.offsetX(), contentBoxInset.left, alignment.innerWidth(), isRtl);
         GridAxisLines rowLines = new GridAxisLines(rowSizes, rowGeometry, alignment.gapY(),
             alignment.offsetY(), contentBoxInset.top, alignment.innerHeight(), false);
+
+        // Record the additive detailed grid view before the item positioning and out-of-flow
+        // passes (upstream #1131). It only reads the already resolved tracks and placements.
+        tree.setDetailedGridInfo(node, buildDetailedGridInfo(namedLineResolver, colCounts, rowCounts,
+            columnLines, rowLines, items));
 
         // Container size. Computed before the item positioning pass because the scrollable overflow
         // container description (client area) depends on the final container size.
@@ -1359,6 +1370,74 @@ public class GridComputer {
             isScrollContainer);
 
         return layoutOutput(containerSize, contentSize, scrollableOverflow, new FloatPoint(NaN, containerBaseline));
+    }
+
+    /**
+     * Build the detailed grid information recorded for a grid container after its tracks and
+     * item placements have been resolved.
+     *
+     * <p>This is GR-18's additive detail view: it only reads the values the layout algorithm has
+     * already computed (the {@link GridAxisLines} of each axis, the {@link TrackCounts} and the
+     * placed {@link GridItem}s) and never changes a layout number. The named-line table comes from
+     * the one {@link NamedLineResolver} instance the grid pass already built, so explicit
+     * {@code repeat()} line names and the #1185 exclusion of implicit area names stay in a single
+     * place. Item areas use the full-grid 1-based line numbers: the OriginZero placement index
+     * plus the axis' negative implicit track count plus one (upstream #1134).</p>
+     */
+    private static DetailedGridInfo buildDetailedGridInfo(NamedLineResolver namedLineResolver,
+                                                          TrackCounts colCounts, TrackCounts rowCounts,
+                                                          GridAxisLines columnLines, GridAxisLines rowLines,
+                                                          List<GridItem> items) {
+        return new DetailedGridInfo(
+            buildTracksInfo(rowCounts, rowLines, namedLineResolver.getRowLineNames()),
+            buildTracksInfo(colCounts, columnLines, namedLineResolver.getColumnLineNames()),
+            buildItemAreas(items, colCounts, rowCounts));
+    }
+
+    /**
+     * Build one axis' resolved tracks. Track positions are physical (the RTL conversion happens in
+     * {@link GridAxisLines#trackStart(int)}), while the list itself stays in logical order. An axis
+     * with no non-collapsed track (zero tracks, or every track collapsed by auto-fit) records the
+     * position of its single grid line instead (upstream #1167).
+     */
+    private static DetailedGridInfo.Tracks buildTracksInfo(TrackCounts counts, GridAxisLines lines,
+                                                           Map<String, List<Integer>> lineNames) {
+        int trackCount = lines.trackCount();
+        List<GridTrackInfo> tracks = new ArrayList<>(trackCount);
+        for (int i = 0; i < trackCount; i++) {
+            tracks.add(new GridTrackInfo(lines.trackStart(i), lines.trackSize(i)));
+        }
+        Float emptyAxisLine = lines.hasSingleLine() ? Float.valueOf(lines.emptyAxisLine()) : null;
+        return new DetailedGridInfo.Tracks(
+            counts.negativeImplicit, counts.explicit, counts.positiveImplicit,
+            tracks, emptyAxisLine, lineNames);
+    }
+
+    /**
+     * Build the full-grid 1-based grid areas of the in-flow items in document order.
+     *
+     * <p>Auto-placement always fills in a start line for both axes of every in-flow item, so the
+     * end line is derived from the item's span (the placement algorithm's own extent) rather than
+     * from the possibly-unset {@code columnEnd}/{@code rowEnd} fields. {@code negativeImplicit} is
+     * added because placed items use OriginZero coordinates (0 = start of the explicit grid) while
+     * {@link GridItemArea} uses full-grid 1-based lines (line 1 = start of the first implicit
+     * track).</p>
+     */
+    private static List<GridItemArea> buildItemAreas(List<GridItem> items, TrackCounts colCounts,
+                                                     TrackCounts rowCounts) {
+        List<GridItemArea> areas = new ArrayList<>(items.size());
+        for (GridItem item : items) {
+            int columnStart = item.columnStart != null ? item.columnStart : 0;
+            int rowStart = item.rowStart != null ? item.rowStart : 0;
+            int columnEnd = columnStart + Math.max(1, item.columnSpan);
+            int rowEnd = rowStart + Math.max(1, item.rowSpan);
+            areas.add(new GridItemArea(
+                rowStart + rowCounts.negativeImplicit + 1,
+                rowEnd + rowCounts.negativeImplicit + 1,
+                columnStart + colCounts.negativeImplicit + 1,
+                columnEnd + colCounts.negativeImplicit + 1));
+        }
+        return areas;
     }
 
     /**
@@ -1629,6 +1708,64 @@ public class GridComputer {
         /** Convert a logical position (from the inline-start edge) into container coordinates. */
         float physical(float logical) {
             return reversed ? origin + innerSize - logical : origin + logical;
+        }
+
+        /** The number of tracks in this axis (collapsed tracks are included). */
+        int trackCount() {
+            return ends.length;
+        }
+
+        /**
+         * The physical start (left/top) edge of the track at {@code index}, relative to the
+         * container's border box. In RTL the logical start is the physical right edge, so this
+         * reports the physical left edge and {@code trackStart(i) <= trackStart(i) + trackSize(i)}
+         * holds for every track.
+         */
+        float trackStart(int index) {
+            if (index < 0 || index >= ends.length) {
+                throw new IndexOutOfBoundsException("track index " + index + " out of range [0, " + ends.length + ")");
+            }
+            return physical(reversed ? ends[index] : starts[index]);
+        }
+
+        /** The used size of the track at {@code index}; {@code 0} for a collapsed auto-fit track. */
+        float trackSize(int index) {
+            if (index < 0 || index >= ends.length) {
+                throw new IndexOutOfBoundsException("track index " + index + " out of range [0, " + ends.length + ")");
+            }
+            return ends[index] - starts[index];
+        }
+
+        /** The number of tracks that are not collapsed by auto-fit. */
+        int nonCollapsedTrackCount() {
+            int count = 0;
+            for (boolean track : nonCollapsed) {
+                if (track) {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        /**
+         * Whether the axis has no track that participates in track alignment: either no tracks at
+         * all, or every track is collapsed by {@code auto-fit}. That is the state in which the
+         * axis behaves as a single grid line positioned by content alignment (GR-14 / #1167).
+         */
+        boolean hasSingleLine() {
+            return nonCollapsedTrackCount() == 0;
+        }
+
+        /**
+         * The physical position of the axis' single grid line when {@link #hasSingleLine()} is
+         * true: the same content-alignment offset and RTL conversion used by the absolutely
+         * positioned child path (GR-14 / #1167). A collapsed run is anchored at this line.
+         */
+        float emptyAxisLine() {
+            if (!hasSingleLine()) {
+                throw new IllegalStateException("emptyAxisLine is only defined for an axis without non-collapsed tracks");
+            }
+            return physical(starts[0]);
         }
 
         /** The physical position of a grid line used as a start edge. */
