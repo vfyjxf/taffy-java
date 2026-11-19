@@ -12,7 +12,9 @@ import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
+import dev.vfyjxf.taffy.style.Clear;
 import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyFloat;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
@@ -23,6 +25,7 @@ import dev.vfyjxf.taffy.style.TextAlign;
 import dev.vfyjxf.taffy.util.AlignmentHelper;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
+import dev.vfyjxf.taffy.util.FloatContext;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.TaffyMath;
@@ -124,6 +127,17 @@ public class BlockComputer {
          */
         boolean widthIsAuto;
         /**
+         * The child's CSS {@code float} value. Floated children are placed out of the normal
+         * block flow by {@link #performFinalLayoutOnChildren} and do not advance the in-flow
+         * cursor.
+         */
+        TaffyFloat floatStyle = TaffyFloat.NONE;
+        /**
+         * The child's CSS {@code clear} value. Floats pass it to the placement algorithm; normal
+         * in-flow boxes use it to move below cleared floats.
+         */
+        Clear clear = Clear.NONE;
+        /**
          * Pending layout of an in-flow child. Held back from {@code setUnroundedLayout} so that a
          * measurement pass ({@link RunMode#COMPUTE_SIZE}) can return before any tree state is
          * written; the final layout commits them in one place. Upstream #971 (BK-01).
@@ -138,7 +152,8 @@ public class BlockComputer {
         float contentHeight, CollapsibleMarginSet firstChildTopMarginSet,
         CollapsibleMarginSet lastChildBottomMarginSet,
         boolean allChildrenCanBeCollapsedThrough,
-        float firstBaseline
+        float firstBaseline,
+        float floatContentContribution
     ) {}
 
     /**
@@ -184,14 +199,17 @@ public class BlockComputer {
         FloatSize maxSize = Resolve.maybeApplyAspectRatio(size, aspectRatio);
         maxSize = maybeAdd(maxSize, boxSizingAdjustment);
 
-        // A `display: flow-root` box always establishes a new block formatting context. The part
-        // of that behaviour this port can express is margin isolation: the box's own margins no
-        // longer adjoin its children's, so nothing collapses with or through its block edges.
-        // (Containing floats and avoiding a sibling's floats are the other two effects of the
-        // new BFC; this port has no float layout yet — see the float work package F1/P7.)
-        // BK-17 / upstream #997 (10004cea).
+        // A `display: flow-root` box always establishes a new block formatting context, and a
+        // scroll container (including `overflow: hidden`) does too. The parts of that behaviour
+        // this port now expresses are margin isolation and containing the container's own floats
+        // (its auto height grows to the floats' bottom edge, upstream #1384). Avoiding a sibling's
+        // floats still uses this container's own local context only; sharing one context across a
+        // nested formatting context needs the layout-computer entry point to carry it (TODO).
+        // BK-17 / upstream #997 (10004cea); float containment / #866 / #1384.
         boolean establishesNewBlockFormattingContext =
-            style.getDisplay() == TaffyDisplay.FLOW_ROOT;
+            style.getDisplay() == TaffyDisplay.FLOW_ROOT ||
+            style.getOverflow().x.isScrollContainer() ||
+            style.getOverflow().y.isScrollContainer();
 
         // Determine margin collapsing behaviour.
         //
@@ -387,6 +405,16 @@ public class BlockComputer {
             // folded into the content-based height, which is the legacy (content-inclusive)
             // measurement that flex/grid intrinsic sizing has been verified against.
             float contentHeight = layoutResult.contentHeight;
+            // A BFC root contains its floats: the content height extends to the bottom margin
+            // edge of any floated descendant, and the root's bottom padding and border sit below
+            // that (upstream #1384, f6b87ac4). This runs before min/max clamping, matching the
+            // upstream order.
+            if (establishesNewBlockFormattingContext && layoutResult.floatContentContribution > 0.0f) {
+                contentHeight = Math.max(
+                    contentHeight,
+                    layoutResult.floatContentContribution + contentBoxInset.bottom
+                );
+            }
             if (!Float.isNaN(aspectRatio) && !Float.isNaN(containerOuterWidth)) {
                 float arDerivedHeight = (containerOuterWidth - boxSizingAdjustment.width) / aspectRatio
                                         + boxSizingAdjustment.height;
@@ -788,6 +816,8 @@ public class BlockComputer {
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
             item.justifySelf = childStyle.justifySelf;
             item.alignSelf = childStyle.getAlignSelf();
+            item.floatStyle = childStyle.getFloat();
+            item.clear = childStyle.getClear();
             item.direction = layoutComputer.resolveDirection(childId);
             item.widthIsAuto = childStyle.getSize().width.isAuto();
             // For compressible replaced items a percentage width/max-width resolves against a
@@ -891,6 +921,20 @@ public class BlockComputer {
             AvailableSpace.maxContent()
         );
 
+        // Float layout is local to this block container and is only created when a direct child
+        // is floated. This keeps the no-float path identical and gives a flow-root/scroll
+        // container the independent context it needs. See the class-level TODO on the local
+        // context: sharing one context across an ancestral formatting context is a later batch.
+        FloatContext floatContext = null;
+        for (BlockItem candidate : items) {
+            if (candidate.floatStyle.isFloated()) {
+                floatContext = new FloatContext();
+                floatContext.setWidth(Math.max(0.0f, containerInnerWidth));
+                break;
+            }
+        }
+        float floatContentContribution = 0.0f;
+
         float committedYOffset = contentBoxInset.top;
         float yOffsetForAbsolute = contentBoxInset.top;
         CollapsibleMarginSet firstChildTopMarginSet = CollapsibleMarginSet.zero();
@@ -949,6 +993,112 @@ public class BlockComputer {
             );
             float itemNonAutoXMarginSum = itemNonAutoMargin.left + itemNonAutoMargin.right;
 
+            // === Floated child (CSS 2.2 §9.5.1) ===
+            //
+            // A float is laid out at its shrink-to-fit size, removed from the normal block flow
+            // and placed through the container's FloatContext. It does not advance the in-flow
+            // cursor; later in-flow blocks find a content slot that avoids it. The container's
+            // auto height only grows for a BFC root (flow-root / scroll container), matching
+            // upstream's #1384 rule.
+            if (item.floatStyle.isFloated()) {
+                if (floatContext == null) {
+                    floatContext = new FloatContext();
+                    floatContext.setWidth(Math.max(0.0f, containerInnerWidth));
+                }
+
+                float availableWidth = Math.max(0.0f, containerInnerWidth - itemNonAutoXMarginSum);
+                float floatWidth = item.size.width;
+                if (Float.isNaN(floatWidth)) {
+                    // width:auto on a float is shrink-to-fit: use the max-content measurement,
+                    // clamped by the available width.
+                    FloatSize measured = layoutComputer.measureChildSize(
+                        item.nodeId,
+                        new FloatSize(NaN, item.size.height),
+                        parentSize,
+                        new TaffySize<>(AvailableSpace.maxContent(), AvailableSpace.maxContent()),
+                        SizingMode.INHERENT_SIZE,
+                        TaffyLine.FALSE
+                    );
+                    floatWidth = Float.isNaN(measured.width)
+                                 ? availableWidth
+                                 : Math.min(measured.width, availableWidth);
+                }
+                floatWidth = TaffyMath.clamp(floatWidth, item.minSize.width, item.maxSize.width);
+
+                LayoutOutput itemOutput = layoutComputer.performChildLayout(
+                    item.nodeId,
+                    new FloatSize(floatWidth, item.size.height),
+                    parentSize,
+                    new TaffySize<>(AvailableSpace.definite(availableWidth), AvailableSpace.maxContent()),
+                    SizingMode.INHERENT_SIZE,
+                    // A float establishes a new block formatting context: its margins never
+                    // collapse with its children's or its siblings'.
+                    TaffyLine.FALSE,
+                    runMode
+                );
+                FloatSize finalSize = itemOutput.size();
+                // Negative margins can make the margin box smaller than the border box; the
+                // placement context requires a finite non-negative size.
+                float marginBoxWidth = Math.max(0.0f, finalSize.width + itemNonAutoXMarginSum);
+                float marginBoxHeight = Math.max(
+                    0.0f, finalSize.height + itemNonAutoMargin.top + itemNonAutoMargin.bottom);
+                float minY = committedYOffset + activeCollapsibleMarginSet.resolve();
+                FloatContext.Direction floatDirection = item.floatStyle == TaffyFloat.LEFT
+                                                        ? FloatContext.Direction.LEFT
+                                                        : FloatContext.Direction.RIGHT;
+                FloatContext.FloatPlacement placement = floatContext.placeFloatedBox(
+                    marginBoxWidth,
+                    marginBoxHeight,
+                    minY,
+                    0.0f,
+                    0.0f,
+                    floatDirection,
+                    item.clear
+                );
+
+                // The context returns the margin-box position; the Layout reports the border box.
+                float x = contentBoxInset.left + placement.x() + itemNonAutoMargin.left;
+                float y = placement.y() + itemNonAutoMargin.top;
+                floatContentContribution = Math.max(floatContentContribution, placement.y() + marginBoxHeight);
+
+                FloatSize scrollbarSize = new FloatSize(
+                    item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
+                    item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
+                );
+                item.computedSize = finalSize;
+                item.finalLayout = new Layout(
+                    item.order,
+                    new FloatPoint(x, y),
+                    finalSize,
+                    itemOutput.contentSize(),
+                    itemOutput.scrollableOverflow(),
+                    scrollbarSize,
+                    item.border,
+                    item.padding,
+                    itemNonAutoMargin
+                );
+                continue;
+            }
+
+            // Avoid the container's floats for a non-floated block. The content slot gives the
+            // highest y at or below the normal flow position with enough width; a clear value is
+            // applied by the slot search itself. With no active float this is skipped, keeping
+            // the non-float path unchanged.
+            float floatSlotX = 0.0f;
+            float floatSlotY = NaN;
+            float floatAvailableWidth = containerInnerWidth;
+            boolean avoidsFloats = false;
+            if (floatContext != null) {
+                float minYForSlot = committedYOffset + activeCollapsibleMarginSet.resolve();
+                if (floatContext.hasActiveFloats(minYForSlot)) {
+                    FloatContext.ContentSlot slot = floatContext.contentSlot(minYForSlot, 0.0f, 0.0f, item.clear);
+                    floatSlotX = slot.x();
+                    floatSlotY = slot.y();
+                    floatAvailableWidth = slot.width();
+                    avoidsFloats = true;
+                }
+            }
+
             // Resolve this item's inline-axis self alignment (css-align-3 section 6.1.1, upstream
             // #1250). Only the legacy AUTO sentinel means "not specified": it falls back to the
             // container's justify-items, while an explicit NORMAL suppresses that fallback and
@@ -986,7 +1136,7 @@ public class BlockComputer {
                     // normal nor stretch is fit-content rather than stretch": measure the item
                     // under the available width, which is upstream's Dimension::fit_content()
                     // sizing-keyword resolution (upstream #1250).
-                    float fitContentAvailable = Math.max(0f, containerInnerWidth - itemNonAutoXMarginSum);
+                    float fitContentAvailable = Math.max(0f, floatAvailableWidth - itemNonAutoXMarginSum);
                     FloatSize measured = layoutComputer.measureChildSize(
                         item.nodeId,
                         new FloatSize(NaN, NaN),
@@ -1000,7 +1150,7 @@ public class BlockComputer {
                     );
                     width = Float.isNaN(measured.width) ? fitContentAvailable : measured.width;
                 } else {
-                    width = containerInnerWidth - itemNonAutoXMarginSum;
+                    width = floatAvailableWidth - itemNonAutoXMarginSum;
                 }
                 width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
                 // A `height: stretch` item fills this container's content box, minus the block
@@ -1050,7 +1200,7 @@ public class BlockComputer {
                                                              .collapseWithMargin(!Float.isNaN(itemMarginOpt.bottom) ? itemMarginOpt.bottom : 0f);
 
             // Expand auto margins
-            float freeXSpace = Math.max(0, containerInnerWidth - finalSize.width - itemNonAutoXMarginSum);
+            float freeXSpace = Math.max(0, floatAvailableWidth - finalSize.width - itemNonAutoXMarginSum);
             int autoMarginCount = (item.margin.left.isAuto() ? 1 : 0) + (item.margin.right.isAuto() ? 1 : 0);
             float xAxisAutoMarginSize = autoMarginCount > 0 ? freeXSpace / autoMarginCount : 0;
 
@@ -1111,6 +1261,12 @@ public class BlockComputer {
             );
 
             float y = committedYOffset + insetOffsetY + yMarginOffset;
+            if (avoidsFloats) {
+                // A box beside floats starts at the content slot's top edge. Its top margin may
+                // overlap the float, matching CSS's float-avoidance rules; margin collapsing
+                // around a pushed-down box is simplified in this batch (TODO).
+                y = floatSlotY + insetOffsetY;
+            }
 
             // Calculate the x position. A non-stretch justify-self aligns the item's margin box
             // within its alignment container and takes precedence over legacy text-align, but
@@ -1178,6 +1334,12 @@ public class BlockComputer {
                 }
             }
 
+            if (avoidsFloats) {
+                // The slot's x is content-box relative. Alignment stays left/start beside a float
+                // in this batch; a BFC-establishing child would use the richer BfcSlot margins.
+                x = contentBoxInset.left + floatSlotX + resolvedMargin.left + insetOffsetX;
+            }
+
             // A block container's first baseline is the first baseline of its first in-flow child
             // that has one. The child's relative offset does not affect it: y includes
             // insetOffsetY, so the baseline location subtracts it again (upstream #996 added the
@@ -1238,6 +1400,15 @@ public class BlockComputer {
                 yOffsetForAbsolute = committedYOffset + activeCollapsibleMarginSet.resolve();
                 allChildrenCanBeCollapsedThrough = false;
             }
+            if (avoidsFloats) {
+                // A slot-pushed box must still advance the cursor; otherwise the next sibling
+                // would be placed above it. Margin collapsing around such a box is simplified.
+                committedYOffset = Math.max(committedYOffset, floatSlotY + finalSize.height);
+                yOffsetForAbsolute = Math.max(
+                    yOffsetForAbsolute,
+                    floatSlotY + finalSize.height + activeCollapsibleMarginSet.resolve()
+                );
+            }
         }
 
         CollapsibleMarginSet lastChildBottomMarginSet = activeCollapsibleMarginSet;
@@ -1259,7 +1430,8 @@ public class BlockComputer {
             firstChildTopMarginSet,
             lastChildBottomMarginSet,
             allChildrenCanBeCollapsedThrough,
-            firstBaseline
+            firstBaseline,
+            floatContentContribution
         );
     }
 
