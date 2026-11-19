@@ -3240,19 +3240,19 @@ public class FlexboxComputer {
             // Use justify-content to position
             JustifyContent jc = justifyContent != null ? justifyContent : JustifyContent.START;
             return switch (jc) {
-                case SPACE_BETWEEN, START -> contentBoxMainStart + marginMainStart;
-                case NORMAL, FLEX_START, STRETCH -> {
+                case SPACE_BETWEEN, START, SAFE_START -> contentBoxMainStart + marginMainStart;
+                case NORMAL, FLEX_START, STRETCH, SAFE_FLEX_START -> {
                     // FLEX_START behaves like START normally, like END when wrap-reverse
                     // STRETCH has no effect on main axis in flexbox, treat as FLEX_START
                     if (isWrapReverse) yield containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
                     yield contentBoxMainStart + marginMainStart;
                 }
-                case END -> containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
-                case FLEX_END -> {
+                case END, SAFE_END -> containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
+                case FLEX_END, SAFE_FLEX_END -> {
                     if (isWrapReverse) yield contentBoxMainStart + marginMainStart;
                     yield containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
                 }
-                case SPACE_EVENLY, SPACE_AROUND, CENTER ->
+                case SPACE_EVENLY, SPACE_AROUND, CENTER, SAFE_CENTER ->
                     (containerMain + contentBoxMainStart - contentBoxMainEnd - finalMain
                      + marginMainStart - marginMainEnd) / 2.0f;
             };

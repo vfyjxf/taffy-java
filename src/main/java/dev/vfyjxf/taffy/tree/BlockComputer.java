@@ -1384,11 +1384,13 @@ public class BlockComputer {
         return switch (alignContent) {
             // AUTO is the "unset" sentinel and is filtered out by the caller; keep the switch
             // exhaustive without introducing a "normal" behaviour here (BK-18).
-            case AUTO, NORMAL, START, FLEX_START -> 0f;
+            // SAFE_* map to their non-safe keyword here: the overflow fallback is handled by
+            // AlignmentHelper at the call site, not by this legacy-only batch.
+            case AUTO, NORMAL, START, FLEX_START, SAFE_START, SAFE_FLEX_START -> 0f;
             // End aligns the content's bottom edge with the content box's bottom edge.
-            case END, FLEX_END -> freeSpace;
+            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
             // Unsafe centering: overflowing content is centred off both edges.
-            case CENTER -> freeSpace / 2f;
+            case CENTER, SAFE_CENTER -> freeSpace / 2f;
             // Single-subject distribution fallbacks: stretch and space-between pack at the
             // start (the whole stack is one subject, so there is no gap to distribute).
             case STRETCH, SPACE_BETWEEN -> 0f;

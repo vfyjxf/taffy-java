@@ -596,6 +596,11 @@ public final class TaffyStyle {
             case END -> JustifyContent.END;
             case STRETCH -> JustifyContent.STRETCH;
             case NORMAL -> JustifyContent.NORMAL;
+            case SAFE_START -> JustifyContent.SAFE_START;
+            case SAFE_END -> JustifyContent.SAFE_END;
+            case SAFE_FLEX_START -> JustifyContent.SAFE_FLEX_START;
+            case SAFE_FLEX_END -> JustifyContent.SAFE_FLEX_END;
+            case SAFE_CENTER -> JustifyContent.SAFE_CENTER;
             case AUTO -> JustifyContent.FLEX_START; // defensive (handled above)
         };
     }

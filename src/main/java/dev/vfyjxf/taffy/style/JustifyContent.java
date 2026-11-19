@@ -39,5 +39,35 @@ public enum JustifyContent {
      * keyword that can override an inherited alignment. Appended after the existing constants so
      * their ordinals stay stable (1.2 compatibility policy S2/Q2).
      */
-    NORMAL;
+    NORMAL,
+
+    /**
+     * Like {@link #START}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe start}).
+     */
+    SAFE_START,
+
+    /**
+     * Like {@link #END}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe end}).
+     */
+    SAFE_END,
+
+    /**
+     * Like {@link #FLEX_START}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe flex-start}).
+     */
+    SAFE_FLEX_START,
+
+    /**
+     * Like {@link #FLEX_END}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe flex-end}).
+     */
+    SAFE_FLEX_END,
+
+    /**
+     * Like {@link #CENTER}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe center}).
+     */
+    SAFE_CENTER;
 }
