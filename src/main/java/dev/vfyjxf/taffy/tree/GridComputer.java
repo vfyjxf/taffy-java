@@ -162,6 +162,11 @@ public class GridComputer {
         float baseline = NaN;
         float baselineShim;   // Shim for baseline alignment that acts like an extra top margin
 
+        // The item's final y position in the container's border-box coordinate space, excluding any
+        // relative offset (which does not affect the container's baseline; upstream #1323).
+        // Set by the final positioning pass, read by calculateContainerBaseline.
+        float yPosition;
+
         // Computed values
         FloatSize computedSize;
         FloatPoint location;
@@ -1217,7 +1222,8 @@ public class GridComputer {
      * <p>
      * Only items participating in baseline alignment can provide the container's baseline
      * (upstream #1125 / 3dbf2e46): if the row's first item does not participate, the row's first
-     * participating item is used, and the row's first item is the fallback. A scroll container's
+     * participating item is used, and the row's first item is the fallback. The item's relative
+     * offset is excluded ({@link GridItem#yPosition}, upstream #1323), and a scroll container's
      * baseline is clamped to its border box by the final-layout pass (#1108).
      */
     private float calculateContainerBaseline(List<GridItem> items) {
@@ -1248,13 +1254,13 @@ public class GridComputer {
             chosenItem = firstItemInRow;
         }
 
-        // Calculate baseline: y_position + border-box baseline
+        // Calculate baseline: y_position (without relative offset) + border-box baseline
         // (or the border-box height when the item reports none)
         float height = (chosenItem.computedSize != null && !Float.isNaN(chosenItem.computedSize.height))
                        ? chosenItem.computedSize.height : 0f;
         float baseline = (!Float.isNaN(chosenItem.baseline)) ? chosenItem.baseline : height;
 
-        return (chosenItem.location != null ? chosenItem.location.y : 0f) + baseline;
+        return chosenItem.yPosition + baseline;
     }
 
     /**
@@ -4792,6 +4798,9 @@ public class GridComputer {
                 }
             }
 
+            // The item's final y position without any relative offset: a relative offset moves the
+            // box but does not change the container's baseline (upstream #1323).
+            item.yPosition = y;
             item.location = new FloatPoint(x, y);
 
             // Apply relative position inset offset

@@ -7,6 +7,7 @@ import dev.vfyjxf.taffy.style.GridAutoFlow;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
+import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.Layout;
@@ -38,6 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *       baseline is taken from the first row's item's final layout
  *       ({@code gridflex_container_baseline_from_baseline_item_with_margin_top},
  *       {@code gridflex_container_baseline_from_non_baseline_item_{start,center,end}}).</li>
+ *   <li><b>A6</b> {@code 8bb96a26} (#1323): the relative offset of the item that provides the
+ *       container baseline does not enter it
+ *       ({@code grid_container_baseline_ignores_relative_offset}).</li>
  * </ul>
  *
  * <p>Expectations are the values Chrome reported in the upstream XML fixtures
@@ -369,5 +373,37 @@ public class GridBaselineP3Test {
         assertNode(tree, reference, 100f, 31f, 10f, 10f, "reference item");
     }
 
+    // ==================================================================
+    // A6 / #1323: the container baseline ignores the item's relative offset
+    // ==================================================================
 
+    @Test
+    @DisplayName("A6: the container baseline ignores the relative offset (grid_container_baseline_ignores_relative_offset)")
+    void a6ContainerBaselineIgnoresRelativeOffset() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle gridStyle = grid(100f, 50f);
+        gridStyle.alignItems = AlignItems.START;
+        gridStyle.justifyItems = AlignItems.START;
+
+        TaffyStyle itemStyle = grid(30f, 30f);
+        itemStyle.position = TaffyPosition.RELATIVE;
+        itemStyle.inset = new TaffyRect<>(
+            LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO,
+            LengthPercentageAuto.length(7f), LengthPercentageAuto.AUTO
+        );
+        NodeId itemContent = tree.newLeaf(block(30f, 20f));
+        NodeId item = tree.newWithChildren(itemStyle, itemContent);
+
+        NodeId gridNode = tree.newWithChildren(gridStyle, item);
+        NodeId reference = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexBaseline(200f, 100f), gridNode, reference);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // The item itself moves down 7px, but the grid's baseline is 0 + 20 = 20 (not 7 + 20), so
+        // the reference item sits at 10.
+        assertNode(tree, item, 0f, 7f, 30f, 30f, "relatively positioned item");
+        assertNode(tree, reference, 100f, 10f, 10f, 10f, "reference item");
+    }
 }
