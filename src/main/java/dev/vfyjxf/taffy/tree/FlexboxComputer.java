@@ -127,8 +127,13 @@ public class FlexboxComputer {
         FlexDirection flexDirection = style.getFlexDirection();
         TaffyDirection direction = layoutComputer.resolveDirection(node);
         boolean isRow = flexDirection.isRow();
-        boolean isWrap = style.getFlexWrap() != FlexWrap.NO_WRAP;
-        boolean isWrapReverse = style.getFlexWrap() == FlexWrap.WRAP_REVERSE;
+        FlexWrap flexWrap = style.getFlexWrap();
+        boolean isWrap = flexWrap.isMultiLine();
+        boolean isWrapReverse = flexWrap.isReverse();
+        boolean isBalance = flexWrap.isBalance();
+        // FL-21 (#1105): upstream's `line_count` is Some for every multi-line container and
+        // None for nowrap. 0 ("not set") behaves like the CSS initial value of 1.
+        int lineCount = isWrap ? Math.max(style.getFlexLineCount(), 1) : 0;
 
         Float aspectRatio = style.getAspectRatio();
         FloatRect padding = Resolve.resolveRectOrZero(style.getPadding(), parentSize.width);
@@ -318,12 +323,15 @@ public class FlexboxComputer {
         }
 
         // Determine flex base size and hypothetical main size
-        determineFlexBaseSize(items, nodeInnerSize, innerAvailableSpace, flexDirection);
+        float crossGap = isRow ? gap.height : gap.width;
+        determineFlexBaseSize(items, nodeInnerSize, innerAvailableSpace, flexDirection, lineCount, crossGap);
 
         // Collect items into flex lines (use innerAvailableSpace for wrapping, matching Rust)
         float innerMainSize = isRow ? nodeInnerSize.width : nodeInnerSize.height;
         float mainGap = isRow ? gap.width : gap.height;
-        List<FlexLine> flexLines = collectIntoFlexLines(items, innerAvailableSpace, mainGap, isWrap, flexDirection, minSize, maxSize, innerMainSize);
+        List<FlexLine> flexLines = collectIntoFlexLines(
+            items, innerAvailableSpace, mainGap, isWrap, isBalance, lineCount, flexDirection,
+            minSize, maxSize, innerMainSize);
 
         // Determine container main size if not already known (needed for flex grow/shrink)
         if (isNaN(innerMainSize)) {
@@ -333,8 +341,11 @@ public class FlexboxComputer {
                 minSize,
                 maxSize,
                 mainGap,
+                crossGap,
                 flexDirection,
                 isWrap,
+                isBalance,
+                lineCount,
                 innerAvailableSpace,
                 nodeInnerSize
             );
@@ -367,7 +378,8 @@ public class FlexboxComputer {
         // 9.4. Cross Size Determination
         // 7. Determine the hypothetical cross size of each item
         for (FlexLine line : flexLines) {
-            determineHypotheticalCrossSize(line, flexDirection, innerMainSize, nodeInnerSize, innerAvailableSpace, isWrap);
+            determineHypotheticalCrossSize(
+                line, flexDirection, innerMainSize, nodeInnerSize, innerAvailableSpace, isWrap, lineCount, crossGap);
         }
 
         // Calculate children baselines (for baseline alignment support)
@@ -612,8 +624,7 @@ public class FlexboxComputer {
             // resolve the cross size here. Stretch should be able to set it.
             // For WRAP containers, keep the AR-derived cross so hypothetical cross sizing uses
             // the initial AR value (matching browser behavior where container cross reflects pre-flex-growth AR).
-            boolean isWrap = containerStyle.getFlexWrap() == FlexWrap.WRAP ||
-                             containerStyle.getFlexWrap() == FlexWrap.WRAP_REVERSE;
+            boolean isWrap = containerStyle.getFlexWrap().isMultiLine();
             if (aspectRatio != null && !Float.isNaN(aspectRatio) && item.alignSelf == AlignSelf.STRETCH) {
                 boolean crossSizeAutoInStyle = isRow ? (isNaN(rawResolvedSize.height)) : (isNaN(rawResolvedSize.width));
 
@@ -735,7 +746,9 @@ public class FlexboxComputer {
         List<FlexItem> items,
         FloatSize nodeInnerSize,
         TaffySize<AvailableSpace> availableSpace,
-        FlexDirection flexDirection) {
+        FlexDirection flexDirection,
+        int lineCount,
+        float crossGap) {
 
         boolean isRow = flexDirection.isRow();
 
@@ -769,7 +782,10 @@ public class FlexboxComputer {
 
             if (outerCrossAvail.isDefinite()) {
                 float val = outerCrossAvail.getValue();
-                float clamped = !isNaN(crossAxisParentSize) ? crossAxisParentSize : val;
+                // FL-21 (#1105): flex-line-count divides definite cross-axis available space
+                // between the requested number of lines (after subtracting the cross gaps).
+                float clamped = dividedCrossSpace(
+                    !isNaN(crossAxisParentSize) ? crossAxisParentSize : val, lineCount, crossGap);
                 // FL-10: subtract the item margin before flooring/clamping (upstream order).
                 // FL-09: clamp the constraint at zero before applying min/max.
                 clamped = Math.max(clamped - marginCross, 0f);
@@ -1039,8 +1055,11 @@ public class FlexboxComputer {
         FloatSize minSize,
         FloatSize maxSize,
         float mainGap,
+        float crossGap,
         FlexDirection flexDirection,
         boolean isWrap,
+        boolean isBalance,
+        int lineCount,
         TaffySize<AvailableSpace> availableSpace,
         FloatSize nodeInnerSize) {
 
@@ -1073,8 +1092,43 @@ public class FlexboxComputer {
 
             outerMainSize = longestLineLength + mainContentBoxInset;
 
-            // If multiple lines (wrapping), ensure at least the available main-axis size
-            if (lines.size() > 1) {
+            if (isBalance) {
+                // FL-21 (#1105): a balanced container can produce multiple lines that all fit
+                // within the available space (via flex-line-count), in which case fit-content
+                // sizing uses its max-content size: the longest line when items are balanced
+                // across the minimum line count without a size limit. Percentages continue to
+                // resolve against the full container size.
+                int itemCount = 0;
+                for (FlexLine line : lines) {
+                    itemCount += line.items.size();
+                }
+                if (itemCount > 0) {
+                    float[] itemLengths = new float[itemCount];
+                    int index = 0;
+                    for (FlexLine line : lines) {
+                        for (FlexItem item : line.items) {
+                            itemLengths[index++] = isRow
+                                                   ? item.hypotheticalOuterSize.width
+                                                   : item.hypotheticalOuterSize.height;
+                        }
+                    }
+                    int[] itemCounts = FlexBalance.balancedLineItemCounts(
+                        itemLengths, POSITIVE_INFINITY, mainGap, Math.max(lineCount, 1));
+                    float widestLineLength = 0;
+                    index = 0;
+                    for (int count : itemCounts) {
+                        float lineLength = mainGap * Math.max(0, count - 1);
+                        for (int i = 0; i < count; i++) {
+                            lineLength += itemLengths[index + i];
+                        }
+                        widestLineLength = Math.max(widestLineLength, lineLength);
+                        index += count;
+                    }
+                    float maxContentSize = widestLineLength + mainContentBoxInset;
+                    outerMainSize = Math.max(outerMainSize, Math.min(maxContentSize, mainAvail.getValue()));
+                }
+            } else if (lines.size() > 1) {
+                // If multiple lines (wrapping), ensure at least the available main-axis size
                 outerMainSize = Math.max(outerMainSize, mainAvail.getValue());
             }
         } else if (mainAvail.isMinContent()) {
@@ -1198,7 +1252,10 @@ public class FlexboxComputer {
                         AvailableSpace crossAxisAvailableSpace;
                         if (outerCrossAvail.isDefinite()) {
                             float val = outerCrossAvail.getValue();
-                            float clampedCross = !Float.isNaN(crossAxisParentSize) ? crossAxisParentSize : val;
+                            // FL-21 (#1105): flex-line-count divides definite cross-axis available
+                            // space between the requested number of lines.
+                            float clampedCross = dividedCrossSpace(
+                                !Float.isNaN(crossAxisParentSize) ? crossAxisParentSize : val, lineCount, crossGap);
                             // FL-10: subtract the item margin before flooring/clamping.
                             clampedCross = Math.max(clampedCross - marginCross, 0f);
                             if (!Float.isNaN(itemMinCross)) clampedCross = Math.max(clampedCross, itemMinCross);
@@ -1397,6 +1454,8 @@ public class FlexboxComputer {
         TaffySize<AvailableSpace> availableSpace,
         float mainGap,
         boolean isWrap,
+        boolean isBalance,
+        int lineCount,
         FlexDirection flexDirection,
         FloatSize minSize,
         FloatSize maxSize,
@@ -1425,7 +1484,12 @@ public class FlexboxComputer {
         boolean hasDefiniteMainSize = !Float.isNaN(knownInnerMainSize);
 
         AvailableSpace mainAxisAvailableSpace;
-        if (!Float.isNaN(mainMaxSize)) {
+        if (isBalance && !hasDefiniteMainSize) {
+            // FL-21 (#1105): balanced line breaking requires a definite main size. Otherwise items
+            // are balanced without a size limit, matching how the container was sized under a
+            // min/max-content constraint (upstream collect_balanced_flex_lines).
+            mainAxisAvailableSpace = AvailableSpace.maxContent();
+        } else if (!Float.isNaN(mainMaxSize)) {
             // If max-size is set, use it as the constraint
             float innerVal = outerMainAvail.intoOption();
             float constrainedSize = !Float.isNaN(innerVal) ? innerVal : mainMaxSize;
@@ -1445,8 +1509,12 @@ public class FlexboxComputer {
             mainAxisAvailableSpace = outerMainAvail;
         }
 
-        // If MaxContent, all items go in one line (no wrapping)
+        // If MaxContent, all items go in one line (no wrapping). A balanced container instead
+        // balances without a size limit, still honouring the requested minimum line count.
         if (mainAxisAvailableSpace.isMaxContent()) {
+            if (isBalance) {
+                return collectBalancedFlexLines(items, POSITIVE_INFINITY, mainGap, lineCount, flexDirection);
+            }
             FlexLine line = new FlexLine();
             line.items = new ArrayList<>(items);
             line.crossSize = 0;
@@ -1470,6 +1538,9 @@ public class FlexboxComputer {
 
         // Definite available space - wrap based on constraint
         float availMainSize = mainAxisAvailableSpace.getValue();
+        if (isBalance) {
+            return collectBalancedFlexLines(items, availMainSize, mainGap, lineCount, flexDirection);
+        }
         float lineMainSize = 0;
         List<FlexItem> currentLine = new ArrayList<>();
 
@@ -1504,6 +1575,59 @@ public class FlexboxComputer {
         }
 
         return lines;
+    }
+
+    /**
+     * Collect flex items into balanced flex lines ({@code flex-wrap: balance}), such that the
+     * largest line is as small as possible (FL-21, upstream #1105).
+     *
+     * @param lineLimit     the container's inner main size, or positive infinity when the main
+     *                      size is indefinite
+     * @param minLineCount  the requested minimum number of lines ({@code flex-line-count})
+     */
+    private List<FlexLine> collectBalancedFlexLines(
+        List<FlexItem> items,
+        float lineLimit,
+        float mainGap,
+        int minLineCount,
+        FlexDirection flexDirection) {
+
+        List<FlexLine> lines = new ArrayList<>();
+        if (items.isEmpty()) {
+            return lines;
+        }
+
+        boolean isRow = flexDirection.isRow();
+        float[] itemSizes = new float[items.size()];
+        for (int index = 0; index < items.size(); index++) {
+            FlexItem item = items.get(index);
+            itemSizes[index] = isRow ? item.hypotheticalOuterSize.width : item.hypotheticalOuterSize.height;
+        }
+
+        int[] itemCounts = FlexBalance.balancedLineItemCounts(itemSizes, lineLimit, mainGap, minLineCount);
+        int index = 0;
+        for (int count : itemCounts) {
+            FlexLine line = new FlexLine();
+            line.items = new ArrayList<>(items.subList(index, index + count));
+            line.crossSize = 0;
+            line.offsetCross = 0;
+            lines.add(line);
+            index += count;
+        }
+        return lines;
+    }
+
+    /**
+     * When a multi-line container requests a minimum number of lines ({@code flex-line-count}),
+     * definite cross-axis available space for measuring items is divided between the requested
+     * number of lines, after subtracting the cross-axis gaps between them (FL-21, upstream #1105).
+     * A line count of 1 (the default) leaves the available space unchanged.
+     */
+    private static float dividedCrossSpace(float crossAvailableSpace, int lineCount, float crossGap) {
+        if (lineCount > 1) {
+            return (crossAvailableSpace - (lineCount - 1) * crossGap) / lineCount;
+        }
+        return crossAvailableSpace;
     }
 
     private void resolveFlexibleLengths(
@@ -1725,7 +1849,9 @@ public class FlexboxComputer {
         float innerMainSize,
         FloatSize nodeInnerSize,
         TaffySize<AvailableSpace> availableSpace,
-        boolean isWrap) {
+        boolean isWrap,
+        int lineCount,
+        float crossGap) {
 
         boolean isRow = flexDirection.isRow();
 
@@ -1766,6 +1892,9 @@ public class FlexboxComputer {
             // Clamp available space by min/max if definite
             if (availCross.isDefinite()) {
                 float val = availCross.getValue();
+                // FL-21 (#1105): flex-line-count divides definite cross-axis available space
+                // between the requested number of lines.
+                val = dividedCrossSpace(val, lineCount, crossGap);
                 // FL-10: subtract the item margin before flooring/clamping.
                 // FL-09: clamp the cross constraint at zero before applying min/max.
                 val = Math.max(val - marginCross, 0f);
@@ -1782,7 +1911,10 @@ public class FlexboxComputer {
             TaffyStyle childStyle = layoutComputer.getTree().getStyle(item.nodeId);
             TaffyDimension crossDim = isRow ? childStyle.getSize().height : childStyle.getSize().width;
             float crossResolutionBasis = isRow ? nodeInnerSize.height : nodeInnerSize.width;
-            float crossStretchSize = TaffyMath.maybeSub(crossResolutionBasis, marginCross);
+            // FL-21 (#1105): a bare fit-content/stretch cross size is measured against the
+            // divided stretch size; percentages continue to resolve against the full size.
+            float crossStretchSize = TaffyMath.maybeSub(
+                dividedCrossSpace(crossResolutionBasis, lineCount, crossGap), marginCross);
             SizingKeyword.Resolution crossKeyword = SizingKeyword.resolve(
                 crossDim, crossStretchSize, crossResolutionBasis);
             if (crossKeyword != null && crossKeyword.isMeasure()) {
@@ -1954,8 +2086,7 @@ public class FlexboxComputer {
         // If the flex container is single-line and has a definite cross size,
         // the cross size of the flex line is the flex container's inner cross size.
         // Exception: when cross is AR-derived, allow content to grow beyond the AR value.
-        boolean isWrap = containerStyle.getFlexWrap() == FlexWrap.WRAP ||
-                         containerStyle.getFlexWrap() == FlexWrap.WRAP_REVERSE;
+        boolean isWrap = containerStyle.getFlexWrap().isMultiLine();
         if (!isWrap && lines.size() == 1 && !Float.isNaN(innerCrossSize) && !crossIsArDerived) {
             // When container has a definite cross size, line cross size equals the container's inner cross size
             // No need to apply min/max here - those constraints were already applied when determining container size
@@ -3493,5 +3624,386 @@ public class FlexboxComputer {
             if (!Float.isNaN(width) && !Float.isNaN(height)) break;
         }
         return new FloatSize(width, height);
+    }
+
+    /**
+     * Balanced line breaking for {@code flex-wrap: balance} (FL-21, upstream #1105).
+     *
+     * <p>Implements the balancing algorithm from the CSS Flexbox Level 2 draft
+     * (<a href="https://drafts.csswg.org/css-flexbox-2/#balancing">CSS Flexbox 2 - balancing</a>).
+     * Items are divided into exactly lineCount contiguous sequences (lines), where lineCount is the
+     * number of lines that greedy line breaking would produce (with item sizes floored at zero),
+     * raised to the minimum flex line count ({@code flex-line-count}, clamped to the number of
+     * items), such that:</p>
+     * <ul>
+     *   <li>every line holds at least one item;</li>
+     *   <li>no line's size exceeds the container's inner main size, unless the line holds a single
+     *       (overflowing) item;</li>
+     *   <li>a zero-sized item is assigned to the end of the preceding line rather than the
+     *       beginning of a line, unless no valid division can glue it there;</li>
+     *   <li>the sum of the squared line sizes is minimized;</li>
+     *   <li>ties are broken by assigning the most items to the first line, then the most items to
+     *       the second line, and so on.</li>
+     * </ul>
+     *
+     * <p>Because every division has the same line count, total item size, and total gap size,
+     * minimizing the sum of squared errors is equivalent to minimizing the sum of squared line
+     * sizes, which is what is actually computed. All arithmetic uses {@code double}: finite
+     * {@code float} sizes convert exactly, and equally-balanced divisions compare equal.</p>
+     *
+     * <p>The minimization is a dynamic program over (line count, first item of suffix) accelerated
+     * with the divide-and-conquer optimization, running in
+     * {@code O(lineCount * itemCount * log(itemCount))} time using
+     * {@code O(lineCount * itemCount)} transient memory.</p>
+     */
+    private static final class FlexBalance {
+
+        /** Score assigned to divisions that violate the line size constraint. */
+        private static final double INFEASIBLE = Double.POSITIVE_INFINITY;
+
+        private FlexBalance() {
+        }
+
+        /**
+         * Convert an item size in pixels to an {@code f64}, flooring negative sizes at zero. (An
+         * infinite size is clamped to the largest finite {@code f32} so that sums stay meaningful.)
+         */
+        private static double toSize(float value) {
+            return Math.min(Math.max(value, 0.0), Float.MAX_VALUE);
+        }
+
+        /** Line sizing shared by the scoring and readback phases. */
+        private static final class LineSizes {
+            /**
+             * Per item, the prefix sum of the item sizes through it (each item also contributes
+             * one trailing gap, so the size of the line holding items start..=end is
+             * prefixSums[end] - prefixSums[start - 1] - gapBetweenItems).
+             */
+            final double[] prefixSums;
+            /** Per item, whether the item's (floored) size is zero. */
+            final boolean[] zeroItem;
+            /** The size of the gap between adjacent items on a line. */
+            final double gapBetweenItems;
+            /**
+             * The container's inner main size, which lines may not exceed (unless they hold a
+             * single item).
+             */
+            final double limit;
+
+            LineSizes(double[] prefixSums, boolean[] zeroItem, double gapBetweenItems, double limit) {
+                this.prefixSums = prefixSums;
+                this.zeroItem = zeroItem;
+                this.gapBetweenItems = gapBetweenItems;
+                this.limit = limit;
+            }
+
+            int itemCount() {
+                return prefixSums.length;
+            }
+
+            boolean isZeroItem(int index) {
+                return zeroItem[index];
+            }
+
+            /** The size of the line holding items start..=end. */
+            double lineSize(int start, int end) {
+                double startSum = start == 0 ? 0.0 : prefixSums[start - 1];
+                return prefixSums[end] - startSum - gapBetweenItems;
+            }
+
+            /**
+             * The squared size of the line holding items start..=end, or {@link #INFEASIBLE} for a
+             * line of more than one item exceeding the limit.
+             */
+            double lineCost(int start, int end) {
+                double size = lineSize(start, end);
+                if (end > start && size > limit) {
+                    return INFEASIBLE;
+                }
+                return size * size;
+            }
+
+            /**
+             * For every suffix of the items, the number of lines that greedy line breaking
+             * produces for it: each line collects consecutive items until the next item no longer
+             * fits, and if even the first item of a line doesn't fit, that line takes just the one
+             * (overflowing) item. (The entry for the empty suffix is zero.)
+             */
+            int[] suffixGreedyLineCounts() {
+                int itemCount = itemCount();
+                int[] counts = new int[itemCount + 1];
+                // The (exclusive) end of the greedy first line of the suffix, which only moves down
+                // as the suffix grows leftwards since lines starting earlier are larger.
+                int lineEnd = itemCount;
+                for (int start = itemCount - 1; start >= 0; start--) {
+                    while (lineEnd > start + 1 && lineSize(start, lineEnd - 1) > limit) {
+                        lineEnd--;
+                    }
+                    counts[start] = 1 + counts[lineEnd];
+                }
+                return counts;
+            }
+
+            /**
+             * For every start, the largest end such that the line holding items start..=end does
+             * not exceed the limit (or start itself if even that one item overflows).
+             */
+            int[] fitEnds() {
+                int itemCount = itemCount();
+                int[] fitEnds = new int[itemCount];
+                // Lines starting later are smaller, so the fit end only moves up
+                int fitEnd = 0;
+                for (int start = 0; start < itemCount; start++) {
+                    if (fitEnd < start) {
+                        fitEnd = start;
+                    }
+                    while (fitEnd + 1 < itemCount && lineSize(start, fitEnd + 1) <= limit) {
+                        fitEnd++;
+                    }
+                    fitEnds[start] = fitEnd;
+                }
+                return fitEnds;
+            }
+        }
+
+        /**
+         * One row of the balancing dynamic program: divisions of item suffixes into exactly
+         * {@code lines} lines.
+         */
+        private static final class Row {
+            /** The line sizing for the items being divided. */
+            final LineSizes sizes;
+            /** See {@link LineSizes#fitEnds()}. */
+            final int[] fitEnds;
+            /**
+             * The previous row: prev[start] is the minimum score of any valid division of items
+             * start.. into exactly {@code lines - 1} lines ({@link #INFEASIBLE} if there is none).
+             */
+            final double[] prev;
+            /**
+             * The line ends that precede a non-zero item, in ascending order and capped to
+             * {@code maxEnd}. Line ends preceding a <em>zero</em> item are constrained by the
+             * zero-sized-item rule and handled separately.
+             */
+            final int[] nonzeroEnds;
+            /** The largest possible end of the first line. */
+            final int maxEnd;
+
+            Row(LineSizes sizes, int[] fitEnds, double[] prev, int[] nonzeroEnds, int maxEnd) {
+                this.sizes = sizes;
+                this.fitEnds = fitEnds;
+                this.prev = prev;
+                this.nonzeroEnds = nonzeroEnds;
+                this.maxEnd = maxEnd;
+            }
+        }
+
+        /**
+         * Compute cur[start] and opts[start] for start in startLo..=startHi, where cur[start] is
+         * the minimum over valid ends end of
+         * row.sizes.lineCost(start, end) + row.prev[end + 1] and opts[start] is the largest end
+         * achieving that minimum.
+         *
+         * <p>Uses the divide-and-conquer dynamic programming optimization: over the ends preceding
+         * non-zero items, the cost function satisfies the concave quadrangle inequality, so the
+         * largest minimizing end is non-decreasing in start. The ends constrained by the
+         * zero-sized-item rule are not monotone this way, so they are excluded from the scan and
+         * merged in separately.</p>
+         */
+        private static void fillRow(
+            Row row,
+            double[] cur,
+            int[] opts,
+            int optsOffset,
+            int startLo,
+            int startHi,
+            int colLo,
+            int colHi) {
+
+            if (startLo > startHi) {
+                return;
+            }
+            int start = startLo + (startHi - startLo) / 2;
+
+            // Minimize over the in-range ends preceding a non-zero item, starting from start (the
+            // line must hold at least one item)
+            int firstCol = colLo + lowerBound(row.nonzeroEnds, colLo, colHi, start);
+            double minCost = INFEASIBLE;
+            int minCol = -1;
+            for (int col = firstCol; col < colHi; col++) {
+                int end = row.nonzeroEnds[col];
+                double lineCost = row.sizes.lineCost(start, end);
+                if (lineCost == INFEASIBLE) {
+                    // Every longer line also exceeds the limit
+                    break;
+                }
+                double cost = lineCost + row.prev[end + 1];
+                // The <= comparison keeps the *largest* minimizing end, assigning the most items to
+                // the earliest lines as the tie-break requires
+                if (cost <= minCost) {
+                    minCost = cost;
+                    minCol = col;
+                }
+            }
+
+            // Merge the single end preceding a zero item that the zero-sized-item rule allows
+            int minEnd = minCol >= 0 ? row.nonzeroEnds[minCol] : -1;
+            int zeroEnd = Math.min(row.fitEnds[start], row.maxEnd);
+            if (row.sizes.isZeroItem(zeroEnd + 1)) {
+                double cost = row.sizes.lineCost(start, zeroEnd) + row.prev[zeroEnd + 1];
+                if (cost < minCost || (cost == minCost && (minEnd < 0 || minEnd < zeroEnd))) {
+                    minCost = cost;
+                    minEnd = zeroEnd;
+                }
+            }
+
+            // Infeasible states are excluded from the range by the caller, and every feasible
+            // state has a valid transition
+            cur[start] = minCost;
+            opts[optsOffset + start] = minEnd >= 0 ? minEnd : start;
+
+            // The zero-rule end is excluded from the narrowing: only the non-zero ends' minima are
+            // monotone
+            if (start > startLo) {
+                int narrowedColHi = minCol >= 0 ? minCol + 1 : colHi;
+                fillRow(row, cur, opts, optsOffset, startLo, start - 1, colLo, narrowedColHi);
+            }
+            if (start < startHi) {
+                int narrowedColLo = minCol >= 0 ? minCol : firstCol;
+                fillRow(row, cur, opts, optsOffset, start + 1, startHi, narrowedColLo, colHi);
+            }
+        }
+
+        /**
+         * Determine the number of items on each line that balances items across lines, such that
+         * the largest line is as small as possible, with a minimum of {@code minLineCount} lines
+         * (or one line per item if there are fewer items).
+         *
+         * @param itemSizes       the outer hypothetical main size of each item
+         * @param lineLimit       the container's inner main size, or positive infinity
+         * @param gapBetweenItems the main-axis gap between adjacent items on a line
+         * @param minLineCount    the requested minimum number of lines ({@code flex-line-count})
+         * @return per-line item counts; all non-zero and summing to the number of items
+         */
+        static int[] balancedLineItemCounts(
+            float[] itemSizes,
+            float lineLimit,
+            float gapBetweenItems,
+            int minLineCount) {
+
+            int itemCount = itemSizes.length;
+            if (itemCount == 0) {
+                return new int[0];
+            }
+            double gap = toSize(gapBetweenItems);
+            double limit = lineLimit;
+
+            double[] prefixSums = new double[itemCount];
+            boolean[] zeroItem = new boolean[itemCount];
+            double sum = 0.0;
+            for (int index = 0; index < itemCount; index++) {
+                double size = toSize(itemSizes[index]);
+                sum += size + gap;
+                prefixSums[index] = sum;
+                zeroItem[index] = size == 0.0;
+            }
+            LineSizes sizes = new LineSizes(prefixSums, zeroItem, gap, limit);
+
+            // suffixGreedy[start] is the number of lines greedy line breaking produces for items
+            // start.., which is also the *fewest* lines the suffix can validly be divided into
+            int[] suffixGreedy = sizes.suffixGreedyLineCounts();
+            int lineCount = Math.max(suffixGreedy[0], Math.min(Math.max(minLineCount, 1), itemCount));
+
+            if (lineCount == itemCount) {
+                // One item per line is the only division (this covers flex-line-count of at least
+                // the item count as well as every item overflowing a line of its own)
+                int[] itemCounts = new int[itemCount];
+                java.util.Arrays.fill(itemCounts, 1);
+                return itemCounts;
+            }
+
+            int[] fitEnds = sizes.fitEnds();
+            int[] nonzeroEnds = new int[Math.max(0, itemCount - 1)];
+            int nonzeroCount = 0;
+            for (int end = 0; end < itemCount - 1; end++) {
+                if (!sizes.isZeroItem(end + 1)) {
+                    nonzeroEnds[nonzeroCount++] = end;
+                }
+            }
+            if (nonzeroCount != nonzeroEnds.length) {
+                nonzeroEnds = java.util.Arrays.copyOf(nonzeroEnds, nonzeroCount);
+            }
+
+            // prev[start] is the minimum total score of any valid division of items start.. into
+            // exactly lines - 1 lines (INFEASIBLE if there is none), and cur is the row being
+            // computed for lines lines.
+            double[] prev = new double[itemCount];
+            for (int start = 0; start < itemCount; start++) {
+                prev[start] = sizes.lineCost(start, itemCount - 1);
+            }
+            double[] cur = new double[itemCount];
+            java.util.Arrays.fill(cur, INFEASIBLE);
+            int[] opts = new int[(lineCount - 1) * itemCount];
+            for (int lines = 2; lines <= lineCount; lines++) {
+                // The remaining lines - 1 lines need one item each, bounding this line's end
+                int maxEnd = itemCount - lines;
+                // Starts whose suffix doesn't fit in lines lines even with greedy breaking are
+                // infeasible; they form a prefix (a longer suffix never needs fewer lines), and
+                // excluding them keeps every state fillRow solves feasible
+                int firstStart = 0;
+                while (firstStart < maxEnd && suffixGreedy[firstStart] > lines) {
+                    cur[firstStart] = INFEASIBLE;
+                    firstStart++;
+                }
+                int colHi = countAtMost(nonzeroEnds, maxEnd);
+                Row row = new Row(sizes, fitEnds, prev, nonzeroEnds, maxEnd);
+                fillRow(row, cur, opts, (lines - 2) * itemCount, firstStart, maxEnd, 0, colHi);
+                double[] swap = prev;
+                prev = cur;
+                cur = swap;
+            }
+
+            // Read the division back out front to back
+            int[] itemCounts = new int[lineCount];
+            int start = 0;
+            for (int lines = lineCount; lines >= 2; lines--) {
+                int end = opts[(lines - 2) * itemCount + start];
+                itemCounts[lineCount - lines] = end - start + 1;
+                start = end + 1;
+            }
+            itemCounts[lineCount - 1] = itemCount - start;
+            return itemCounts;
+        }
+
+        /** The first index in values[lo..hi) whose value is at least {@code key}. */
+        private static int lowerBound(int[] values, int lo, int hi, int key) {
+            int low = lo;
+            int high = hi;
+            while (low < high) {
+                int mid = (low + high) >>> 1;
+                if (values[mid] < key) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            return low - lo;
+        }
+
+        /** The number of values in the ascending array that are at most {@code maxEnd}. */
+        private static int countAtMost(int[] values, int maxEnd) {
+            int low = 0;
+            int high = values.length;
+            while (low < high) {
+                int mid = (low + high) >>> 1;
+                if (values[mid] <= maxEnd) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            return low;
+        }
+
     }
 }
