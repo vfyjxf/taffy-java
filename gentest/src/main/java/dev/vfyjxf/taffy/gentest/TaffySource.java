@@ -754,11 +754,124 @@ final class TaffySource {
             sb.append(ind).append("assertEquals(").append(StyleCodegen.floatLiteral(y)).append(", ").append(ident).append("Layout.location().y, EPSILON, \"y of ").append(ident).append("\");\n");
         }
 
+        appendScrollSizeAssertions(sb, ident, node, useRounding, ind);
+
         if (node.has("children") && !node.get("children").isJsonNull()) {
             JsonArray children = node.getAsJsonArray("children");
             for (int i = 0; i < children.size(); i++) {
                 generateAssertions(sb, ident + i, children.get(i).getAsJsonObject(), useRounding, indent);
             }
         }
+    }
+
+    /**
+     * Emits the {@code scrollWidth()}/{@code scrollHeight()} assertions for a node that is a
+     * scroll container, reading the expected values from the fixture's Chrome measurement.
+     *
+     * <p>Upstream's XML runner has always recorded {@code scroll_width}/{@code scroll_height}
+     * (upstream #1052, {@code tests/xml.rs}), but this port's generated tests only asserted
+     * size/location. The fixture data already carries what is needed: {@code getTestData()}
+     * returns Chrome's {@code scrollWidth}/{@code scrollHeight} in the layout objects and
+     * {@code clientWidth}/{@code clientHeight} in the naively rounded layout. The expected
+     * maximum scroll offset is therefore {@code max(0, scrollWidth - clientWidth)} for each axis
+     * (upstream's XML fixture generator, #1052/#1364).</p>
+     *
+     * <p>Only nodes that establish a scroll container ({@code overflow-x}/{@code overflow-y} in
+     * {@code hidden}, {@code scroll} or {@code auto}) get the assertions, exactly like the
+     * upstream runner: for every other node the values are not meaningful and may be absent from
+     * the fixture. A fixture that does not carry one of the fields (or the {@code style} object)
+     * is skipped rather than failing, so older fixture data still generates a compilable test.</p>
+     *
+     * @param sb         the generated test body
+     * @param ident      the node identifier used by the generated test
+     * @param node       the fixture node description from {@code getTestData()}
+     * @param useRounding whether the generated test uses smart rounding
+     * @param ind        the indentation prefix for the emitted lines
+     */
+    static void appendScrollSizeAssertions(StringBuilder sb, String ident, JsonObject node,
+                                           boolean useRounding, String ind) {
+        if (!isScrollContainer(node)) {
+            return;
+        }
+        Float scrollWidth = scrollSizeExpectation(node, useRounding, "scrollWidth", "clientWidth");
+        if (scrollWidth != null) {
+            sb.append(ind).append("assertEquals(").append(StyleCodegen.floatLiteral(scrollWidth))
+                .append(", ").append(ident).append("Layout.scrollWidth(), EPSILON, \"scroll width of ")
+                .append(ident).append("\");\n");
+        }
+        Float scrollHeight = scrollSizeExpectation(node, useRounding, "scrollHeight", "clientHeight");
+        if (scrollHeight != null) {
+            sb.append(ind).append("assertEquals(").append(StyleCodegen.floatLiteral(scrollHeight))
+                .append(", ").append(ident).append("Layout.scrollHeight(), EPSILON, \"scroll height of ")
+                .append(ident).append("\");\n");
+        }
+    }
+
+    /**
+     * The expected maximum scroll offset for one axis, or {@code null} when the fixture does not
+     * record it.
+     *
+     * <p>This mirrors upstream's XML fixture generator: the scroll extent comes from the layout
+     * object selected by the rounding mode, the client extent always comes from the naively
+     * rounded layout (Chrome's {@code offsetWidth}/{@code clientWidth} family), and the
+     * difference is floored at zero. The naive client size is used because it is the only place
+     * the fixture records it, and it does not depend on the rounding strategy.</p>
+     *
+     * @param node         the fixture node description
+     * @param useRounding  whether to read {@code smartRoundedLayout} instead of {@code unroundedLayout}
+     * @param scrollKey    {@code scrollWidth} or {@code scrollHeight}
+     * @param clientKey    {@code clientWidth} or {@code clientHeight}
+     * @return the expected range, or {@code null} if any input field is missing
+     */
+    static Float scrollSizeExpectation(JsonObject node, boolean useRounding,
+                                       String scrollKey, String clientKey) {
+        JsonObject layout = objectField(node, useRounding ? "smartRoundedLayout" : "unroundedLayout");
+        JsonObject naive = objectField(node, "naivelyRoundedLayout");
+        if (layout == null || naive == null) {
+            return null;
+        }
+        Float scrollExtent = floatField(layout, scrollKey);
+        Float clientExtent = floatField(naive, clientKey);
+        if (scrollExtent == null || clientExtent == null) {
+            return null;
+        }
+        return Math.max(0f, scrollExtent - clientExtent);
+    }
+
+    /**
+     * Whether the fixture node establishes a scroll container, i.e. either {@code overflow-x} or
+     * {@code overflow-y} is {@code hidden}, {@code scroll} or {@code auto}.
+     *
+     * @param node the fixture node description
+     * @return whether the node is a scroll container
+     */
+    static boolean isScrollContainer(JsonObject node) {
+        JsonObject style = objectField(node, "style");
+        if (style == null) {
+            return false;
+        }
+        return isScrollableOverflow(style, "overflowX") || isScrollableOverflow(style, "overflowY");
+    }
+
+    private static boolean isScrollableOverflow(JsonObject style, String key) {
+        JsonElement element = style.get(key);
+        if (element == null || !element.isJsonPrimitive()) {
+            return false;
+        }
+        String value = element.getAsString();
+        return "hidden".equals(value) || "scroll".equals(value) || "auto".equals(value);
+    }
+
+    private static JsonObject objectField(JsonObject parent, String key) {
+        JsonElement element = parent.get(key);
+        return element != null && element.isJsonObject() ? element.getAsJsonObject() : null;
+    }
+
+    private static Float floatField(JsonObject parent, String key) {
+        JsonElement element = parent.get(key);
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
+            return null;
+        }
+        return element.getAsFloat();
     }
 }
