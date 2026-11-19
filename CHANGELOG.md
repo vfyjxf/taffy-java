@@ -54,6 +54,9 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 - P5 also adds block `justify-self` (BK-16), flex intrinsic `CONTENT_SIZE` sizing with
   the definite-preferred fast path (FL-18), on-demand transferred min/max sizes
   (FL-19) and column intrinsic cross clamping (FL-20).
+- `SizingKeyword` (min-content/max-content/fit-content(calc)/stretch, `EXACT` vs
+  `MEASURE`) is consumed by flex main/cross/flex-basis (ST-01/FL-17), and
+  `height:stretch` treats collapsible block margins as zero (BK-19).
 
 ### P4 additions (scrollable overflow)
 
