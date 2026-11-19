@@ -1,6 +1,7 @@
 package dev.vfyjxf.taffy.util;
 
 import dev.vfyjxf.taffy.style.Clear;
+import dev.vfyjxf.taffy.style.TaffyDirection;
 
 import java.util.Objects;
 
@@ -15,10 +16,11 @@ import java.util.Objects;
  * from values returned to the caller.</p>
  *
  * <p><b>1.2 scope.</b> This class is the additive type/query foundation for the FT-01 batch.
- * It deliberately does <em>not</em> implement upstream's {@code place_floated_box} wrapper and
- * {@code BlockComputer} does not create or use a {@code BlockContext} yet. Float placement,
- * the floated content height contribution and the block integration land in the following FT
- * batches; the query surface here is expected to stay source-compatible.</p>
+ * It implements the {@code place_floated_box} and {@code find_bfc_slot} wrappers, but
+ * {@code BlockComputer} does not create or use a {@code BlockContext} yet. The block
+ * integration (including consuming {@link #floatedContentHeightContribution()} and the BFC
+ * root's bottom padding/border from upstream #1384) lands in the following FT batches; the
+ * query surface here is expected to stay source-compatible.</p>
  *
  * <p><b>Region coordinates.</b> {@link FloatContext} stores BFC regions in BFC-root
  * coordinates. {@link #addRegion(float, float, float, float)} takes block-local coordinates and
@@ -35,6 +37,11 @@ public final class BlockContext {
     private float contentBoxLeftInset;
     private float contentBoxRightInset;
     private final boolean bfcRoot;
+    /**
+     * The height that floats in this block's subtree consume, relative to the block's
+     * border-top. {@link Float#NEGATIVE_INFINITY} means "no floats placed yet".
+     */
+    private float floatContentContribution = Float.NEGATIVE_INFINITY;
 
     private BlockContext(
         FloatContext floatContext,
@@ -244,5 +251,150 @@ public final class BlockContext {
             slot.width(),
             slot.height()
         );
+    }
+
+    /**
+     * Positions a floated box using this block's content-box insets and translates the result
+     * back to block-local coordinates.
+     *
+     * <p>This is the {@code BlockContext::place_floated_box} wrapper from upstream #866. The
+     * fallback for boxes that adjoin an unresolved margin-collapse strut (#1046) is a block
+     * layout concern and is not part of this batch; it will be added with the BlockComputer
+     * integration.</p>
+     *
+     * @param width     the border-box width of the float
+     * @param height    the border-box height of the float
+     * @param minY      the minimum y position, relative to this block
+     * @param direction the side the box is floated towards
+     * @param clear     the box's {@code clear} value
+     * @return the position and placement flag, in block-local coordinates
+     */
+    public FloatContext.FloatPlacement placeFloatedBox(
+        float width,
+        float height,
+        float minY,
+        FloatContext.Direction direction,
+        Clear clear
+    ) {
+        FloatContext.FloatPlacement placement = floatContext.placeFloatedBox(
+            width,
+            height,
+            minY + yOffset,
+            contentBoxLeftInset,
+            contentBoxRightInset,
+            direction,
+            clear
+        );
+        if (placement.placed()) {
+            float localY = placement.y() - yOffset;
+            floatContentContribution = Math.max(floatContentContribution, localY + height);
+        }
+        return new FloatContext.FloatPlacement(
+            placement.x() - leftInset,
+            placement.y() - yOffset,
+            placement.placed()
+        );
+    }
+
+    /**
+     * Searches for a BFC slot using block-local coordinates.
+     *
+     * <p>This delegates to
+     * {@link FloatContext#findBfcSlot(float, float, float, float, float, float, TaffyDirection, Clear, int)}
+     * with the block's content-box insets and translates the result back to block-local
+     * coordinates.</p>
+     *
+     * @param minY        the minimum y position, relative to this block
+     * @param minHeight   a lower bound on the box's border-box height
+     * @param marginLeft  the box's left margin (may be negative)
+     * @param marginRight the box's right margin (may be negative)
+     * @param direction   the inline flow direction
+     * @param clear       the box's {@code clear} value
+     * @return the BFC slot, in block-local coordinates
+     */
+    public BfcSlot findBfcSlot(
+        float minY,
+        float minHeight,
+        float marginLeft,
+        float marginRight,
+        TaffyDirection direction,
+        Clear clear
+    ) {
+        return findBfcSlot(minY, minHeight, marginLeft, marginRight, direction, clear, FloatContext.NO_REGION);
+    }
+
+    /**
+     * Overload of
+     * {@link #findBfcSlot(float, float, float, float, TaffyDirection, Clear)} that resumes the
+     * search after a segment cursor.
+     *
+     * @param afterSegment the segment after which the search starts, or
+     *                     {@link FloatContext#NO_REGION}
+     */
+    public BfcSlot findBfcSlot(
+        float minY,
+        float minHeight,
+        float marginLeft,
+        float marginRight,
+        TaffyDirection direction,
+        Clear clear,
+        int afterSegment
+    ) {
+        BfcSlot slot = floatContext.findBfcSlot(
+            minY + yOffset,
+            minHeight,
+            contentBoxLeftInset,
+            contentBoxRightInset,
+            marginLeft,
+            marginRight,
+            direction,
+            clear,
+            afterSegment
+        );
+        return new BfcSlot(
+            slot.segmentId(),
+            slot.x() - leftInset,
+            slot.y() - yOffset,
+            slot.borderWidth(),
+            slot.stretchWidth(),
+            slot.height()
+        );
+    }
+
+    /**
+     * Returns the height that floats in this block's subtree consume, relative to this block's
+     * border-top. Returns {@code 0} when no float has been placed.
+     */
+    public float floatedContentHeightContribution() {
+        return floatContentContribution == Float.NEGATIVE_INFINITY ? 0.0f : floatContentContribution;
+    }
+
+    /**
+     * Merges the floated content height contribution of a child block into this block.
+     *
+     * <p>This mirrors upstream's {@code add_child_floated_content_height_contribution}: the
+     * child contribution is already relative to this block's border-top.</p>
+     *
+     * @param childContribution the child's floated content height contribution
+     */
+    public void addChildFloatedContentHeightContribution(float childContribution) {
+        floatContentContribution = Math.max(floatContentContribution, childContribution);
+    }
+
+    /**
+     * Returns the height a BFC root must use for its floats, including its own bottom content-box
+     * inset (padding + border + scrollbar gutter).
+     *
+     * <p>Upstream #1384 changed the root auto-height calculation to
+     * {@code max(intrinsic_outer_height, floated_content_height_contribution + resolved_content_box_inset.bottom)}:
+     * the floats' bottom margin edge is below the root's content, and the root's bottom padding
+     * and border sit below that. This pure helper exposes exactly that combination;
+     * {@code BlockComputer} consumption is part of the later block-integration batch.</p>
+     *
+     * @param bottomContentBoxInset the BFC root's bottom content-box inset
+     * @return the float contribution plus the bottom inset
+     */
+    public float floatedContentHeightIncludingBottomInset(float bottomContentBoxInset) {
+        return floatedContentHeightContribution() + bottomContentBoxInset;
     }
 }
