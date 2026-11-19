@@ -72,6 +72,14 @@ public class GridComputer {
      */
     static final int MAX_GRID_TRACKS = 10_000;
 
+    /**
+     * Sentinel returned by the sparse occupancy matrix when an area is entirely free (no collision
+     * jump) and when no sparse placement cursor exists for a track. Real values are bounded grid
+     * lines, so {@link Integer#MIN_VALUE} cannot collide with a valid result.
+     */
+    private static final int NO_COLLISION = Integer.MIN_VALUE;
+    private static final int NO_CURSOR = Integer.MIN_VALUE;
+
     /** The lowest valid grid line in OriginZero coordinates. */
     static final int MIN_OZ_LINE = -MAX_GRID_TRACKS;
 
@@ -771,16 +779,21 @@ public class GridComputer {
             style.getGap().height.resolveOrZero(nodeInnerSize.height)
         );
 
-        // Expand auto-fill/auto-fit in grid templates
-        List<TrackSizingFunction> expandedColumns = getExpandedTemplateColumns(style, nodeInnerSize.width, gap.width);
-        List<TrackSizingFunction> expandedRows = getExpandedTemplateRows(style, nodeInnerSize.height, gap.height);
+        // Expand auto-fill/auto-fit in grid templates. The auto-fit container sizes are captured here
+        // (before the first track-sizing pass can update `nodeInnerSize`) so that the auto-repeat
+        // counts used by the expanded templates and by the auto-fit collapse pass are identical
+        // (GR-07 / upstream #946).
+        float autoFitContainerWidth = nodeInnerSize.width;
+        float autoFitContainerHeight = nodeInnerSize.height;
+        List<TrackSizingFunction> expandedColumns = getExpandedTemplateColumns(style, autoFitContainerWidth, gap.width);
+        List<TrackSizingFunction> expandedRows = getExpandedTemplateRows(style, autoFitContainerHeight, gap.height);
 
         // Resolve named lines exactly once, before the grid size estimate (GR-15 / #1259), and share
         // the resolver between the in-flow placement pass and the absolutely positioned children.
         int columnAutoRepetitions = autoRepetitionCount(style.gridTemplateColumnsWithRepeat,
-            nodeInnerSize.width, gap.width);
+            autoFitContainerWidth, gap.width);
         int rowAutoRepetitions = autoRepetitionCount(style.gridTemplateRowsWithRepeat,
-            nodeInnerSize.height, gap.height);
+            autoFitContainerHeight, gap.height);
         NamedLineResolver namedLineResolver = createNamedLineResolver(style, expandedColumns, expandedRows,
             columnAutoRepetitions, rowAutoRepetitions);
 
@@ -812,28 +825,23 @@ public class GridComputer {
             expandedRows, style.getGridAutoRows(),
             numColumns, numRows, colCounts, rowCounts);
 
+        // CSS Grid: auto-fit tracks that contain no in-flow item are collapsed (size 0, no gutter).
+        // The occupancy of a track cannot change during track sizing, so the collapse decision is
+        // made once and re-applied to the sizes after each sizing pass (GR-07 / upstream #946).
+        AutoFitCollapse columnAutoFit = computeAutoFitCollapse(numColumns, style.gridTemplateColumnsWithRepeat,
+            items, autoFitContainerWidth, gap.width, colCounts, true);
+        AutoFitCollapse rowAutoFit = computeAutoFitCollapse(numRows, style.gridTemplateRowsWithRepeat,
+            items, autoFitContainerHeight, gap.height, rowCounts, false);
+
         // Calculate track sizes even if no items - based on template
         FloatList columnSizes = calculateColumnSizes(style, nodeInnerSize, innerMinSize.width, innerMaxSize.width,
             availableGridSpace, availableSpace, gap, numColumns, numRows, items, colCounts, expandedColumns);
-
-        // CSS Grid: Collapse empty auto-fit columns
-        // Per CSS Grid spec, auto-fit tracks that don't contain any items should be collapsed (size = 0)
-        collapseEmptyAutoFitColumns(columnSizes, style, items, nodeInnerSize, gap.width, colCounts);
+        applyAutoFitCollapse(columnSizes, columnAutoFit.collapsed());
+        AxisGeometry columnGeometry = AxisGeometry.of(columnAutoFit.collapsed(), columnAutoFit.autoFitIsLast());
 
         // Per CSS Grid spec 11.8: Update inner_node_size.width if it was indefinite
         // This is needed for resolving percentage values in row sizing and for re-running column sizing
-        float initialColumnSum = 0f;
-        for (float colSize : columnSizes) {
-            initialColumnSum += colSize;
-        }
-        // Also exclude gaps adjacent to collapsed (0-size) tracks
-        int nonCollapsedColumns = 0;
-        for (float colSize : columnSizes) {
-            if (colSize > 0) {
-                nonCollapsedColumns++;
-            }
-        }
-        initialColumnSum += gap.width * Math.max(0, nonCollapsedColumns - 1);
+        float initialColumnSum = columnGeometry.usedSize(columnSizes, gap.width);
 
         // Whether the grid container's own size is indefinite, which is what decides whether
         // percentage tracks/gaps have to be re-run (GR-11 / upstream #1243). This is deliberately
@@ -880,13 +888,11 @@ public class GridComputer {
 
         FloatList rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
             availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
+        applyAutoFitCollapse(rowSizes, rowAutoFit.collapsed());
+        AxisGeometry rowGeometry = AxisGeometry.of(rowAutoFit.collapsed(), rowAutoFit.autoFitIsLast());
 
         // Calculate initial row sum (like Rust's initial_row_sum)
-        float initialRowSum = 0f;
-        for (float rowSize : rowSizes) {
-            initialRowSum += rowSize;
-        }
-        initialRowSum += gap.height * Math.max(0, rowSizes.size() - 1);
+        float initialRowSum = rowGeometry.usedSize(rowSizes, gap.height);
 
         // The container's size is now determined, so percentages resolve against its content box
         // when track sizing is re-run (GR-11 / upstream #1243). Unlike the first pass, the content
@@ -1040,8 +1046,9 @@ public class GridComputer {
             // Re-run column sizing with known row sizes
             columnSizes = calculateColumnSizesWithRowSizes(style, nodeInnerSize, innerMinSize.width, innerMaxSize.width,
                 availableGridSpace, availableSpace, gap, numColumns, numRows, items, colCounts, expandedColumns, finalRowSizes);
-            // Re-apply auto-fit collapse after re-run
-            collapseEmptyAutoFitColumns(columnSizes, style, items, nodeInnerSize, gap.width, colCounts);
+            // Re-apply auto-fit collapse after the re-run. The collapse flags (and therefore the
+            // axis geometry) do not change, only the sizes of the non-collapsed tracks can.
+            applyAutoFitCollapse(columnSizes, columnAutoFit.collapsed());
 
             // The column widths may have changed, so the items' intrinsic height contributions need
             // to be recomputed. This is skipped when row sizing is being re-run anyway, because its
@@ -1120,6 +1127,8 @@ public class GridComputer {
             // Re-run row sizing with known column sizes
             rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
                 availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
+            // Re-apply the auto-fit collapse after the re-run (GR-07 / upstream #946)
+            applyAutoFitCollapse(rowSizes, rowAutoFit.collapsed());
         }
 
         // Calculate container size based on tracks.
@@ -1132,13 +1141,7 @@ public class GridComputer {
         float contentHeight = initialRowSum;
 
         if (intrinsicColumnContributionChanged && !hasPercentageColumn) {
-            float finalColumnSum = 0f;
-            int finalNonCollapsedColumns = 0;
-            for (float colSize : columnSizes) {
-                finalColumnSum += colSize;
-                if (colSize > 0) finalNonCollapsedColumns++;
-            }
-            contentWidth = finalColumnSum + gap.width * Math.max(0, finalNonCollapsedColumns - 1);
+            contentWidth = columnGeometry.usedSize(columnSizes, gap.width);
             // Keep the downstream alignment/positioning pass in sync with the recomputed container.
             float recomputedBorderWidth = !Float.isNaN(styledBasedKnownDimensions.width)
                                           ? styledBasedKnownDimensions.width
@@ -1150,11 +1153,7 @@ public class GridComputer {
         }
 
         if (intrinsicRowContributionChanged && !hasPercentageRow) {
-            float finalRowSum = 0f;
-            for (float rowSize : rowSizes) {
-                finalRowSum += rowSize;
-            }
-            contentHeight = finalRowSum + gap.height * Math.max(0, rowSizes.size() - 1);
+            contentHeight = rowGeometry.usedSize(rowSizes, gap.height);
             float recomputedBorderHeight = !Float.isNaN(styledBasedKnownDimensions.height)
                                            ? styledBasedKnownDimensions.height
                                            : contentHeight + contentBoxInsetHeight;
@@ -1182,15 +1181,16 @@ public class GridComputer {
 
             // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
             // logical (from the content box's inline-start) and include the content alignment offset.
-            ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize);
+            ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize,
+                columnGeometry, rowGeometry);
 
             // Get direction for RTL support (resolve INHERIT)
             boolean isRtlEmpty = layoutComputer.resolveDirection(node) == TaffyDirection.RTL;
 
-            GridAxisLines columnLines = new GridAxisLines(columnSizes, alignment.gapX(), alignment.offsetX(),
-                contentBoxInset.left, alignment.innerWidth(), isRtlEmpty);
-            GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
-                contentBoxInset.top, alignment.innerHeight(), false);
+            GridAxisLines columnLines = new GridAxisLines(columnSizes, columnGeometry, alignment.gapX(),
+                alignment.offsetX(), contentBoxInset.left, alignment.innerWidth(), isRtlEmpty);
+            GridAxisLines rowLines = new GridAxisLines(rowSizes, rowGeometry, alignment.gapY(),
+                alignment.offsetY(), contentBoxInset.top, alignment.innerHeight(), false);
 
             // Layout absolutely positioned children even if no regular items. Their overflow is
             // accumulated in the container's padding-box frame and merged below (upstream oof.rs).
@@ -1234,16 +1234,17 @@ public class GridComputer {
 
         // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
         // logical (from the content box's inline-start) and include the content alignment offset.
-        ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize);
+        ContentAlignment alignment = computeContentAlignment(style, columnSizes, rowSizes, gap, nodeInnerSize,
+            columnGeometry, rowGeometry);
 
         // Get direction for RTL/LTR support (resolve INHERIT)
         TaffyDirection direction = layoutComputer.resolveDirection(node);
         boolean isRtl = direction == TaffyDirection.RTL;
         // The inline axis is reversed in RTL: lines are measured from the right content edge.
-        GridAxisLines columnLines = new GridAxisLines(columnSizes, alignment.gapX(), alignment.offsetX(),
-            contentBoxInset.left, alignment.innerWidth(), isRtl);
-        GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
-            contentBoxInset.top, alignment.innerHeight(), false);
+        GridAxisLines columnLines = new GridAxisLines(columnSizes, columnGeometry, alignment.gapX(),
+            alignment.offsetX(), contentBoxInset.left, alignment.innerWidth(), isRtl);
+        GridAxisLines rowLines = new GridAxisLines(rowSizes, rowGeometry, alignment.gapY(),
+            alignment.offsetY(), contentBoxInset.top, alignment.innerHeight(), false);
 
         // Container size. Computed before the item positioning pass because the scrollable overflow
         // container description (client area) depends on the final container size.
@@ -1275,7 +1276,7 @@ public class GridComputer {
 
         // Place items and calculate final positions, accumulating their overflow contributions
         FloatRect itemOverflowRect = placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize,
-            style, colCounts, rowCounts, isRtl, paddingBoxOrigin, inFlowOverflowContainer);
+            style, colCounts, rowCounts, columnGeometry, rowGeometry, isRtl, paddingBoxOrigin, inFlowOverflowContainer);
 
         if (runMode == RunMode.COMPUTE_SIZE) {
             return LayoutOutput.fromOuterSize(containerSize);
@@ -1488,25 +1489,15 @@ public class GridComputer {
         FloatList columnSizes,
         FloatList rowSizes,
         FloatSize gap,
-        FloatSize nodeInnerSize) {
+        FloatSize nodeInnerSize,
+        AxisGeometry columnGeometry,
+        AxisGeometry rowGeometry) {
 
-        int nonCollapsedColumns = 0;
-        float totalColumnSize = 0f;
-        for (int i = 0; i < columnSizes.size(); i++) {
-            float size = columnSizes.getFloat(i);
-            totalColumnSize += size;
-            if (size > 0) nonCollapsedColumns++;
-        }
-        totalColumnSize += gap.width * Math.max(0, nonCollapsedColumns - 1);
+        int nonCollapsedColumns = columnGeometry.nonCollapsedTrackCount();
+        float totalColumnSize = columnGeometry.usedSize(columnSizes, gap.width);
 
-        int nonCollapsedRows = 0;
-        float totalRowSize = 0f;
-        for (int i = 0; i < rowSizes.size(); i++) {
-            float size = rowSizes.getFloat(i);
-            totalRowSize += size;
-            if (size > 0) nonCollapsedRows++;
-        }
-        totalRowSize += gap.height * Math.max(0, nonCollapsedRows - 1);
+        int nonCollapsedRows = rowGeometry.nonCollapsedTrackCount();
+        float totalRowSize = rowGeometry.usedSize(rowSizes, gap.height);
 
         float innerWidth = !Float.isNaN(nodeInnerSize.width) ? nodeInnerSize.width : totalColumnSize;
         float innerHeight = !Float.isNaN(nodeInnerSize.height) ? nodeInnerSize.height : totalRowSize;
@@ -1577,7 +1568,7 @@ public class GridComputer {
         private final float innerSize;
         private final boolean reversed;
 
-        GridAxisLines(FloatList trackSizes, float adjustedGap, float firstTrackOffset,
+        GridAxisLines(FloatList trackSizes, AxisGeometry geometry, float adjustedGap, float firstTrackOffset,
                       float origin, float innerSize, boolean reversed) {
             int trackCount = trackSizes.size();
             this.starts = new float[trackCount + 1];
@@ -1589,17 +1580,15 @@ public class GridComputer {
 
             float position = firstTrackOffset;
             for (int i = 0; i < trackCount; i++) {
-                boolean isNonCollapsed = trackSizes.getFloat(i) > 0;
-                nonCollapsed[i] = isNonCollapsed;
-                // Only non-collapsed tracks separated from the previous non-collapsed track by a gutter
-                // receive a gap; gaps adjacent to collapsed tracks overlap and are not counted.
-                if (i > 0 && isNonCollapsed && nonCollapsed[i - 1]) {
+                nonCollapsed[i] = !geometry.isCollapsed(i);
+                // A gutter survives unless the track it follows is collapsed (GR-07 / upstream #946);
+                // {@link AxisGeometry} already accounts for the trailing gutter and the auto-fit at
+                // the end of the template collapsing its preceding gutter.
+                if (i > 0 && geometry.hasGapAfter(i - 1)) {
                     position += adjustedGap;
                 }
                 starts[i] = position;
-                if (isNonCollapsed) {
-                    position += trackSizes.getFloat(i);
-                }
+                position += trackSizes.getFloat(i);
                 ends[i] = position;
             }
             starts[trackCount] = position;
@@ -1919,17 +1908,17 @@ public class GridComputer {
             return new ArrayList<>();
         }
 
-        // Check if there's an auto-repetition
-        GridRepetition autoRepeat = null;
-        int autoRepeatIndex = -1;
-        for (int i = 0; i < template.size(); i++) {
-            GridTemplateComponent comp = template.get(i);
-            if (comp.isAutoRepetition()) {
-                autoRepeat = comp.getRepeat();
-                autoRepeatIndex = i;
-                break;
-            }
+        // Summarize the template's repetitions (GR-07 / upstream #946). An invalid template (a
+        // repetition with no tracks, more than one auto-repetition, or an auto-repetition combined
+        // with a non-fixed track) contributes no explicit tracks at all.
+        TemplateSummary summary = summarizeTemplate(template);
+        if (!summary.isValid()) {
+            return new ArrayList<>();
         }
+
+        GridRepetition autoRepeat = summary.firstAutoRepetitionIndex() >= 0
+                                    ? template.get(summary.firstAutoRepetitionIndex()).getRepeat() : null;
+        int autoRepeatIndex = summary.firstAutoRepetitionIndex();
 
         if (autoRepeat == null) {
             // No auto-repetition, just expand normally. The expanded template is truncated at the
@@ -1955,7 +1944,8 @@ public class GridComputer {
         }
 
         // Has auto-repetition - calculate how many times to repeat
-        int numRepetitions = computeAutoRepetitionCount(template, autoRepeatIndex, autoRepeat, containerSize, gap);
+        int numRepetitions = computeAutoRepetitionCount(template, autoRepeatIndex, autoRepeat,
+            containerSize, gap, summary);
 
         // Build result with expanded repetitions, truncating the expanded template at the track limit.
         List<TrackSizingFunction> result = new ArrayList<>();
@@ -1986,6 +1976,108 @@ public class GridComputer {
     }
 
     /**
+     * The track-count facts about a {@code grid-template-*} definition that upstream's
+     * {@code compute_explicit_grid_size_in_axis} derives in a single pass (GR-07 / upstream #946):
+     * the number of tracks contributed by every single-track definition and every fixed-count
+     * {@code repeat()}, the number of auto-repetitions, and the validity of the template.
+     * <p>
+     * Per CSS Grid, an auto-fill/auto-fit repetition may appear at most once, and the template may
+     * not combine it with tracks that have no fixed sizing component; a repetition with no tracks
+     * makes the whole definition invalid. An invalid template contributes no explicit tracks
+     * (upstream returns {@code (0, 0)} and {@code initialize_grid_tracks} then skips the template).
+     *
+     * @param nonAutoRepeatingTrackCount      tracks from single definitions and fixed-count repeats
+     * @param autoRepetitionCount             number of auto-fill/auto-fit repetitions
+     * @param firstAutoRepetitionIndex        index of the first auto-repetition, or -1
+     * @param hasZeroTrackRepetition          whether any repetition declares no tracks
+     * @param allTrackDefsHaveFixedComponent  whether every track has a fixed sizing component
+     */
+    private record TemplateSummary(int nonAutoRepeatingTrackCount, int autoRepetitionCount,
+                                   int firstAutoRepetitionIndex, boolean hasZeroTrackRepetition,
+                                   boolean allTrackDefsHaveFixedComponent) {
+        boolean isValid() {
+            if (hasZeroTrackRepetition) return false;
+            if (autoRepetitionCount == 0) return true;
+            return autoRepetitionCount == 1 && allTrackDefsHaveFixedComponent;
+        }
+    }
+
+    /**
+     * Summarize the repetitions of a grid template, mirroring upstream
+     * {@code compute_explicit_grid_size_in_axis} (GR-07 / upstream #946).
+     */
+    private static TemplateSummary summarizeTemplate(List<GridTemplateComponent> template) {
+        int nonAutoRepeatingTrackCount = 0;
+        int autoRepetitionCount = 0;
+        int firstAutoRepetitionIndex = -1;
+        boolean hasZeroTrackRepetition = false;
+        boolean allTrackDefsHaveFixedComponent = true;
+
+        for (int i = 0; i < template.size(); i++) {
+            GridTemplateComponent comp = template.get(i);
+            if (comp == null) continue;
+            if (comp.isSingle()) {
+                nonAutoRepeatingTrackCount = saturatingAdd(nonAutoRepeatingTrackCount, 1);
+                allTrackDefsHaveFixedComponent &= hasUpstreamFixedComponent(comp.getSingle());
+            } else if (comp.isRepeat()) {
+                GridRepetition repeat = comp.getRepeat();
+                if (repeat == null || repeat.getTrackCount() == 0) {
+                    hasZeroTrackRepetition = true;
+                    allTrackDefsHaveFixedComponent = false;
+                    continue;
+                }
+                if (repeat.isAutoRepetition()) {
+                    if (firstAutoRepetitionIndex < 0) firstAutoRepetitionIndex = i;
+                    autoRepetitionCount = saturatingAdd(autoRepetitionCount, 1);
+                } else {
+                    nonAutoRepeatingTrackCount = saturatingAdd(nonAutoRepeatingTrackCount,
+                        (int) Math.min(Integer.MAX_VALUE, (long) repeat.getCount() * repeat.getTrackCount()));
+                }
+                for (TrackSizingFunction track : repeat.getTracks()) {
+                    allTrackDefsHaveFixedComponent &= hasUpstreamFixedComponent(track);
+                }
+            }
+        }
+
+        return new TemplateSummary(Math.min(nonAutoRepeatingTrackCount, MAX_GRID_TRACKS),
+            autoRepetitionCount, firstAutoRepetitionIndex, hasZeroTrackRepetition,
+            allTrackDefsHaveFixedComponent);
+    }
+
+    /**
+     * Whether a track sizing function has a fixed component, using upstream's definition
+     * ({@code TrackSizingFunction::has_fixed_component}: the min or max sizing function is a
+     * length/percentage). Note that {@code fit-content()} does <em>not</em> count: upstream treats a
+     * template that combines an auto-repetition with a {@code fit-content()} track as invalid,
+     * whereas {@link TrackSizingFunction#hasFixedComponent()} (a legacy public helper) counts the
+     * fit-content() limit as fixed. Keeping the stricter rule here avoids changing that public
+     * helper while matching upstream's template validation (GR-07 / #946).
+     */
+    private static boolean hasUpstreamFixedComponent(TrackSizingFunction track) {
+        if (track == null) {
+            return false;
+        }
+        if (track.isFixed()) {
+            return track.getFixedValue() != null;
+        }
+        if (track.isMinmax()) {
+            return hasUpstreamFixedComponent(track.getMinFunc())
+                   || hasUpstreamFixedComponent(track.getMaxFunc());
+        }
+        return false;
+    }
+
+    /**
+     * A track sizing function's definite value against a parent size, or 0 when it has none
+     * (upstream {@code track_definite_value} in {@code compute_explicit_grid_size_in_axis}).
+     */
+    private static float definiteTrackValue(TrackSizingFunction track, float parentSize) {
+        if (track == null) return 0f;
+        float value = track.getDefiniteValue(parentSize);
+        return Float.isNaN(value) ? 0f : value;
+    }
+
+    /**
      * The number of times the auto-repetition ({@code auto-fill}/{@code auto-fit}) at
      * {@code autoRepeatIndex} is expanded in the axis with the passed definite container size and
      * gap.
@@ -2003,48 +2095,42 @@ public class GridComputer {
      * @param autoRepeat      the auto-repetition component
      * @param containerSize   the definite container size in this axis
      * @param gap             the gap between tracks in this axis
+     * @param summary         the template's repetition summary (upstream #946)
      */
     private int computeAutoRepetitionCount(List<GridTemplateComponent> template, int autoRepeatIndex,
-                                           GridRepetition autoRepeat, float containerSize, float gap) {
+                                           GridRepetition autoRepeat, float containerSize, float gap,
+                                           TemplateSummary summary) {
         int numRepetitions;
         if (Float.isNaN(containerSize) || containerSize <= 0) {
             // No definite container size, use 1 repetition
             numRepetitions = 1;
         } else {
-            // Calculate space used by non-repeating tracks
+            // Calculate space used by the non-auto-repeating tracks. Every non-auto track counts
+            // towards the number of gutters even when it has no definite value (upstream #946: the
+            // gutter count is non_auto_repeating_track_count, not the count of definite tracks).
             float nonRepeatingUsedSpace = 0f;
-            int nonRepeatingTrackCount = 0;
             for (int i = 0; i < template.size(); i++) {
                 if (i == autoRepeatIndex) continue;
                 GridTemplateComponent comp = template.get(i);
                 if (comp.isSingle()) {
-                    float val = comp.getSingle().getDefiniteValue(containerSize);
-                    if (!Float.isNaN(val)) {
-                        nonRepeatingUsedSpace += val;
-                        nonRepeatingTrackCount++;
-                    }
+                    nonRepeatingUsedSpace += definiteTrackValue(comp.getSingle(), containerSize);
                 } else if (comp.isRepeat()) {
                     GridRepetition repeat = comp.getRepeat();
-                    for (int j = 0; j < repeat.getCount(); j++) {
-                        for (TrackSizingFunction track : repeat.getTracks()) {
-                            float val = track.getDefiniteValue(containerSize);
-                            if (!Float.isNaN(val)) {
-                                nonRepeatingUsedSpace += val;
-                                nonRepeatingTrackCount++;
-                            }
-                        }
+                    if (repeat == null || repeat.isAutoRepetition()) continue;
+                    float perTrackSum = 0f;
+                    for (TrackSizingFunction track : repeat.getTracks()) {
+                        perTrackSum += definiteTrackValue(track, containerSize);
                     }
+                    nonRepeatingUsedSpace += perTrackSum * repeat.getCount();
                 }
             }
+            int nonRepeatingTrackCount = summary.nonAutoRepeatingTrackCount();
 
             // Calculate space per repetition
             float perRepetitionSpace = 0f;
             int tracksPerRepetition = autoRepeat.getTrackCount();
             for (TrackSizingFunction track : autoRepeat.getTracks()) {
-                float val = track.getDefiniteValue(containerSize);
-                if (!Float.isNaN(val)) {
-                    perRepetitionSpace += val;
-                }
+                perRepetitionSpace += definiteTrackValue(track, containerSize);
             }
 
             // First repetition includes gaps for non-repeating tracks
@@ -2078,19 +2164,19 @@ public class GridComputer {
 
     /**
      * The number of times the auto-repetition of a template is expanded, or 0 when the template
-     * has no {@code auto-fill}/{@code auto-fit} repetition.
+     * has no {@code auto-fill}/{@code auto-fit} repetition or is invalid (GR-07 / upstream #946).
      */
     private int autoRepetitionCount(List<GridTemplateComponent> template, float containerSize, float gap) {
         if (template == null || template.isEmpty()) {
             return 0;
         }
-        for (int i = 0; i < template.size(); i++) {
-            GridTemplateComponent component = template.get(i);
-            if (component != null && component.isAutoRepetition()) {
-                return computeAutoRepetitionCount(template, i, component.getRepeat(), containerSize, gap);
-            }
+        TemplateSummary summary = summarizeTemplate(template);
+        if (!summary.isValid() || summary.firstAutoRepetitionIndex() < 0) {
+            return 0;
         }
-        return 0;
+        int index = summary.firstAutoRepetitionIndex();
+        return computeAutoRepetitionCount(template, index, template.get(index).getRepeat(),
+            containerSize, gap, summary);
     }
 
     /**
@@ -2155,6 +2241,10 @@ public class GridComputer {
         if (template == null || template.isEmpty()) {
             return null;
         }
+        TemplateSummary summary = summarizeTemplate(template);
+        if (!summary.isValid() || summary.firstAutoRepetitionIndex() < 0) {
+            return null;
+        }
 
         // Find auto-fit component
         GridRepetition autoFit = null;
@@ -2185,7 +2275,7 @@ public class GridComputer {
 
         // Calculate number of repetitions with the same helper that expands the template, so that
         // the collapsed range stays aligned with the expanded template (GR-05 / #986).
-        int numRepetitions = computeAutoRepetitionCount(template, autoFitIndex, autoFit, containerSize, gap);
+        int numRepetitions = computeAutoRepetitionCount(template, autoFitIndex, autoFit, containerSize, gap, summary);
 
         int totalAutoFitTracks = (int) Math.min((long) numRepetitions * autoFit.getTrackCount(),
             Math.max(0, MAX_GRID_TRACKS - tracksBefore));
@@ -2193,50 +2283,170 @@ public class GridComputer {
     }
 
     /**
-     * Collapse empty auto-fit tracks by setting their size to 0.
-     * Per CSS Grid spec, auto-fit tracks that don't contain any items should be collapsed.
+     * The auto-fit collapse state of one grid axis (GR-07 / upstream #946).
      *
-     * @param columnSizes   The calculated column sizes to modify
-     * @param style         The container style (to check for auto-fit)
-     * @param items         The grid items
-     * @param nodeInnerSize The container inner size
-     * @param gap           The gap between tracks
-     * @param colCounts     Track counts information
+     * @param collapsed     per-track flags: true for auto-fit tracks containing no in-flow item
+     * @param autoFitIsLast whether the auto-fit repetition reaches the end of the track list
      */
-    private void collapseEmptyAutoFitColumns(FloatList columnSizes, TaffyStyle style, List<GridItem> items,
-                                             FloatSize nodeInnerSize, float gap, TrackCounts colCounts) {
-        if (style.gridTemplateColumnsWithRepeat == null || style.gridTemplateColumnsWithRepeat.isEmpty()) {
-            return;
+    private record AutoFitCollapse(boolean[] collapsed, boolean autoFitIsLast) {}
+
+    /**
+     * Determine which auto-fit tracks of one axis are empty and therefore collapsed.
+     * <p>
+     * Per CSS Grid, every auto-fit track that contains no in-flow item is collapsed. Upstream
+     * decides this from the occupancy matrix when it initializes the track list; this port decides
+     * it from the placed items, which is equivalent because the in-flow items are exactly the
+     * items whose grid areas were marked in the matrix.
+     *
+     * @param trackCount           The number of tracks in the axis (including implicit tracks)
+     * @param template             The axis' template (to detect auto-fit), or null
+     * @param items                The in-flow grid items
+     * @param autoFitContainerSize The container size the template's auto-repeat was expanded against
+     * @param gap                  The gap between tracks in this axis
+     * @param trackCounts          Track counts information for this axis
+     * @param horizontalAxis       true for columns, false for rows
+     */
+    private AutoFitCollapse computeAutoFitCollapse(int trackCount, List<GridTemplateComponent> template,
+                                                   List<GridItem> items, float autoFitContainerSize, float gap,
+                                                   TrackCounts trackCounts, boolean horizontalAxis) {
+        boolean[] collapsed = new boolean[Math.max(0, trackCount)];
+        if (template == null || template.isEmpty() || trackCount <= 0) {
+            return new AutoFitCollapse(collapsed, false);
         }
 
-        AutoFitInfo autoFitInfo = getAutoFitInfo(style.gridTemplateColumnsWithRepeat, nodeInnerSize.width, gap);
+        AutoFitInfo autoFitInfo = getAutoFitInfo(template, autoFitContainerSize, gap);
         if (autoFitInfo == null) {
-            return;
+            return new AutoFitCollapse(collapsed, false);
         }
 
-        // Build a set of columns that contain items
-        boolean[] columnOccupied = new boolean[columnSizes.size()];
+        boolean[] trackOccupied = new boolean[trackCount];
         for (GridItem item : items) {
             if (item.position.isOutOfFlow()) {
                 continue;
             }
-            int colStart = getItemColumnWithCounts(item, 0, columnSizes.size(), colCounts);
-            int colEnd = colStart + item.columnSpan;
-            for (int col = colStart; col < colEnd && col < columnSizes.size(); col++) {
-                columnOccupied[col] = true;
+            int start = horizontalAxis
+                        ? getItemColumnWithCounts(item, 0, trackCount, trackCounts)
+                        : getItemRowWithCounts(item, 0, trackCount, trackCounts);
+            int span = horizontalAxis ? item.columnSpan : item.rowSpan;
+            for (int track = Math.max(0, start); track < start + span && track < trackCount; track++) {
+                trackOccupied[track] = true;
             }
         }
 
-        // Collapse unoccupied auto-fit columns
-        // The auto-fit tracks are in the explicit grid region
-        int explicitStart = colCounts.negativeImplicit;
-        int autoFitStart = explicitStart + autoFitInfo.startIndex;
+        // Collapse unoccupied auto-fit tracks. The auto-fit tracks are in the explicit grid region.
+        int autoFitStart = trackCounts.negativeImplicit + autoFitInfo.startIndex;
         int autoFitEnd = autoFitStart + autoFitInfo.trackCount;
-
-        for (int col = autoFitStart; col < autoFitEnd && col < columnSizes.size(); col++) {
-            if (!columnOccupied[col]) {
-                columnSizes.set(col, 0f);
+        for (int track = Math.max(0, autoFitStart); track < autoFitEnd && track < trackCount; track++) {
+            if (!trackOccupied[track]) {
+                collapsed[track] = true;
             }
+        }
+
+        // Upstream's is_last check: the auto-fit repetition is the last component of the track list.
+        return new AutoFitCollapse(collapsed, autoFitEnd >= trackCount);
+    }
+
+    /** Set the size of every collapsed track to 0 (their content was already excluded). */
+    private static void applyAutoFitCollapse(FloatList trackSizes, boolean[] collapsed) {
+        int count = Math.min(trackSizes.size(), collapsed.length);
+        for (int i = 0; i < count; i++) {
+            if (collapsed[i]) {
+                trackSizes.set(i, 0f);
+            }
+        }
+    }
+
+    /**
+     * Collapsed-aware geometry of one grid axis (GR-07 / upstream #946).
+     * <p>
+     * Upstream models gutters as tracks and collapses the gutter that follows a collapsed track.
+     * The gutter that follows a non-collapsed track therefore survives even when every track after
+     * it is collapsed; only the trailing gutter of the axis and - when the auto-fit repetition is
+     * the last component of the track list - the gutter after the last non-collapsed track are
+     * collapsed as well (upstream #946's backward pass). {@code gapAfter[i]} records the surviving
+     * gutters, which makes a collapsed run in the middle of the template keep exactly one gap
+     * before it and a collapsed run at the end of the template keep none.
+     */
+    private static final class AxisGeometry {
+        private final boolean[] collapsed;
+        private final boolean[] gapAfter;
+        private final int nonCollapsedTrackCount;
+
+        private AxisGeometry(boolean[] collapsed, boolean[] gapAfter, int nonCollapsedTrackCount) {
+            this.collapsed = collapsed;
+            this.gapAfter = gapAfter;
+            this.nonCollapsedTrackCount = nonCollapsedTrackCount;
+        }
+
+        static AxisGeometry of(boolean[] collapsed, boolean autoFitIsLast) {
+            int trackCount = collapsed.length;
+            boolean[] gapAfter = new boolean[Math.max(0, trackCount - 1)];
+            int nonCollapsedTrackCount = 0;
+            int lastNonCollapsedTrack = -1;
+            for (int i = 0; i < trackCount; i++) {
+                if (!collapsed[i]) {
+                    nonCollapsedTrackCount++;
+                    lastNonCollapsedTrack = i;
+                }
+            }
+            for (int i = 0; i < gapAfter.length; i++) {
+                gapAfter[i] = !collapsed[i];
+            }
+            if (autoFitIsLast && lastNonCollapsedTrack >= 0 && lastNonCollapsedTrack < trackCount - 1) {
+                gapAfter[lastNonCollapsedTrack] = false;
+            }
+            return new AxisGeometry(collapsed, gapAfter, nonCollapsedTrackCount);
+        }
+
+        boolean isCollapsed(int trackIndex) {
+            return trackIndex >= 0 && trackIndex < collapsed.length && collapsed[trackIndex];
+        }
+
+        boolean hasGapAfter(int trackIndex) {
+            return trackIndex >= 0 && trackIndex < gapAfter.length && gapAfter[trackIndex];
+        }
+
+        int nonCollapsedTrackCount() {
+            return nonCollapsedTrackCount;
+        }
+
+        /** Size used by the tracks and their surviving gutters (the axis' used size). */
+        float usedSize(FloatList trackSizes, float gap) {
+            float usedSize = 0f;
+            int trackCount = trackSizes.size();
+            for (int i = 0; i < trackCount; i++) {
+                usedSize += trackSizes.getFloat(i);
+                if (i < gapAfter.length && gapAfter[i]) {
+                    usedSize += gap;
+                }
+            }
+            return usedSize;
+        }
+
+        /** Start offset of one track relative to the start of the first track. */
+        float trackStart(FloatList trackSizes, int trackIndex, float adjustedGap) {
+            int end = Math.min(trackIndex, trackSizes.size());
+            float offset = 0f;
+            for (int i = 0; i < end; i++) {
+                offset += trackSizes.getFloat(i);
+                if (hasGapAfter(i)) {
+                    offset += adjustedGap;
+                }
+            }
+            return offset;
+        }
+
+        /** Extent of a span of tracks, including the surviving gutters between them. */
+        float trackSpanSize(FloatList trackSizes, int start, int span, float adjustedGap) {
+            int end = Math.min(start + span, trackSizes.size());
+            float size = 0f;
+            for (int i = Math.max(0, start); i < end; i++) {
+                size += trackSizes.getFloat(i);
+                if (i + 1 < end && hasGapAfter(i)) {
+                    size += adjustedGap;
+                }
+            }
+            return size;
         }
     }
 
@@ -2383,208 +2593,184 @@ public class GridComputer {
      * Supports both sparse (default) and dense packing algorithms.
      * CSS Grid Specification: 8.5. Grid Item Placement Algorithm
      * <p>
-     * For ROW flow:
-     * - primary axis = column (horizontal, items flow across columns first)
-     * - secondary axis = row (vertical)
+     * This mirrors upstream taffy's placement pass (GR-13): the occupancy matrix is a sparse
+     * per-track interval list, a collision makes the search jump past the whole colliding interval
+     * (upstream #1038), and sparse packing continues after the last auto-placed item that starts in
+     * the same secondary-axis track (upstream #1263) instead of restarting from the grid start.
      * <p>
-     * For COLUMN flow:
-     * - primary axis = row (vertical, items flow down rows first)
-     * - secondary axis = column (horizontal)
-     * <p>
-     * Processing order:
-     * 1. Items with definite positions in both axes
-     * 2. Items with definite position only in SECONDARY axis (row for row flow, column for column flow)
-     * 3. Items with secondary axis NOT definite (including those with only primary definite, and fully auto)
-     * <p>
-     * The occupancy matrix uses 0-based indices where 0 is the first track in the implicit grid.
-     * We use TrackCounts to convert between OriginZero coordinates and matrix indices.
-     * <p>
-     * This implementation uses a CellOccupancyMatrix that can dynamically expand as needed.
+     * For ROW flow the primary axis is the column axis (items flow across columns first); for
+     * COLUMN flow the primary axis is the row axis.
      */
     private void autoPlaceItems(List<GridItem> items, GridAutoFlow autoFlow,
                                 TrackCounts colCounts, TrackCounts rowCounts) {
         boolean isDense = autoFlow != null && autoFlow.isDense();
         boolean isRowFlow = autoFlow == null || autoFlow.isRow();
 
-        // Create a dynamically expanding occupancy matrix
         CellOccupancyMatrix matrix = new CellOccupancyMatrix(colCounts, rowCounts);
 
-        // Step 1: Place items with definite positions in both axes
+        // Step 1: Place items with definite positions in both axes. These are definitely placed and
+        // do not advance any sparse placement cursor (upstream CellOccupancyState::DefinitelyPlaced).
         for (GridItem item : items) {
             if (item.columnStart != null && item.rowStart != null) {
-                matrix.markArea(item.columnStart, item.rowStart, item.columnSpan, item.rowSpan);
+                matrix.markArea(item.columnStart, item.rowStart, item.columnSpan, item.rowSpan,
+                    isRowFlow, false);
             }
         }
 
-        // Step 2: Place items with definite SECONDARY axis position only
-        // For row flow: secondary=row -> items with definite row but auto column
-        // For column flow: secondary=column -> items with definite column but auto row
+        // Step 2: Place the remaining items with a definite secondary-axis position. The primary
+        // search starts at the sparse cursor of that secondary track (or at the start of the
+        // implicit grid for dense packing) and jumps over colliding intervals.
         for (GridItem item : items) {
             if (item.columnStart != null && item.rowStart != null) {
                 continue; // Already placed in step 1
             }
-
-            int colSpan = item.columnSpan;
-            int rowSpan = item.rowSpan;
-
             if (isRowFlow) {
-                // For row flow: secondary axis = row
-                // Handle items with definite row but auto column
-                if (item.rowStart != null) {
-                    int rowStartOz = item.rowStart;
-                    int[] result = matrix.findEmptyAreaInRow(rowStartOz, colSpan, rowSpan);
-                    if (result != null) {
-                        item.columnStart = result[0];
-                        matrix.markArea(item.columnStart, rowStartOz, colSpan, rowSpan);
-                    } else {
-                        // Expand grid and place at end
-                        item.columnStart = matrix.colCounts.positiveImplicitEndLine();
-                        matrix.markArea(item.columnStart, rowStartOz, colSpan, rowSpan);
-                    }
+                if (item.rowStart == null) {
+                    continue; // The secondary (row) axis is not definite
                 }
+                int secondaryStart = item.rowStart;
+                int secondaryEnd = clampOzLine((long) secondaryStart + item.rowSpan);
+                int primaryStart = isDense
+                                   ? matrix.implicitStartLine(true)
+                                   : matrix.autoPlacementCursor(true, secondaryStart);
+                if (primaryStart == NO_CURSOR) {
+                    primaryStart = matrix.implicitStartLine(true);
+                }
+                while (true) {
+                    int primaryEnd = clampOzLine((long) primaryStart + item.columnSpan);
+                    int jump = matrix.lineAreaCollisionJump(true, primaryStart, primaryEnd,
+                        secondaryStart, secondaryEnd);
+                    if (jump == NO_COLLISION) {
+                        break;
+                    }
+                    primaryStart = jump;
+                }
+                item.columnStart = clampOzLine(primaryStart);
+                matrix.markArea(item.columnStart, secondaryStart, item.columnSpan, item.rowSpan, true, true);
             } else {
-                // For column flow: secondary axis = column
-                // Handle items with definite column but auto row
-                if (item.columnStart != null) {
-                    int colStartOz = item.columnStart;
-                    int[] result = matrix.findEmptyAreaInColumn(colStartOz, colSpan, rowSpan);
-                    if (result != null) {
-                        item.rowStart = result[0];
-                        matrix.markArea(colStartOz, item.rowStart, colSpan, rowSpan);
-                    } else {
-                        // Expand grid and place at end
-                        item.rowStart = matrix.rowCounts.positiveImplicitEndLine();
-                        matrix.markArea(colStartOz, item.rowStart, colSpan, rowSpan);
-                    }
+                if (item.columnStart == null) {
+                    continue; // The secondary (column) axis is not definite
                 }
+                int secondaryStart = item.columnStart;
+                int secondaryEnd = clampOzLine((long) secondaryStart + item.columnSpan);
+                int primaryStart = isDense
+                                   ? matrix.implicitStartLine(false)
+                                   : matrix.autoPlacementCursor(false, secondaryStart);
+                if (primaryStart == NO_CURSOR) {
+                    primaryStart = matrix.implicitStartLine(false);
+                }
+                while (true) {
+                    int primaryEnd = clampOzLine((long) primaryStart + item.rowSpan);
+                    int jump = matrix.lineAreaCollisionJump(false, primaryStart, primaryEnd,
+                        secondaryStart, secondaryEnd);
+                    if (jump == NO_COLLISION) {
+                        break;
+                    }
+                    primaryStart = jump;
+                }
+                item.rowStart = clampOzLine(primaryStart);
+                matrix.markArea(item.columnStart, item.rowStart, item.columnSpan, item.rowSpan, false, true);
             }
         }
 
-        // Step 3: Place items with secondary axis NOT definite (in DOM order)
-        // This includes items with only primary axis definite, and fully auto items
-        // For row flow: secondary=row, so process items where row is NOT definite
-        // For column flow: secondary=column, so process items where column is NOT definite
-        int autoPrimaryIdx = 0;  // Current position in primary axis
-        int autoSecondaryIdx = 0;  // Current position in secondary axis
+        // Step 3/4: Position the remaining items (secondary axis indefinite) in document order.
+        int primaryStartLine = matrix.implicitStartLine(isRowFlow);
+        int secondaryStartLine = matrix.implicitStartLine(!isRowFlow);
+        int primaryIdx = primaryStartLine;
+        int secondaryIdx = secondaryStartLine;
 
         for (GridItem item : items) {
-            if (item.columnStart != null && item.rowStart != null) {
-                // Already positioned
-                continue;
+            boolean secondaryDefinite = isRowFlow ? item.rowStart != null : item.columnStart != null;
+            if (secondaryDefinite) {
+                continue; // Already placed in steps 1-2
             }
 
-            // Check if secondary axis is already definite (already handled in step 2)
-            if (isRowFlow && item.rowStart != null) {
-                continue; // Row is definite, was handled in step 2
-            }
-            if (!isRowFlow && item.columnStart != null) {
-                continue; // Column is definite, was handled in step 2
-            }
+            int primarySpanCount = isRowFlow ? item.columnSpan : item.rowSpan;
+            int secondarySpanCount = isRowFlow ? item.rowSpan : item.columnSpan;
+            boolean primaryDefinite = isRowFlow ? item.columnStart != null : item.rowStart != null;
 
-            int colSpan = item.columnSpan;
-            int rowSpan = item.rowSpan;
+            int placedPrimaryStart;
+            int placedSecondaryStart;
 
-            // For row flow: primary axis = column
-            // For column flow: primary axis = row
-            if (isRowFlow) {
-                // Check if primary (column) is definite
-                if (item.columnStart != null) {
-                    // Primary (column) definite, secondary (row) auto
-                    int colStartOz = item.columnStart;
-                    int[] result = matrix.findEmptyAreaInColumn(colStartOz, colSpan, rowSpan);
-                    if (result != null) {
-                        item.rowStart = result[0];
-                        matrix.markArea(colStartOz, item.rowStart, colSpan, rowSpan);
-                    } else {
-                        // Expand grid and place at end
-                        item.rowStart = matrix.rowCounts.positiveImplicitEndLine();
-                        matrix.markArea(colStartOz, item.rowStart, colSpan, rowSpan);
-                    }
-                } else {
-                    // Fully auto - search row by row, column by column
-                    // For row flow: iterate columns first (primary), then rows (secondary)
-                    int startRow = isDense ? 0 : autoSecondaryIdx;
-                    int startCol = isDense ? 0 : autoPrimaryIdx;
-
-                    int[] result = matrix.findEmptyArea(isRowFlow, startCol, startRow, colSpan, rowSpan, isDense);
-                    if (result != null) {
-                        item.columnStart = result[0];
-                        item.rowStart = result[1];
-                        matrix.markArea(item.columnStart, item.rowStart, colSpan, rowSpan);
-                        if (!isDense) {
-                            // Update cursor - for row flow, advance along columns then rows
-                            autoPrimaryIdx = result[0] + colSpan;
-                            autoSecondaryIdx = result[1];
-                            if (autoPrimaryIdx >= matrix.colCounts.len()) {
-                                autoPrimaryIdx = 0;
-                                autoSecondaryIdx++;
-                            }
-                        }
-                    } else {
-                        // Place at new row at end of grid
-                        int newRowStart = matrix.rowCounts.positiveImplicitEndLine();
-                        item.columnStart = 0;
-                        item.rowStart = newRowStart;
-                        matrix.markArea(item.columnStart, item.rowStart, colSpan, rowSpan);
-                        if (!isDense) {
-                            autoPrimaryIdx = colSpan;
-                            autoSecondaryIdx = newRowStart;
-                            if (autoPrimaryIdx >= matrix.colCounts.len()) {
-                                autoPrimaryIdx = 0;
-                                autoSecondaryIdx++;
-                            }
-                        }
-                    }
+            if (primaryDefinite) {
+                // The primary axis position is definite, so the search walks the secondary axis.
+                placedPrimaryStart = isRowFlow ? item.columnStart : item.rowStart;
+                if (!isDense && placedPrimaryStart < primaryIdx) {
+                    // Sparse packing: an item before the current primary position moves on to the
+                    // next secondary track (upstream #1263).
+                    secondaryIdx = saturatingAdd(secondaryIdx, 1);
                 }
+                while (true) {
+                    int secondaryEnd = clampOzLine((long) secondaryIdx + secondarySpanCount);
+                    int primaryEnd = clampOzLine((long) placedPrimaryStart + primarySpanCount);
+                    // The search's primary axis is the item's secondary axis, and the item's
+                    // definite primary span is the search's secondary span.
+                    int jump = matrix.lineAreaCollisionJump(!isRowFlow,
+                        secondaryIdx, secondaryEnd, placedPrimaryStart, primaryEnd);
+                    if (jump == NO_COLLISION) {
+                        break;
+                    }
+                    secondaryIdx = jump;
+                }
+                placedSecondaryStart = clampOzLine(secondaryIdx);
             } else {
-                // Column flow: primary axis = row
-                if (item.rowStart != null) {
-                    // Primary (row) definite, secondary (column) auto
-                    int rowStartOz = item.rowStart;
-                    int[] result = matrix.findEmptyAreaInRow(rowStartOz, colSpan, rowSpan);
-                    if (result != null) {
-                        item.columnStart = result[0];
-                        matrix.markArea(item.columnStart, rowStartOz, colSpan, rowSpan);
-                    } else {
-                        // Expand grid and place at end
-                        item.columnStart = matrix.colCounts.positiveImplicitEndLine();
-                        matrix.markArea(item.columnStart, rowStartOz, colSpan, rowSpan);
-                    }
-                } else {
-                    // Fully auto - for column flow: iterate rows first (primary), then columns (secondary)
-                    int startCol = isDense ? 0 : autoSecondaryIdx;
-                    int startRow = isDense ? 0 : autoPrimaryIdx;
-
-                    int[] result = matrix.findEmptyArea(isRowFlow, startCol, startRow, colSpan, rowSpan, isDense);
-                    if (result != null) {
-                        item.columnStart = result[0];
-                        item.rowStart = result[1];
-                        matrix.markArea(item.columnStart, item.rowStart, colSpan, rowSpan);
-                        if (!isDense) {
-                            // Update cursor - for column flow, advance along rows then columns
-                            autoPrimaryIdx = result[1] + rowSpan;
-                            autoSecondaryIdx = result[0];
-                            if (autoPrimaryIdx >= matrix.rowCounts.len()) {
-                                autoPrimaryIdx = 0;
-                                autoSecondaryIdx++;
-                            }
+                // Both axes indefinite: walk the primary axis, wrapping to the next secondary track
+                // once the primary span leaves the implicit grid.
+                boolean spansAllPrimaryTracks = primarySpanCount >= matrix.primaryTrackCount(isRowFlow);
+                while (true) {
+                    int primaryEnd = clampOzLine((long) primaryIdx + primarySpanCount);
+                    int secondaryEnd = clampOzLine((long) secondaryIdx + secondarySpanCount);
+                    if (primaryEnd > matrix.primaryImplicitEndLine(isRowFlow)) {
+                        if (primaryIdx == primaryStartLine) {
+                            // The span cannot fit even at the grid start (the limited-grid clamping
+                            // truncated the grid): place it here and let track clamping truncate
+                            // the placement.
+                            break;
                         }
-                    } else {
-                        // Place at new column at end of grid
-                        int newColStart = matrix.colCounts.positiveImplicitEndLine();
-                        item.columnStart = newColStart;
-                        item.rowStart = 0;
-                        matrix.markArea(item.columnStart, item.rowStart, colSpan, rowSpan);
-                        if (!isDense) {
-                            autoPrimaryIdx = rowSpan;
-                            autoSecondaryIdx = newColStart;
-                            if (autoPrimaryIdx >= matrix.rowCounts.len()) {
-                                autoPrimaryIdx = 0;
-                                autoSecondaryIdx++;
-                            }
+                        secondaryIdx = saturatingAdd(secondaryIdx, 1);
+                        primaryIdx = primaryStartLine;
+                        continue;
+                    }
+                    if (spansAllPrimaryTracks) {
+                        // An item spanning every primary track only fits in a stripe of entirely
+                        // empty tracks, so jump past every non-empty secondary track.
+                        int jump = matrix.occupiedTrackJump(!isRowFlow, secondaryIdx, secondaryEnd);
+                        if (jump != NO_COLLISION) {
+                            secondaryIdx = jump;
+                            primaryIdx = primaryStartLine;
+                            continue;
                         }
                     }
+                    int jump = matrix.lineAreaCollisionJump(isRowFlow, primaryIdx, primaryEnd,
+                        secondaryIdx, secondaryEnd);
+                    if (jump != NO_COLLISION) {
+                        primaryIdx = jump;
+                        continue;
+                    }
+                    break;
                 }
+                placedPrimaryStart = clampOzLine(primaryIdx);
+                placedSecondaryStart = clampOzLine(secondaryIdx);
+            }
+
+            if (isRowFlow) {
+                item.columnStart = placedPrimaryStart;
+                item.rowStart = placedSecondaryStart;
+                matrix.markArea(item.columnStart, item.rowStart, item.columnSpan, item.rowSpan, true, true);
+            } else {
+                item.rowStart = placedPrimaryStart;
+                item.columnStart = placedSecondaryStart;
+                matrix.markArea(item.columnStart, item.rowStart, item.columnSpan, item.rowSpan, false, true);
+            }
+
+            // Upstream: dense packing resets the search to the grid start; sparse packing continues
+            // after the placed item (the next item starts at the primary end in the same track).
+            if (isDense) {
+                primaryIdx = primaryStartLine;
+                secondaryIdx = secondaryStartLine;
+            } else {
+                primaryIdx = clampOzLine((long) placedPrimaryStart + primarySpanCount);
+                secondaryIdx = placedSecondaryStart;
             }
         }
 
@@ -2594,67 +2780,172 @@ public class GridComputer {
     }
 
     /**
+     * A run of occupied cells within a single track of the cell occupancy matrix (upstream
+     * {@code OccupiedInterval}). The range is in OriginZero line coordinates along the track: for a
+     * row track it spans column lines and for a column track it spans row lines. The intervals of
+     * one track are sorted and disjoint, and touching intervals are merged so that a run of
+     * adjacent occupied cells is stored as one interval (upstream #1015/#1263).
+     */
+    private static final class TrackIntervals {
+        private static final int[] EMPTY = new int[0];
+
+        /** Pairs of (start, end) OriginZero lines, sorted and disjoint. */
+        private int[] ranges = EMPTY;
+        private int intervalCount;
+        /** Furthest end line of an auto-placed item starting in this track, or {@link #NO_CURSOR}. */
+        private int autoPlacementCursor = NO_CURSOR;
+
+        boolean isEmpty() {
+            return intervalCount == 0;
+        }
+
+        /** Add the union of the passed range to the sorted, disjoint interval list. */
+        void paint(int start, int end) {
+            if (start >= end) {
+                return;
+            }
+            if (intervalCount == 0) {
+                push(start, end);
+                return;
+            }
+            // Fast path: the range lies entirely after all existing intervals. This is the common
+            // case because placement queries and paints mostly advance forwards.
+            int lastEnd = ranges[2 * intervalCount - 1];
+            if (lastEnd <= start) {
+                if (lastEnd == start) {
+                    ranges[2 * intervalCount - 1] = end;
+                } else {
+                    push(start, end);
+                }
+                return;
+            }
+
+            // Rare path: rebuild the list, merging every overlapping or touching interval.
+            int[] result = new int[ranges.length + 2];
+            int resultCount = 0;
+            int index = 0;
+            while (index < intervalCount && ranges[2 * index + 1] < start) {
+                result[2 * resultCount] = ranges[2 * index];
+                result[2 * resultCount + 1] = ranges[2 * index + 1];
+                resultCount++;
+                index++;
+            }
+            int mergedStart = start;
+            int mergedEnd = end;
+            while (index < intervalCount && ranges[2 * index] <= mergedEnd) {
+                mergedStart = Math.min(mergedStart, ranges[2 * index]);
+                mergedEnd = Math.max(mergedEnd, ranges[2 * index + 1]);
+                index++;
+            }
+            result[2 * resultCount] = mergedStart;
+            result[2 * resultCount + 1] = mergedEnd;
+            resultCount++;
+            while (index < intervalCount) {
+                result[2 * resultCount] = ranges[2 * index];
+                result[2 * resultCount + 1] = ranges[2 * index + 1];
+                resultCount++;
+                index++;
+            }
+            ranges = result;
+            intervalCount = resultCount;
+        }
+
+        private void push(int start, int end) {
+            if (2 * (intervalCount + 1) > ranges.length) {
+                int[] grown = new int[Math.max(4, ranges.length * 2)];
+                System.arraycopy(ranges, 0, grown, 0, 2 * intervalCount);
+                ranges = grown;
+            }
+            ranges[2 * intervalCount] = start;
+            ranges[2 * intervalCount + 1] = end;
+            intervalCount++;
+        }
+
+        /**
+         * The extremal occupied cell of the interval a forward search along the track collides with
+         * last: the end of the last overlapping interval (upstream #1038 {@code collision_extent}).
+         * Returns {@link #NO_COLLISION} when the range is entirely unoccupied.
+         */
+        int collisionExtent(int rangeStart, int rangeEnd) {
+            for (int index = intervalCount - 1; index >= 0; index--) {
+                int intervalEnd = ranges[2 * index + 1];
+                if (intervalEnd <= rangeStart) {
+                    break;
+                }
+                if (ranges[2 * index] < rangeEnd) {
+                    return intervalEnd - 1;
+                }
+            }
+            return NO_COLLISION;
+        }
+
+        void advanceAutoPlacementCursor(int primaryEnd) {
+            autoPlacementCursor = Math.max(autoPlacementCursor, primaryEnd);
+        }
+    }
+
+    /**
      * A dynamically-expanding cell occupancy matrix for grid auto-placement.
-     * This mirrors Rust's CellOccupancyMatrix behavior.
+     * <p>
+     * Occupancy is stored sparsely as per-track interval lists in both orientations (a row track
+     * keeps the occupied column intervals and a column track the occupied row intervals), so memory
+     * usage is proportional to the number of placed items rather than to the number of grid cells
+     * (upstream #1015). Extending the grid only grows the per-track reference arrays; interval
+     * contents are stored in OriginZero coordinates and therefore do not need to be copied.
+     * <p>
+     * Search helpers mirror upstream: {@link #lineAreaCollisionJump} returns the first primary-axis
+     * position past all colliding intervals (upstream #1038) and {@link #occupiedTrackJump} skips
+     * non-empty secondary tracks for items spanning the whole primary axis. Sparse placement
+     * cursors are stored per secondary track, separately from the occupancy intervals (upstream
+     * #1263).
      */
     private static class CellOccupancyMatrix {
         TrackCounts colCounts;
         TrackCounts rowCounts;
-        boolean[][] cells;  // [row][col] in matrix coordinates
+        /** For each row track: the occupied intervals within that row (in column coordinates). */
+        TrackIntervals[] rowIntervals;
+        /** For each column track: the occupied intervals within that column (in row coordinates). */
+        TrackIntervals[] columnIntervals;
 
         CellOccupancyMatrix(TrackCounts colCounts, TrackCounts rowCounts) {
             this.colCounts = new TrackCounts(colCounts);
             this.rowCounts = new TrackCounts(rowCounts);
-            this.cells = new boolean[rowCounts.len()][colCounts.len()];
+            this.rowIntervals = new TrackIntervals[this.rowCounts.len()];
+            this.columnIntervals = new TrackIntervals[this.colCounts.len()];
+        }
+
+        private TrackIntervals rowTrack(int index) {
+            TrackIntervals intervals = rowIntervals[index];
+            if (intervals == null) {
+                intervals = new TrackIntervals();
+                rowIntervals[index] = intervals;
+            }
+            return intervals;
+        }
+
+        private TrackIntervals columnTrack(int index) {
+            TrackIntervals intervals = columnIntervals[index];
+            if (intervals == null) {
+                intervals = new TrackIntervals();
+                columnIntervals[index] = intervals;
+            }
+            return intervals;
         }
 
         /**
-         * Convert OriginZero column to matrix index.
-         */
-        private int colToIndex(int ozCol) {
-            return colCounts.ozLineToNextTrack(ozCol);
-        }
-
-        /**
-         * Convert OriginZero row to matrix index.
-         */
-        private int rowToIndex(int ozRow) {
-            return rowCounts.ozLineToNextTrack(ozRow);
-        }
-
-        /**
-         * Convert matrix column index to OriginZero.
-         */
-        private int indexToCol(int idx) {
-            return colCounts.trackToOzLine(idx);
-        }
-
-        /**
-         * Convert matrix row index to OriginZero.
-         */
-        private int indexToRow(int idx) {
-            return rowCounts.trackToOzLine(idx);
-        }
-
-        /**
-         * Expand the matrix to fit the given OriginZero range.
-         * <p>
-         * The expansion is clamped into the limited grid (GR-05 / #986): the number of leading
-         * implicit tracks is capped at {@link #MAX_GRID_TRACKS} and the explicit + trailing implicit
-         * tracks are capped at {@link #MAX_OZ_LINE}, so {@link TrackCounts} derived from the matrix
-         * always describe lines within {@code [MIN_OZ_LINE, MAX_OZ_LINE]}.
+         * Expand the track lists (potentially in all four directions) so that the passed area fits.
+         * The expansion is clamped into the limited grid (GR-05 / #986) so that pathological
+         * placements cannot allocate an unbounded number of tracks.
          */
         private void expandToFit(int ozColStart, int ozRowStart, int colSpan, int rowSpan) {
             long ozColEnd = (long) ozColStart + colSpan;
             long ozRowEnd = (long) ozRowStart + rowSpan;
 
-            // Calculate required expansion
             int reqNegCols = (int) Math.max(-(long) ozColStart - colCounts.negativeImplicit, 0);
             int reqPosCols = (int) Math.max(ozColEnd - (colCounts.explicit + colCounts.positiveImplicit), 0);
             int reqNegRows = (int) Math.max(-(long) ozRowStart - rowCounts.negativeImplicit, 0);
             int reqPosRows = (int) Math.max(ozRowEnd - (rowCounts.explicit + rowCounts.positiveImplicit), 0);
 
-            // Clamp the expansion into the limited grid
             reqNegCols = Math.min(reqNegCols, Math.max(0, MAX_GRID_TRACKS - colCounts.negativeImplicit));
             reqNegRows = Math.min(reqNegRows, Math.max(0, MAX_GRID_TRACKS - rowCounts.negativeImplicit));
             reqPosCols = Math.min(reqPosCols,
@@ -2663,137 +2954,148 @@ public class GridComputer {
                 Math.max(0, MAX_OZ_LINE - (rowCounts.explicit + rowCounts.positiveImplicit)));
 
             if (reqNegCols == 0 && reqPosCols == 0 && reqNegRows == 0 && reqPosRows == 0) {
-                return;  // No expansion needed
+                return; // No expansion needed
             }
 
-            int oldNumCols = colCounts.len();
-            int oldNumRows = rowCounts.len();
-            int newNumCols = oldNumCols + reqNegCols + reqPosCols;
-            int newNumRows = oldNumRows + reqNegRows + reqPosRows;
-
-            boolean[][] newCells = new boolean[newNumRows][newNumCols];
-
-            // Copy old cells to new matrix, offset by negative expansions
-            for (int r = 0; r < oldNumRows; r++) {
-                if (oldNumCols >= 0)
-                    System.arraycopy(cells[r], 0, newCells[r + reqNegRows], reqNegCols, oldNumCols);
-            }
-
-            cells = newCells;
+            rowIntervals = expandTrackList(rowIntervals, reqNegRows, reqPosRows);
+            columnIntervals = expandTrackList(columnIntervals, reqNegCols, reqPosCols);
             colCounts.negativeImplicit += reqNegCols;
             colCounts.positiveImplicit += reqPosCols;
             rowCounts.negativeImplicit += reqNegRows;
             rowCounts.positiveImplicit += reqPosRows;
         }
 
+        private static TrackIntervals[] expandTrackList(TrackIntervals[] tracks, int negative, int positive) {
+            if (negative == 0 && positive == 0) {
+                return tracks;
+            }
+            TrackIntervals[] expanded = new TrackIntervals[tracks.length + negative + positive];
+            System.arraycopy(tracks, 0, expanded, negative, tracks.length);
+            return expanded;
+        }
+
         /**
-         * Mark an area as occupied, expanding the matrix if needed.
-         * <p>
-         * The marked range is clamped to the matrix bounds so that a placement that was clamped
-         * into the limited grid (and therefore lies partially outside the matrix) cannot write out
-         * of bounds.
+         * Mark an area as occupied, expanding the track lists when needed. For auto-placed items
+         * the sparse cursor of the starting secondary track advances to the item's primary end
+         * (upstream #1263); definitely placed items do not advance any cursor.
          */
-        void markArea(int ozColStart, int ozRowStart, int colSpan, int rowSpan) {
+        void markArea(int ozColStart, int ozRowStart, int colSpan, int rowSpan,
+                      boolean isRowFlow, boolean autoPlaced) {
             expandToFit(ozColStart, ozRowStart, colSpan, rowSpan);
 
-            int colIdx = colToIndex(ozColStart);
-            int rowIdx = rowToIndex(ozRowStart);
+            // Clamp the marked range to the tracks that actually exist so that a placement clamped
+            // into the limited grid cannot write outside the track arrays.
+            int colStartIndex = Math.max(0, colCounts.ozLineToNextTrack(ozColStart));
+            int rowStartIndex = Math.max(0, rowCounts.ozLineToNextTrack(ozRowStart));
+            int colEndIndex = Math.min(columnIntervals.length,
+                (int) Math.min(Integer.MAX_VALUE, (long) colCounts.ozLineToNextTrack(ozColStart) + colSpan));
+            int rowEndIndex = Math.min(rowIntervals.length,
+                (int) Math.min(Integer.MAX_VALUE, (long) rowCounts.ozLineToNextTrack(ozRowStart) + rowSpan));
+            if (colStartIndex >= colEndIndex || rowStartIndex >= rowEndIndex) {
+                return;
+            }
 
-            int numCols = cells.length == 0 ? 0 : cells[0].length;
-            int numRows = cells.length;
-            int colEnd = Math.min(numCols, (int) Math.min(Integer.MAX_VALUE, (long) colIdx + colSpan));
-            int rowEnd = Math.min(numRows, (int) Math.min(Integer.MAX_VALUE, (long) rowIdx + rowSpan));
+            int colOzStart = colCounts.trackToOzLine(colStartIndex);
+            int colOzEnd = colCounts.trackToOzLine(colEndIndex - 1) + 1;
+            int rowOzStart = rowCounts.trackToOzLine(rowStartIndex);
+            int rowOzEnd = rowCounts.trackToOzLine(rowEndIndex - 1) + 1;
 
-            for (int r = Math.max(0, rowIdx); r < rowEnd; r++) {
-                for (int c = Math.max(0, colIdx); c < colEnd; c++) {
-                    cells[r][c] = true;
+            if (autoPlaced) {
+                if (isRowFlow) {
+                    int end = clampOzLine((long) ozColStart + colSpan);
+                    rowTrack(rowStartIndex).advanceAutoPlacementCursor(end);
+                } else {
+                    int end = clampOzLine((long) ozRowStart + rowSpan);
+                    columnTrack(colStartIndex).advanceAutoPlacementCursor(end);
                 }
+            }
+
+            for (int row = rowStartIndex; row < rowEndIndex; row++) {
+                rowTrack(row).paint(colOzStart, colOzEnd);
+            }
+            for (int column = colStartIndex; column < colEndIndex; column++) {
+                columnTrack(column).paint(rowOzStart, rowOzEnd);
             }
         }
 
-        /**
-         * Check if an area is available (all cells unoccupied).
-         */
-        private boolean isAreaAvailable(int colIdx, int rowIdx, int colSpan, int rowSpan) {
-            int numCols = colCounts.len();
-            int numRows = rowCounts.len();
+        /** The start line of the implicit grid along the flow's primary axis. */
+        int implicitStartLine(boolean isRowFlow) {
+            return (isRowFlow ? colCounts : rowCounts).implicitStartLine();
+        }
 
-            if (colIdx < 0 || rowIdx < 0 || colIdx + colSpan > numCols || rowIdx + rowSpan > numRows) {
-                return false;
-            }
+        /** The end line of the implicit grid along the flow's primary axis. */
+        int primaryImplicitEndLine(boolean isRowFlow) {
+            return (isRowFlow ? colCounts : rowCounts).implicitEndLine();
+        }
 
-            for (int r = rowIdx; r < rowIdx + rowSpan; r++) {
-                for (int c = colIdx; c < colIdx + colSpan; c++) {
-                    if (cells[r][c]) return false;
-                }
-            }
-            return true;
+        /** The number of tracks along the flow's primary axis. */
+        int primaryTrackCount(boolean isRowFlow) {
+            return (isRowFlow ? colCounts : rowCounts).len();
         }
 
         /**
-         * Find an empty area in a specific row (for items with definite row).
-         * Returns [ozColStart] or null if not found within current grid.
+         * The sparse placement cursor of the secondary-axis track starting at the passed line, or
+         * {@link #NO_CURSOR} when no auto-placed item starts there (upstream #1263
+         * {@code auto_placement_cursor}).
          */
-        int[] findEmptyAreaInRow(int ozRowStart, int colSpan, int rowSpan) {
-            int rowIdx = rowToIndex(ozRowStart);
-            int numCols = colCounts.len();
-
-            for (int c = 0; c <= numCols - colSpan; c++) {
-                if (isAreaAvailable(c, rowIdx, colSpan, rowSpan)) {
-                    return new int[]{indexToCol(c)};
-                }
+        int autoPlacementCursor(boolean isRowFlow, int secondaryStart) {
+            TrackIntervals[] tracks = isRowFlow ? rowIntervals : columnIntervals;
+            TrackCounts counts = isRowFlow ? rowCounts : colCounts;
+            int index = counts.ozLineToNextTrack(secondaryStart);
+            if (index < 0 || index >= tracks.length || tracks[index] == null) {
+                return NO_CURSOR;
             }
-            return null;
+            return tracks[index].autoPlacementCursor;
         }
 
         /**
-         * Find an empty area in a specific column (for items with definite column).
-         * Returns [ozRowStart] or null if not found within current grid.
+         * Check an area for occupied cells and return the next primary-axis search position that is
+         * not guaranteed to collide, or {@link #NO_COLLISION} when the area is entirely free
+         * (upstream #1038 {@code line_area_collision_jump}). The jump is past the end of the last
+         * colliding interval rather than just past the queried area, which is what keeps the search
+         * linear in the number of occupied intervals instead of quadratic in the track count.
          */
-        int[] findEmptyAreaInColumn(int ozColStart, int colSpan, int rowSpan) {
-            int colIdx = colToIndex(ozColStart);
-            int numRows = rowCounts.len();
-
-            for (int r = 0; r <= numRows - rowSpan; r++) {
-                if (isAreaAvailable(colIdx, r, colSpan, rowSpan)) {
-                    return new int[]{indexToRow(r)};
+        int lineAreaCollisionJump(boolean isRowFlow, int primaryStart, int primaryEnd,
+                                  int secondaryStart, int secondaryEnd) {
+            TrackIntervals[] tracks = isRowFlow ? rowIntervals : columnIntervals;
+            TrackCounts counts = isRowFlow ? rowCounts : colCounts;
+            int start = Math.max(0, counts.ozLineToNextTrack(secondaryStart));
+            int end = Math.min(tracks.length, counts.ozLineToNextTrack(secondaryEnd));
+            int extent = NO_COLLISION;
+            for (int index = start; index < end; index++) {
+                TrackIntervals intervals = tracks[index];
+                if (intervals == null) {
+                    continue;
                 }
+                int cell = intervals.collisionExtent(primaryStart, primaryEnd);
+                if (cell == NO_COLLISION) {
+                    continue;
+                }
+                extent = (extent == NO_COLLISION) ? cell : Math.max(extent, cell);
             }
-            return null;
+            return extent == NO_COLLISION ? NO_COLLISION : extent + 1;
         }
 
         /**
-         * Find an empty area for auto-placement.
-         * Returns [ozColStart, ozRowStart] or null if not found within current grid.
+         * The next position past every non-empty track in the passed span, or {@link #NO_COLLISION}
+         * when all of them are empty (upstream #1038 {@code occupied_track_jump}). Items spanning
+         * every track of one axis can only be placed in a stripe of entirely empty tracks on the
+         * other axis.
+         *
+         * @param axisIsHorizontal true to inspect the column tracks, false to inspect the row tracks
          */
-        int[] findEmptyArea(boolean isRowFlow, int startCol, int startRow, int colSpan, int rowSpan, boolean isDense) {
-            int numCols = colCounts.len();
-            int numRows = rowCounts.len();
-
-            if (isRowFlow) {
-                // Row flow: iterate rows (secondary), then columns (primary)
-                int rowStart = isDense ? 0 : startRow;
-                for (int r = rowStart; r <= numRows - rowSpan; r++) {
-                    int colStart = (r == startRow && !isDense) ? startCol : 0;
-                    for (int c = colStart; c <= numCols - colSpan; c++) {
-                        if (isAreaAvailable(c, r, colSpan, rowSpan)) {
-                            return new int[]{indexToCol(c), indexToRow(r)};
-                        }
-                    }
-                }
-            } else {
-                // Column flow: iterate columns (secondary), then rows (primary)
-                int colStart = isDense ? 0 : startCol;
-                for (int c = colStart; c <= numCols - colSpan; c++) {
-                    int rowStart = (c == startCol && !isDense) ? startRow : 0;
-                    for (int r = rowStart; r <= numRows - rowSpan; r++) {
-                        if (isAreaAvailable(c, r, colSpan, rowSpan)) {
-                            return new int[]{indexToCol(c), indexToRow(r)};
-                        }
-                    }
+        int occupiedTrackJump(boolean axisIsHorizontal, int secondaryStart, int secondaryEnd) {
+            TrackIntervals[] tracks = axisIsHorizontal ? columnIntervals : rowIntervals;
+            TrackCounts counts = axisIsHorizontal ? colCounts : rowCounts;
+            int start = Math.max(0, counts.ozLineToNextTrack(secondaryStart));
+            int end = Math.min(tracks.length, counts.ozLineToNextTrack(secondaryEnd));
+            for (int index = end - 1; index >= start; index--) {
+                TrackIntervals intervals = tracks[index];
+                if (intervals != null && !intervals.isEmpty()) {
+                    return counts.trackToOzLine(index) + 1;
                 }
             }
-            return null;
+            return NO_COLLISION;
         }
     }
 
@@ -5058,6 +5360,8 @@ public class GridComputer {
         TaffyStyle containerStyle,
         TrackCounts colCounts,
         TrackCounts rowCounts,
+        AxisGeometry columnGeometry,
+        AxisGeometry rowGeometry,
         boolean isRtl,
         FloatPoint paddingBoxOrigin,
         ScrollableOverflowUtil.Container overflowContainer) {
@@ -5067,34 +5371,17 @@ public class GridComputer {
         int numColumns = columnSizes.size();
         int numRows = rowSizes.size();
 
-        // Count non-collapsed tracks (size > 0) for alignment calculations
-        // Collapsed tracks (from auto-fit) don't participate in content alignment
-        int nonCollapsedColumns = 0;
-        for (float colSize : columnSizes) {
-            if (colSize > 0) nonCollapsedColumns++;
-        }
-        int nonCollapsedRows = 0;
-        for (float rowSize : rowSizes) {
-            if (rowSize > 0) nonCollapsedRows++;
-        }
+        // Count collapsed tracks for alignment calculations (GR-07 / upstream #946)
+        int nonCollapsedColumns = columnGeometry.nonCollapsedTrackCount();
+        int nonCollapsedRows = rowGeometry.nonCollapsedTrackCount();
 
         // Default alignment from container
         AlignItems defaultAlignItems = containerStyle.getAlignItems();
         AlignItems defaultJustifyItems = containerStyle.justifyItems;
 
-        // Calculate total track sizes (only non-collapsed tracks contribute to used space)
-        float totalColumnSize = 0;
-        for (float colSize : columnSizes) {
-            totalColumnSize += colSize;
-        }
-        // Only count gaps between non-collapsed tracks
-        totalColumnSize += gap.width * Math.max(0, nonCollapsedColumns - 1);
-
-        float totalRowSize = 0;
-        for (float rowSize : rowSizes) {
-            totalRowSize += rowSize;
-        }
-        totalRowSize += gap.height * Math.max(0, nonCollapsedRows - 1);
+        // Used track sizes (collapsed tracks contribute neither a size nor a surviving gutter)
+        float totalColumnSize = columnGeometry.usedSize(columnSizes, gap.width);
+        float totalRowSize = rowGeometry.usedSize(rowSizes, gap.height);
 
         // Calculate free space for content alignment (can be negative)
         float innerWidth = !Float.isNaN(nodeInnerSize.width) ? nodeInnerSize.width : totalColumnSize;
@@ -5148,102 +5435,23 @@ public class GridComputer {
             if (colSpan < 1) colSpan = 1;
             if (rowSpan < 1) rowSpan = 1;
 
-            // Track size (available space for item) - sum of spanned tracks plus gaps between them
-            // Only add gaps between non-collapsed tracks
-            float trackWidth = 0;
-            boolean firstNonCollapsedInSpan = true;
-            for (int c = 0; c < colSpan; c++) {
-                if (col + c < numColumns) {
-                    float colSize = columnSizes.getFloat(col + c);
-                    if (colSize > 0) {
-                        if (!firstNonCollapsedInSpan) {
-                            trackWidth += adjustedGapX;
-                        }
-                        trackWidth += colSize;
-                        firstNonCollapsedInSpan = false;
-                    }
-                }
-            }
+            // Track size (available space for item): sum of the spanned tracks plus the surviving
+            // gutters between them. Items are never placed in a collapsed track (their occupancy is
+            // what keeps a track from collapsing), so only the gutters inside the span are counted.
+            float trackWidth = columnGeometry.trackSpanSize(columnSizes, col, colSpan, adjustedGapX);
+            float trackHeight = rowGeometry.trackSpanSize(rowSizes, row, rowSpan, adjustedGapY);
 
-            // Get track position with content alignment offset
-            // Only add gap after non-collapsed tracks
-            // For RTL, column indices are logical (counting from inline-start), so we mirror the x-coordinate.
+            // Track position with content alignment offset. For RTL, column indices are logical
+            // (counting from inline-start), so the x-coordinate is mirrored.
+            float trackY = contentBoxInset.top + contentOffsetY
+                           + rowGeometry.trackStart(rowSizes, row, adjustedGapY);
             float trackX;
             if (isRtl) {
-                // Offset of this track area from inline-start (which is the right edge in RTL)
-                float startOffset = 0;
-                boolean prevColNonCollapsed = false;
-                for (int c = 0; c < col; c++) {
-                    float colSize = columnSizes.getFloat(c);
-                    boolean isNonCollapsed = colSize > 0;
-                    if (isNonCollapsed && prevColNonCollapsed) {
-                        startOffset += adjustedGapX;
-                    }
-                    startOffset += colSize;
-                    if (isNonCollapsed) {
-                        prevColNonCollapsed = true;
-                    }
-                }
-                if (col < numColumns && columnSizes.getFloat(col) > 0 && prevColNonCollapsed) {
-                    startOffset += adjustedGapX;
-                }
-
-                // Mirror into left-origin coordinates
-                // For RTL, contentOffsetX represents offset from inline-end (left edge),
-                // so we subtract it from the right side calculation
-                trackX = contentBoxInset.left + (innerWidth - contentOffsetX - startOffset - trackWidth);
+                trackX = contentBoxInset.left + (innerWidth - contentOffsetX
+                         - columnGeometry.trackStart(columnSizes, col, adjustedGapX) - trackWidth);
             } else {
-                // LTR: Calculate from left edge (original logic)
-                trackX = contentBoxInset.left + contentOffsetX;
-                boolean prevColNonCollapsed = false;
-                for (int c = 0; c < col; c++) {
-                    float colSize = columnSizes.getFloat(c);
-                    boolean isNonCollapsed = colSize > 0;
-                    // Add gap before this track if both previous and current are non-collapsed
-                    if (isNonCollapsed && prevColNonCollapsed) {
-                        trackX += adjustedGapX;
-                    }
-                    trackX += colSize;
-                    if (isNonCollapsed) {
-                        prevColNonCollapsed = true;
-                    }
-                }
-                // Add initial offset if the item's column is non-collapsed and there were previous non-collapsed columns
-                if (col < numColumns && columnSizes.getFloat(col) > 0 && prevColNonCollapsed) {
-                    trackX += adjustedGapX;
-                }
-            }
-
-            float trackY = contentBoxInset.top + contentOffsetY;
-            boolean prevRowNonCollapsed = false;
-            for (int r = 0; r < row; r++) {
-                float rowSize = rowSizes.getFloat(r);
-                boolean isNonCollapsed = rowSize > 0;
-                if (isNonCollapsed && prevRowNonCollapsed) {
-                    trackY += adjustedGapY;
-                }
-                trackY += rowSize;
-                if (isNonCollapsed) {
-                    prevRowNonCollapsed = true;
-                }
-            }
-            if (row < numRows && rowSizes.getFloat(row) > 0 && prevRowNonCollapsed) {
-                trackY += adjustedGapY;
-            }
-
-            float trackHeight = 0;
-            firstNonCollapsedInSpan = true;
-            for (int r = 0; r < rowSpan; r++) {
-                if (row + r < numRows) {
-                    float rowSize = rowSizes.getFloat(row + r);
-                    if (rowSize > 0) {
-                        if (!firstNonCollapsedInSpan) {
-                            trackHeight += adjustedGapY;
-                        }
-                        trackHeight += rowSize;
-                        firstNonCollapsedInSpan = false;
-                    }
-                }
+                trackX = contentBoxInset.left + contentOffsetX
+                         + columnGeometry.trackStart(columnSizes, col, adjustedGapX);
             }
 
             // The grid area is the item's positioning rectangle and, for a grid item, also its
