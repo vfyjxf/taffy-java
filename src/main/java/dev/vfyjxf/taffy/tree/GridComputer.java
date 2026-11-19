@@ -2773,7 +2773,6 @@ public class GridComputer {
                                   ? availableGridWidth - gap.width * (numColumns - 1)
                                   : 0);
 
-        float totalFr = 0f;  // Sum of all fr values
         float usedSpace = 0;
         IntList frTrackIndices = new IntArrayList();  // Track which indices have fr
         FloatList frValues = new FloatArrayList();  // Store fr values
@@ -2824,7 +2823,6 @@ public class GridComputer {
             }
 
             if (track != null && track.isFr()) {
-                totalFr += track.getFrValue();  // Accumulate fr values
                 frTrackIndices.add(i);
                 frValues.add(track.getFrValue());
                 sizes.add(0f); // Will be resolved later
@@ -2836,10 +2834,14 @@ public class GridComputer {
                 TrackSizingFunction minF = track.getMinFunc();
                 TrackSizingFunction maxF = track.getMaxFunc();
                 if (maxF != null && maxF.isFr()) {
-                    totalFr += maxF.getFrValue();
                     frTrackIndices.add(i);
                     frValues.add(maxF.getFrValue());
-                    sizes.add(0f);
+                    // Initialise the base size from the min track sizing function (CSS Grid 11.4):
+                    // a fixed min is its definite value, an intrinsic min starts at zero and is
+                    // filled in by the intrinsic/contingent contribution passes.
+                    float frBase = (minF != null && minF.isFixed())
+                                   ? Math.max(0f, minF.getFixedValue().resolveOrZero(nodeInnerSize.width)) : 0f;
+                    sizes.add(frBase);
                 } else if (minF != null && minF.isFixed() && maxF != null && maxF.isFixed()) {
                     // minmax(fixed, fixed) - start at min, can grow to max
                     float minSize = minF.getFixedValue().resolveOrZero(nodeInnerSize.width);
@@ -2890,220 +2892,6 @@ public class GridComputer {
                     float size = resolveTrackSize(track, nodeInnerSize.width);
                     sizes.add(size);
                     usedSpace += size;
-                }
-            }
-        }
-
-        // Handle fr tracks (including 0fr which behave like auto for base size)
-        if (!frTrackIndices.isEmpty()) {
-            // Step 1: Calculate base sizes for fr tracks based on item content (fr = minmax(auto, Nfr))
-            // For items in fr tracks, their minimum/min-content contribution sets the track base size
-            FloatList frBaseSizes = new FloatArrayList();
-            for (int idx = 0; idx < frTrackIndices.size(); idx++) {
-                frBaseSizes.add(0f);
-            }
-
-            // Calculate base sizes from span=1 items in fr tracks
-            for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
-                GridItem item = items.get(itemIdx);
-                int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
-                int span = item.columnSpan;
-
-                if (span == 1 && frTrackIndices.contains(col)) {
-                    int frIdx = frTrackIndices.indexOf(col);
-                    // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
-                    FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
-                    float minContribution;
-                    if (!Float.isNaN(item.size.width)) {
-                        minContribution = item.size.width + marginAxisSums.width;
-                    } else {
-                        // Estimate row height for aspect-ratio resolution
-                        float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
-
-                        // Use cached contribution - key optimization!
-                        // Note: getMinContentContributionWidthCached already includes margin, so don't add again
-                        FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                        minContribution = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
-                    }
-                    frBaseSizes.set(frIdx, Math.max(frBaseSizes.getFloat(frIdx), minContribution));
-                }
-            }
-
-            // Set initial fr track sizes to their base sizes
-            for (int idx = 0; idx < frTrackIndices.size(); idx++) {
-                int i = frTrackIndices.getInt(idx);
-                sizes.set(i, frBaseSizes.getFloat(idx));
-            }
-
-            // 11.6 Maximise Tracks: Before expanding flexible tracks, grow non-flex tracks to their growth limits
-            // This ensures tracks like minmax(20px, 40px) are maximized before fr tracks get remaining space
-            if (!Float.isNaN(nodeInnerSize.width)) {
-                float currentUsed = 0f;
-                for (int i = 0; i < sizes.size(); i++) {
-                    float s = sizes.getFloat(i);
-                    if (!Float.isNaN(s)) currentUsed += s;
-                }
-                float freeSpace = availableWidth - currentUsed;
-                if (freeSpace > 0) {
-                    // Find non-flex tracks that can grow (have finite growth limits > base size)
-                    IntList growableTracks = new IntArrayList();
-                    for (int i = 0; i < sizes.size(); i++) {
-                        if (!frTrackIndices.contains(i)) {
-                            float limit = growthLimits.getFloat(i);
-                            float size = sizes.getFloat(i);
-                            if (!Float.isNaN(limit) && limit != Float.MAX_VALUE && !Float.isNaN(size) && limit > size) {
-                                growableTracks.add(i);
-                            }
-                        }
-                    }
-                    // Distribute free space to growable tracks up to their limits
-                    while (freeSpace > 0.001f && !growableTracks.isEmpty()) {
-                        float sharePerTrack = freeSpace / growableTracks.size();
-                        float distributed = 0f;
-                        IntList stillGrowable = new IntArrayList();
-                        for (int i = 0; i < growableTracks.size(); i++) {
-                            int idx = growableTracks.getInt(i);
-                            float size = sizes.getFloat(idx);
-                            float limit = growthLimits.getFloat(idx);
-                            float room = limit - size;
-                            float increase = Math.min(sharePerTrack, room);
-                            sizes.set(idx, size + increase);
-                            distributed += increase;
-                            if (size + increase < limit - 0.001f) {
-                                stillGrowable.add(idx);
-                            }
-                        }
-                        freeSpace -= distributed;
-                        growableTracks = stillGrowable;
-                        if (distributed < 0.001f) break;
-                    }
-                    // Update usedSpace after maximise step
-                    usedSpace = 0f;
-                    for (int i = 0; i < sizes.size(); i++) {
-                        if (!frTrackIndices.contains(i)) {
-                            float s = sizes.getFloat(i);
-                            if (!Float.isNaN(s)) usedSpace += s;
-                        }
-                    }
-                }
-            }
-
-            // Only distribute flex space if there are actual fr values > 0
-            if (totalFr > 0 && !Float.isNaN(nodeInnerSize.width)) {
-                // Definite container - use find_size_of_fr algorithm
-                // Available space for fr tracks = total available - fixed track sizes
-                float spaceForFrTracks = availableWidth - usedSpace;
-
-                if (spaceForFrTracks > 0) {
-                    // Find the size of an fr unit using the algorithm from CSS Grid spec
-                    float flexFraction = findSizeOfFrForDefinite(frBaseSizes, frValues, spaceForFrTracks);
-
-                    // Apply: base_size = max(base_size, flex_factor * flex_fraction)
-                    for (int idx = 0; idx < frTrackIndices.size(); idx++) {
-                        int i = frTrackIndices.getInt(idx);
-                        float baseSize = frBaseSizes.getFloat(idx);
-                        float frValue = frValues.getFloat(idx);
-                        float flexSize = frValue * flexFraction;
-                        sizes.set(i, Math.max(baseSize, flexSize));
-                    }
-                }
-            } else if (totalFr > 0) {
-                // Indefinite container (MaxContent) - two-phase process
-
-                // Phase 1: Distribute spanning items' contributions to fr tracks (Step 4 of resolve_intrinsic_track_sizes)
-                // Items that span flex tracks have their contribution distributed proportionally by flex factor
-                for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
-                    GridItem item = items.get(itemIdx);
-                    int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
-                    int span = item.columnSpan;
-
-                    // Check if this item crosses any fr tracks
-                    IntList frTracksInSpan = new IntArrayList();
-                    float spanFrSum = 0f;
-                    for (int c = col; c < col + span && c < numColumns; c++) {
-                        if (frTrackIndices.contains(c)) {
-                            frTracksInSpan.add(c);
-                            int idx = frTrackIndices.indexOf(c);
-                            spanFrSum += frValues.getFloat(idx);
-                        }
-                    }
-
-                    if (!frTracksInSpan.isEmpty()) {
-                        // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
-                        FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
-                        // Get item's contribution (max-content for indefinite sizing)
-                        float itemContribution;
-                        if (!Float.isNaN(item.size.width)) {
-                            itemContribution = item.size.width + marginAxisSums.width;
-                        } else {
-                            // Estimate the height available for this item based on row tracks
-                            float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
-
-                            // Use cached contribution - key optimization!
-                            // Note: getMaxContentContributionWidthCached already includes margin
-                            FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
-                            itemContribution = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
-                        }
-
-                        // Subtract existing track sizes (non-fr tracks in span)
-                        // If track size is null (not yet computed), estimate using min-content of span=1 items
-                        for (int c = col; c < col + span && c < numColumns; c++) {
-                            if (!frTrackIndices.contains(c)) {
-                                float trackSize = sizes.getFloat(c);
-                                if (!Float.isNaN(trackSize)) {
-                                    itemContribution -= trackSize;
-                                } else {
-                                    // Track not yet sized - estimate min-content from span=1 items in this track
-                                    float trackMinContent = estimateTrackMinContent(c, items, numColumns, nodeInnerSize, colCounts);
-                                    itemContribution -= trackMinContent;
-                                }
-                            }
-                        }
-                        // Subtract gaps
-                        if (span > 1) {
-                            itemContribution -= gap.width * (span - 1);
-                        }
-
-                        if (itemContribution > 0 && spanFrSum > 0) {
-                            // Distribute contribution to fr tracks proportionally by flex factor
-                            for (int i = 0; i < frTracksInSpan.size(); i++) {
-                                int c = frTracksInSpan.getInt(i);
-                                int idx = frTrackIndices.indexOf(c);
-                                float frValue = frValues.getFloat(idx);
-                                float share = itemContribution * (frValue / spanFrSum);
-                                frBaseSizes.set(idx, Math.max(frBaseSizes.getFloat(idx), share));
-                            }
-                        }
-                    }
-                }
-
-                // Update fr track sizes to their new base sizes
-                for (int idx = 0; idx < frTrackIndices.size(); idx++) {
-                    int i = frTrackIndices.getInt(idx);
-                    sizes.set(i, frBaseSizes.getFloat(idx));
-                }
-
-                // Phase 2: Calculate flex_fraction based on track base sizes
-                // For each fr track: if flex_factor > 1, use base_size/flex_factor; else use base_size
-                float flexFraction = 0f;
-                for (int idx = 0; idx < frTrackIndices.size(); idx++) {
-                    float baseSize = frBaseSizes.getFloat(idx);
-                    float frValue = frValues.getFloat(idx);
-                    float trackFr;
-                    if (frValue > 1.0f) {
-                        trackFr = baseSize / frValue;
-                    } else {
-                        trackFr = baseSize;
-                    }
-                    flexFraction = Math.max(flexFraction, trackFr);
-                }
-
-                // Phase 3: Apply flex_fraction - each track gets max(base_size, flex_factor * flex_fraction)
-                for (int idx = 0; idx < frTrackIndices.size(); idx++) {
-                    int i = frTrackIndices.getInt(idx);
-                    float baseSize = frBaseSizes.getFloat(idx);
-                    float frValue = frValues.getFloat(idx);
-                    sizes.set(i, Math.max(baseSize, frValue * flexFraction));
                 }
             }
         }
@@ -3414,7 +3202,6 @@ public class GridComputer {
                 IntList minOrMaxContentTracks = new IntArrayList();  // min-content or max-content tracks
                 IntList maxContentTracks = new IntArrayList();  // max-content tracks only
                 IntList autoTracks = new IntArrayList();  // auto tracks (including implicit auto and fr)
-                IntList flexTracks = new IntArrayList();  // fr tracks
                 Int2FloatMap fitContentLimits = new Int2FloatOpenHashMap();  // fit-content track limits
                 fitContentLimits.defaultReturnValue(NaN);
                 boolean crossesFlexTrack = false;  // Whether this item crosses any fr track
@@ -3479,7 +3266,6 @@ public class GridComputer {
 
                     // Flexible tracks - for flex-only distribution (a track is flexible if its MAX sizing function is flexible)
                     if (maxFunc != null && maxFunc.isFlexible()) {
-                        flexTracks.add(c);
                         crossesFlexTrack = true;
                     }
                 }
@@ -3494,24 +3280,11 @@ public class GridComputer {
                     return total + gapsInSpan * gap.width;
                 };
 
-                // CSS Grid spec: If the item spans a track with a flexible sizing function,
-                // its contribution is distributed only to the flexible tracks.
-                // This is because flexible tracks will grow to fill available space in expand_flexible_tracks.
-
-                if (crossesFlexTrack) {
-                    // Item crosses a flex track - distribute only to flex tracks
-                    // Step 2.1, 2.2, 2.3 all distribute to flex tracks only
-                    if (!flexTracks.isEmpty()) {
-                        float currentSpannedSize = getCurrentSpannedSize.get();
-                        float extraNeeded = itemMaxContent - currentSpannedSize;
-                        if (extraNeeded > 0) {
-                            float extraPerTrack = extraNeeded / flexTracks.size();
-                            for (int c : flexTracks) {
-                                sizes.set(c, sizes.getFloat(c) + extraPerTrack);
-                            }
-                        }
-                    }
-                } else {
+                // Items that cross a flexible track are handled after the intrinsic sizing of the
+                // non-flexible tracks by resolveFlexibleTrackContributions (GR-01 / upstream #1019,
+                // #1084): their contributions are distributed only to the affected flexible tracks
+                // and in proportion to the affected flex factors.
+                if (!crossesFlexTrack) {
                     // Item does not cross flex track - normal distribution
 
                     // Step 2.1: For intrinsic minimums
@@ -3622,6 +3395,51 @@ public class GridComputer {
                 }
             }
         }
+
+        // 11.5 Resolve Intrinsic Track Sizes, flexible tracks (GR-01 / upstream #1019, #1084).
+        // Items that cross a flexible track are processed last, after the non-flexible tracks have
+        // received their intrinsic sizes, and their contributions are handed only to the affected
+        // flexible tracks (in proportion to the affected flex factor sum, or equally when that sum is
+        // zero), scaled by min(crossed flex factor sum, 1) and anchored at the spanned inflexible
+        // track sizes with the item's minimum contribution as a floor.
+        List<TrackSizingFunction> resolvedColumnTracks = resolveTrackSizingList(expandedCols, autoColumns, colCounts, numColumns);
+        List<FlexContribution> flexItemContributions = new ArrayList<>();
+        boolean intrinsicWidthConstraint = gridWidthSpace.isMinContent() || gridWidthSpace.isMaxContent();
+        for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+            GridItem item = items.get(itemIdx);
+            if (!item.crossesFlexibleColumn) continue;
+
+            int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
+            int span = item.columnSpan;
+            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
+            float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(
+                item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
+            FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
+
+            float itemMinContent;
+            float itemMaxContent;
+            if (!Float.isNaN(item.size.width)) {
+                itemMinContent = item.size.width + marginAxisSums.width;
+                itemMaxContent = itemMinContent;
+            } else {
+                itemMaxContent = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
+                itemMinContent = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
+            }
+            boolean isScrollContainer = item.overflow != null
+                && (item.overflow.x == Overflow.HIDDEN || item.overflow.x == Overflow.SCROLL || item.overflow.x == Overflow.CLIP);
+            float minimumContribution = minimumContributionWidth(item, itemMinContent, marginAxisSums.width, isScrollContainer);
+            boolean crossesIntrinsic = false;
+            for (int c = col; c < col + span && c < numColumns; c++) {
+                if (trackMinIsIntrinsic(resolvedColumnTracks.get(c))) {
+                    crossesIntrinsic = true;
+                    break;
+                }
+            }
+            flexItemContributions.add(new FlexContribution(col, span, crossesIntrinsic, minimumContribution,
+                itemMinContent, itemMaxContent));
+        }
+        resolveFlexibleTrackContributions(sizes, resolvedColumnTracks, gap.width, flexItemContributions,
+            intrinsicWidthConstraint, availableGridSpace.width.isMaxContent());
 
         // 11.6 Maximise Tracks
         // Per CSS Grid spec: When free space is infinite (MaxContent sizing),
@@ -3797,6 +3615,18 @@ public class GridComputer {
             // For MinContent: do nothing, keep base_size as-is
         }
 
+        // 11.7 Expand Flexible Tracks (GR-01): size the flexible tracks from the resolved base sizes.
+        // Under a definite inner size the tracks fill the container; under an indefinite inner size
+        // the used flex fraction is the maximum of the per-track base/flex term and the result of
+        // finding the size of an fr for each flexible-track-crossing item's max-content contribution.
+        // The content-box min/max correction below then redoes this step against the container's
+        // style min/max size (GR-03 / #1023).
+        float expansionAvailableWidth = Float.isNaN(nodeInnerSize.width)
+                                        ? NaN
+                                        : nodeInnerSize.width - gap.width * Math.max(0, numColumns - 1);
+        expandFlexibleTracks(sizes, gap.width, frTrackIndices, frValues, flexItemContributions,
+            expansionAvailableWidth, gridWidthSpace);
+
         // 11.7 Expand Flexible Tracks: min/max correction (GR-03 / upstream #1023).
         // The flexible track expansion above only sees the container's content. When the container's
         // inner size is indefinite but it has a definite min- or max-size, the expansion has to be
@@ -3873,11 +3703,401 @@ public class GridComputer {
         return sizes;
     }
 
+
+    // === GR-01: flexible (fr) track intrinsic contributions (upstream #1019, #1084) ===
+
     /**
-     * The track sizing algorithm's "find the size of an fr" (CSS Grid 11.7.1) over a complete track
-     * list. Unlike {@link #findSizeOfFrForDefinite}, the base sizes of non-flexible tracks are part
-     * of the space that has to be filled, which matters for the min/max correction of flexible track
-     * expansion ({@code expand_flexible_tracks} in the upstream algorithm).
+     * One grid item's intrinsic size contributions in a single axis, as consumed by the flexible
+     * track contribution pass.
+     *
+     * @param start            first track index spanned by the item
+     * @param span             number of tracks spanned by the item
+     * @param crossesIntrinsic whether the item spans at least one track with an intrinsic min track
+     *                         sizing function (upstream {@code crosses_intrinsic_track})
+     * @param minimum          minimum contribution (outer size, including margins)
+     * @param minContent       min-content contribution (outer size, including margins)
+     * @param maxContent       max-content contribution (outer size, including margins)
+     */
+    private record FlexContribution(int start, int span, boolean crossesIntrinsic,
+                                    float minimum, float minContent, float maxContent) {}
+
+    /** Whether the track's max track sizing function is flexible (upstream {@code is_flexible}). */
+    private static boolean isFlexibleTrack(TrackSizingFunction track) {
+        return track != null && (track.isFr()
+                                 || (track.isMinmax() && track.getMaxFunc() != null && track.getMaxFunc().isFr()));
+    }
+
+    /** The track's flex factor (0 for non-flexible tracks). */
+    private static float flexFactorOf(TrackSizingFunction track) {
+        if (track == null) return 0f;
+        if (track.isFr()) return track.getFrValue();
+        if (track.isMinmax() && track.getMaxFunc() != null && track.getMaxFunc().isFr()) {
+            return track.getMaxFunc().getFrValue();
+        }
+        return 0f;
+    }
+
+    private static TrackSizingFunction trackMinFunction(TrackSizingFunction track) {
+        if (track == null) return null;
+        return track.isMinmax() ? track.getMinFunc() : track;
+    }
+
+    private static TrackSizingFunction trackMaxFunction(TrackSizingFunction track) {
+        if (track == null) return null;
+        return track.isMinmax() ? track.getMaxFunc() : track;
+    }
+
+    /**
+     * Whether the track's min track sizing function is intrinsic (auto, min-content, max-content, or
+     * the auto min implied by a flexible/fit-content track). Mirrors the classification used by the
+     * intrinsic sizing code above.
+     */
+    private static boolean trackMinIsIntrinsic(TrackSizingFunction track) {
+        TrackSizingFunction min = trackMinFunction(track);
+        if (track == null || min == null) return true;
+        return min.isAuto() || min.isMinContent() || min.isMaxContent() || min.isFr() || min.isFitContent();
+    }
+
+    private static boolean trackMinIsMinOrMaxContent(TrackSizingFunction track) {
+        TrackSizingFunction min = trackMinFunction(track);
+        return min != null && (min.isMinContent() || min.isMaxContent());
+    }
+
+    private static boolean trackMinIsMaxContent(TrackSizingFunction track) {
+        TrackSizingFunction min = trackMinFunction(track);
+        return min != null && min.isMaxContent();
+    }
+
+    private static boolean trackMinIsAuto(TrackSizingFunction track) {
+        if (track == null) return true;
+        TrackSizingFunction min = trackMinFunction(track);
+        if (min == null) return true;
+        return min.isAuto() || track.isFr() || track.isFitContent();
+    }
+
+    private static boolean trackMaxIsMinContent(TrackSizingFunction track) {
+        TrackSizingFunction max = trackMaxFunction(track);
+        return max != null && max.isMinContent();
+    }
+
+    /** Whether the track's max track sizing function is auto (implicit tracks behave as auto). */
+    private static boolean trackMaxIsAuto(TrackSizingFunction track) {
+        if (track == null) return true;
+        TrackSizingFunction max = trackMaxFunction(track);
+        return max == null || max.isAuto();
+    }
+
+    /**
+     * Resolve the track sizing function of every track in one axis (explicit tracks from the
+     * template, implicit tracks from grid-auto-*), using the same cycling rules as the initial
+     * sizing pass.
+     */
+    private static List<TrackSizingFunction> resolveTrackSizingList(
+        List<TrackSizingFunction> template,
+        List<TrackSizingFunction> autoTracks,
+        TrackCounts counts,
+        int numTracks) {
+        int autoCount = autoTracks != null ? autoTracks.size() : 0;
+        int explicitStart = counts.negativeImplicit;
+        int explicitEnd = explicitStart + counts.explicit;
+        List<TrackSizingFunction> tracks = new ArrayList<>(Math.max(1, numTracks));
+        for (int i = 0; i < numTracks; i++) {
+            TrackSizingFunction track;
+            if (i >= explicitStart && i < explicitEnd && template != null) {
+                int templateIndex = i - explicitStart;
+                track = templateIndex < template.size() ? template.get(templateIndex) : null;
+            } else if (autoCount > 0) {
+                int implicitIndex;
+                if (i < explicitStart) {
+                    int distanceFromExplicit = explicitStart - i;
+                    implicitIndex = (autoCount - (distanceFromExplicit % autoCount)) % autoCount;
+                } else {
+                    int distanceFromExplicit = i - explicitEnd;
+                    implicitIndex = distanceFromExplicit % autoCount;
+                }
+                track = autoTracks.get(implicitIndex);
+            } else {
+                track = null;
+            }
+            tracks.add(track);
+        }
+        return tracks;
+    }
+
+    /**
+     * The item's minimum contribution in the inline axis (CSS Grid 6.6): the min-content contribution
+     * for the automatic minimum size, the specified min-width when it is definite, and only the
+     * margins for scroll containers (whose automatic minimum size is zero).
+     */
+    private static float minimumContributionWidth(GridItem item, float minContentContribution,
+                                                  float marginWidth, boolean isScrollContainer) {
+        if (!Float.isNaN(item.size.width)) return minContentContribution;
+        // item.minSize is floored at padding+border even for an auto min-size, so only an explicitly
+        // specified (and resolved) min-width replaces the content-based automatic minimum.
+        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.width : null,
+                               item.minSize != null ? item.minSize.width : NaN)) {
+            return Math.max(item.minSize.width + marginWidth, 0f);
+        }
+        if (isScrollContainer) return Math.max(marginWidth, 0f);
+        return minContentContribution;
+    }
+
+    /** Whether the style's min size in one axis is explicitly specified and resolved to a definite value. */
+    private static boolean hasExplicitMinSize(TaffyDimension rawMinSize, float resolvedMinSize) {
+        return rawMinSize != null && !rawMinSize.isAuto() && !Float.isNaN(resolvedMinSize);
+    }
+
+    /**
+     * The item's minimum contribution in the block axis. The Java port measures the block-axis
+     * min-content contribution as the max-content height (the same value for every item it supports:
+     * a block-axis min-content contribution is the content height under a min-content constraint,
+     * which equals the max-content height unless a percentage height or an aspect ratio is involved).
+     */
+    private static float minimumContributionHeight(GridItem item, float contentContribution,
+                                                   float marginHeight, boolean isScrollContainer) {
+        if (!Float.isNaN(item.size.height)) return contentContribution;
+        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.height : null,
+                               item.minSize != null ? item.minSize.height : NaN)) {
+            return Math.max(item.minSize.height + marginHeight, 0f);
+        }
+        if (isScrollContainer) return Math.max(marginHeight, 0f);
+        return contentContribution;
+    }
+
+    /**
+     * CSS Grid 11.5 "Resolve Intrinsic Track Sizes" for items that cross a flexible track
+     * (upstream #1019, #1084).
+     *
+     * <p>Flexible tracks receive intrinsic contributions only from items that cross them, and only
+     * the affected flexible tracks (the ones matching the current step's affected predicate) take
+     * part. Each step computes every item's own extra space against the base sizes at the start of
+     * the step, then applies the per-track maximum of those per-item increases; this matches
+     * upstream's per-item item-incurred increase / planned increase model and makes the result
+     * independent of item order.</p>
+     *
+     * <p>When the item's contribution is content-derived, it is scaled by
+     * {@code min(crossed flex factor sum, 1)} with the spanned inflexible track sizes as the anchor
+     * (CSS Grid 2, 12.5; #1084). Step 1 additionally floors the result at the item's minimum
+     * contribution.</p>
+     *
+     * @param intrinsicConstraint whether the grid container is being sized under a min-/max-content
+     *                            constraint (the scaled minimum-contribution rule only applies then)
+     * @param maxContentConstraint whether the available space is a max-content constraint (step 3
+     *                             only runs then)
+     */
+    private void resolveFlexibleTrackContributions(
+        FloatList sizes,
+        List<TrackSizingFunction> tracks,
+        float gap,
+        List<FlexContribution> items,
+        boolean intrinsicConstraint,
+        boolean maxContentConstraint) {
+        applyFlexibleContributionStep(1, sizes, tracks, gap, items, intrinsicConstraint);
+        applyFlexibleContributionStep(2, sizes, tracks, gap, items, intrinsicConstraint);
+        if (maxContentConstraint) {
+            applyFlexibleContributionStep(3, sizes, tracks, gap, items, intrinsicConstraint);
+        }
+        applyFlexibleContributionStep(4, sizes, tracks, gap, items, intrinsicConstraint);
+    }
+
+    private void applyFlexibleContributionStep(
+        int step,
+        FloatList sizes,
+        List<TrackSizingFunction> tracks,
+        float gap,
+        List<FlexContribution> items,
+        boolean intrinsicConstraint) {
+        float[] plannedIncrease = new float[sizes.size()];
+        for (FlexContribution item : items) {
+            if (step == 1 && !item.crossesIntrinsic()) continue;
+
+            float space;
+            if (step == 1) {
+                if (intrinsicConstraint) {
+                    // Under a min-/max-content constraint: scale the content-derived contribution by
+                    // min(crossed flex factor sum, 1) around the spanned inflexible tracks, and floor
+                    // it at the item's minimum contribution (#1084).
+                    float limitedMinContent = Math.max(item.minContent(), item.minimum());
+                    float inflexibleSizes = 0f;
+                    float crossedFlexFactorSum = 0f;
+                    for (int t = item.start(); t < item.start() + item.span(); t++) {
+                        if (isFlexibleTrack(tracks.get(t))) {
+                            crossedFlexFactorSum += flexFactorOf(tracks.get(t));
+                        } else {
+                            inflexibleSizes += sizes.getFloat(t);
+                        }
+                    }
+                    float scale = Math.min(crossedFlexFactorSum, 1f);
+                    float excess = Math.max(limitedMinContent - inflexibleSizes, 0f);
+                    space = Math.max(item.minimum(), inflexibleSizes + excess * scale);
+                } else {
+                    space = item.minimum();
+                }
+            } else if (step == 2) {
+                space = item.minContent();
+            } else if (step == 3) {
+                // Max-content minimums under a max-content constraint: the same scaling, anchored at
+                // the spanned inflexible tracks rather than at the current base sizes so that this
+                // pass does not compound with the scaling already applied to the minimum contribution.
+                float inflexibleSizes = 0f;
+                float crossedFlexFactorSum = 0f;
+                for (int t = item.start(); t < item.start() + item.span(); t++) {
+                    if (isFlexibleTrack(tracks.get(t))) {
+                        crossedFlexFactorSum += flexFactorOf(tracks.get(t));
+                    } else {
+                        inflexibleSizes += sizes.getFloat(t);
+                    }
+                }
+                float scale = Math.min(crossedFlexFactorSum, 1f);
+                space = inflexibleSizes + Math.max(item.maxContent() - inflexibleSizes, 0f) * scale;
+            } else {
+                space = item.maxContent();
+            }
+
+            if (space <= 0f) continue;
+            distributeFlexibleContribution(step, space, item.start(), item.span(), sizes, tracks, gap, plannedIncrease);
+        }
+
+        // Apply the step's planned increase (the maximum per-track item-incurred increase).
+        for (int t = 0; t < sizes.size(); t++) {
+            if (plannedIncrease[t] > 0f) {
+                sizes.set(t, sizes.getFloat(t) + plannedIncrease[t]);
+            }
+        }
+    }
+
+    /**
+     * Distribute one item's contribution to the affected flexible tracks it spans (upstream
+     * {@code distribute_item_space_to_base_size} with {@code is_flex = true}).
+     *
+     * <p>The free space is the item's contribution minus the current sizes of all tracks it spans
+     * (including the gaps between them). It is then shared between the affected flexible tracks in
+     * proportion to their flex factors, or equally when the sum of those factors is zero (#1019).
+     * Tracks with a zero flex factor therefore only receive space when every affected track has a
+     * zero flex factor.</p>
+     */
+    private void distributeFlexibleContribution(
+        int step,
+        float space,
+        int start,
+        int span,
+        FloatList sizes,
+        List<TrackSizingFunction> tracks,
+        float gap,
+        float[] plannedIncrease) {
+        float spannedSizes = 0f;
+        for (int t = start; t < start + span; t++) {
+            spannedSizes += sizes.getFloat(t);
+        }
+        if (span > 1) {
+            spannedSizes += gap * (span - 1);
+        }
+        float extraSpace = Math.max(space - spannedSizes, 0f);
+        if (extraSpace <= 0f) return;
+
+        boolean anyMaxContentMin = false;
+        for (int t = start; t < start + span; t++) {
+            if (trackMinIsMaxContent(tracks.get(t))) {
+                anyMaxContentMin = true;
+                break;
+            }
+        }
+
+        IntList affected = new IntArrayList();
+        for (int t = start; t < start + span; t++) {
+            TrackSizingFunction track = tracks.get(t);
+            if (!isFlexibleTrack(track)) continue;
+            boolean isAffected = switch (step) {
+                case 1 -> trackMinIsIntrinsic(track);
+                case 2 -> trackMinIsMinOrMaxContent(track);
+                case 3 -> anyMaxContentMin ? trackMinIsMaxContent(track)
+                                           : (trackMinIsAuto(track) && !trackMaxIsMinContent(track));
+                default -> trackMinIsMaxContent(track);
+            };
+            if (isAffected) {
+                affected.add(t);
+            }
+        }
+        if (affected.isEmpty()) return;
+
+        // The flex factor sum is computed over the affected tracks only (browser behaviour; #1019).
+        float flexFactorSum = 0f;
+        for (int i = 0; i < affected.size(); i++) {
+            flexFactorSum += flexFactorOf(tracks.get(affected.getInt(i)));
+        }
+        for (int i = 0; i < affected.size(); i++) {
+            int t = affected.getInt(i);
+            float share = flexFactorSum > 0f
+                          ? extraSpace * flexFactorOf(tracks.get(t)) / flexFactorSum
+                          : extraSpace / affected.size();
+            if (share > plannedIncrease[t]) {
+                plannedIncrease[t] = share;
+            }
+        }
+    }
+
+    /**
+     * CSS Grid 11.7 "Expand Flexible Tracks" (upstream {@code expand_flexible_tracks}).
+     *
+     * @param availableTracksSpace the inner size minus the gaps between tracks, or {@code NaN} when
+     *                             the container's inner size is indefinite
+     * @param availableSpace       the available space for the axis, used to distinguish a
+     *                             min-content constraint (used flex fraction zero) from a
+     *                             max-content/indefinite one
+     */
+    private void expandFlexibleTracks(
+        FloatList sizes,
+        float gap,
+        IntList frTrackIndices,
+        FloatList frValues,
+        List<FlexContribution> items,
+        float availableTracksSpace,
+        AvailableSpace availableSpace) {
+        if (frTrackIndices.isEmpty()) return;
+        float flexFraction = 0f;
+        if (!Float.isNaN(availableTracksSpace)) {
+            // Definite free space: the used flex fraction fills the available space, but only when
+            // the base sizes already fit (otherwise the free space is zero).
+            float usedSpace = 0f;
+            for (int i = 0; i < sizes.size(); i++) {
+                usedSpace += sizes.getFloat(i);
+            }
+            if (availableTracksSpace - usedSpace <= 0f) return;
+            flexFraction = findSizeOfFr(sizes, 0, sizes.size(), frTrackIndices, frValues, availableTracksSpace);
+        } else if (availableSpace.isMinContent()) {
+            // Under a min-content constraint the used flex fraction is zero.
+            return;
+        } else {
+            // Indefinite free space (max-content constraint): the used flex fraction is the maximum of
+            //   - for each flexible track: base_size / flex_factor when the flex factor is > 1, else
+            //     the base size;
+            //   - for each item crossing a flexible track: find_size_of_fr over the item's spanned
+            //     tracks with the item's max-content contribution as the space to fill.
+            for (int frIndex = 0; frIndex < frTrackIndices.size(); frIndex++) {
+                int i = frTrackIndices.getInt(frIndex);
+                float baseSize = Math.max(0f, sizes.getFloat(i));
+                float fr = frValues.getFloat(frIndex);
+                flexFraction = Math.max(flexFraction, fr > 1f ? baseSize / fr : baseSize);
+            }
+            for (FlexContribution item : items) {
+                int end = item.start() + item.span();
+                float spaceToFill = item.maxContent() - gap * Math.max(0, item.span() - 1);
+                flexFraction = Math.max(flexFraction,
+                    findSizeOfFr(sizes, item.start(), end, frTrackIndices, frValues, spaceToFill));
+            }
+        }
+
+        for (int frIndex = 0; frIndex < frTrackIndices.size(); frIndex++) {
+            int i = frTrackIndices.getInt(frIndex);
+            sizes.set(i, Math.max(sizes.getFloat(i), frValues.getFloat(frIndex) * flexFraction));
+        }
+    }
+
+    /**
+     * The track sizing algorithm's "find the size of an fr" (CSS Grid 11.7.1) over a range of the
+     * track list. The base sizes of the non-flexible tracks in the range are part of the space that
+     * has to be filled, which matters both for flexible track expansion and for the min/max
+     * correction of that step ({@code expand_flexible_tracks} / {@code find_size_of_fr} upstream).
      *
      * @param sizes          the current base size of every track in the axis
      * @param frTrackIndices the indices of the tracks whose max track sizing function is flexible
@@ -3887,6 +4107,8 @@ public class GridComputer {
      */
     private float findSizeOfFr(
         FloatList sizes,
+        int start,
+        int end,
         IntList frTrackIndices,
         FloatList frValues,
         float spaceToFill) {
@@ -3900,7 +4122,7 @@ public class GridComputer {
         for (int iteration = 0; iteration < maxIterations; iteration++) {
             float usedSpace = 0f;
             float naiveFlexFactorSum = 0f;
-            for (int i = 0; i < sizes.size(); i++) {
+            for (int i = start; i < end; i++) {
                 float baseSize = sizes.getFloat(i);
                 if (Float.isNaN(baseSize)) baseSize = 0f;
                 int frIndex = frTrackIndices.indexOf(i);
@@ -3960,9 +4182,9 @@ public class GridComputer {
         float flexFraction;
         // Note: min size takes precedence over max size (upstream comment).
         if (!Float.isNaN(tracksAvailableMin) && hypotheticalGridSize < tracksAvailableMin) {
-            flexFraction = findSizeOfFr(sizes, frTrackIndices, frValues, tracksAvailableMin);
+            flexFraction = findSizeOfFr(sizes, 0, sizes.size(), frTrackIndices, frValues, tracksAvailableMin);
         } else if (!Float.isNaN(tracksAvailableMax) && hypotheticalGridSize > tracksAvailableMax) {
-            flexFraction = findSizeOfFr(sizes, frTrackIndices, frValues, tracksAvailableMax);
+            flexFraction = findSizeOfFr(sizes, 0, sizes.size(), frTrackIndices, frValues, tracksAvailableMax);
         } else {
             return;
         }
@@ -3973,84 +4195,6 @@ public class GridComputer {
             if (Float.isNaN(baseSize)) baseSize = 0f;
             sizes.set(i, Math.max(baseSize, frValues.getFloat(frIndex) * flexFraction));
         }
-    }
-
-    /**
-     * Find the size of an fr unit for a definite container.
-     * Uses the algorithm from CSS Grid spec 11.7.1.
-     * If the product of the hypothetical fr size and any flexible track's flex factor
-     * is less than the track's base size, restart treating that track as inflexible.
-     * <p>
-     * Special case: If the sum of flex factors is less than 1, multiply the free space
-     * by that sum - this means tracks won't use all available space.
-     */
-    private float findSizeOfFrForDefinite(FloatList baseSizes, FloatList frValues, float spaceToFill) {
-        if (spaceToFill <= 0 || frValues.isEmpty()) return 0f;
-
-        // Use a copy to track which tracks are still flexible
-        boolean[] isFlexible = new boolean[frValues.size()];
-        for (int i = 0; i < frValues.size(); i++) {
-            isFlexible[i] = true;
-        }
-
-        float flexFraction;
-        boolean changed;
-
-        // Every restart of the algorithm treats at least one more flexible track as inflexible, so a
-        // valid hypothetical fr size is always found within frValues.size() + 1 iterations. Non-finite
-        // values (which can arise from non-finite style inputs) break that invariant because comparisons
-        // against NaN are always false, so the iteration count is bounded to guarantee termination
-        // (GR-20 / upstream #1036 c579c315).
-        int maxIterations = frValues.size() + 1;
-        int iteration = 0;
-
-        // Iterate until no tracks need to be made inflexible
-        do {
-            changed = false;
-
-            // Calculate hypothetical fr size from flexible tracks only
-            float flexibleFrSum = 0f;
-            float inflexibleSpaceUsed = 0f;
-
-            for (int i = 0; i < frValues.size(); i++) {
-                if (isFlexible[i]) {
-                    flexibleFrSum += frValues.getFloat(i);
-                } else {
-                    // Use base size for inflexible tracks
-                    inflexibleSpaceUsed += baseSizes.getFloat(i);
-                }
-            }
-
-            if (flexibleFrSum <= 0) {
-                return 0f;
-            }
-
-            float leftoverSpace = spaceToFill - inflexibleSpaceUsed;
-
-            // CSS Grid spec: If the sum of flex factors is less than 1, multiply the free space
-            // by that sum and use that as the hypothetical free space
-            if (flexibleFrSum < 1) {
-                // When fr sum < 1, each fr track gets fr * leftoverSpace, not filling all space
-                flexFraction = leftoverSpace;  // 1fr = leftoverSpace in this case
-            } else {
-                // Normal case: divide space by fr sum
-                flexFraction = leftoverSpace / flexibleFrSum;
-            }
-
-            // Check if any flexible track's hypothetical size is less than its base size
-            for (int i = 0; i < frValues.size(); i++) {
-                if (isFlexible[i]) {
-                    float hypotheticalSize = frValues.getFloat(i) * flexFraction;
-                    if (hypotheticalSize < baseSizes.getFloat(i)) {
-                        // Mark as inflexible and restart
-                        isFlexible[i] = false;
-                        changed = true;
-                    }
-                }
-            }
-        } while (changed && ++iteration < maxIterations);
-
-        return Math.max(0, flexFraction);
     }
 
     /**
@@ -4079,7 +4223,8 @@ public class GridComputer {
             for (int c = col; c < col + item.columnSpan && c < numColumns; c++) {
                 TrackSizingFunction track = getTrackSizingFunctionForIndex(templateColumns, autoColumns, c, colCounts);
                 if (track != null) {
-                    if (track.isFr()) {
+                    // minmax(<anything>, 1fr) is a flexible track too (its max function is flexible)
+                    if (isFlexibleTrack(track)) {
                         item.crossesFlexibleColumn = true;
                     }
                     if (track.hasIntrinsicSizingFunction()) {
@@ -4094,7 +4239,7 @@ public class GridComputer {
             for (int r = row; r < row + item.rowSpan && r < numRows; r++) {
                 TrackSizingFunction track = getTrackSizingFunctionForIndex(templateRows, autoRows, r, rowCounts);
                 if (track != null) {
-                    if (track.isFr()) {
+                    if (isFlexibleTrack(track)) {
                         item.crossesFlexibleRow = true;
                     }
                     if (track.hasIntrinsicSizingFunction()) {
@@ -4294,7 +4439,6 @@ public class GridComputer {
                                    ? availableGridHeight - gap.height * (numRows - 1)
                                    : 0);
 
-        float totalFr = 0f;
         float usedSpace = 0;
         int autoCount = 0;
         // Flexible track indices/values (needed for the min/max correction of flexible expansion)
@@ -4340,7 +4484,6 @@ public class GridComputer {
             }
 
             if (track != null && track.isFr()) {
-                totalFr += track.getFrValue();
                 frTrackIndices.add(i);
                 frValues.add(track.getFrValue());
                 sizes.add(NaN);
@@ -4350,12 +4493,14 @@ public class GridComputer {
                 sizes.add(NaN);
             } else if (track.isMinmax()) {
                 // For minmax, check if max is flexible
+                TrackSizingFunction minF = track.getMinFunc();
                 TrackSizingFunction maxF = track.getMaxFunc();
                 if (maxF != null && maxF.isFr()) {
-                    totalFr += maxF.getFrValue();
                     frTrackIndices.add(i);
                     frValues.add(maxF.getFrValue());
-                    sizes.add(NaN);
+                    float frBase = (minF != null && minF.isFixed())
+                                   ? Math.max(0f, minF.getFixedValue().resolveOrZero(nodeInnerSize.height)) : 0f;
+                    sizes.add(frBase);
                 } else if (maxF != null && maxF.isFixed()) {
                     // Use the max size as the track size for now (simplified)
                     float size = maxF.getFixedValue().resolveOrZero(nodeInnerSize.height);
@@ -4392,217 +4537,65 @@ public class GridComputer {
         // and then it may grow larger based on the fr distribution.
 
 
-        if (totalFr > 0) {
-            if (!Float.isNaN(nodeInnerSize.height)) {
-                // Definite container - first calculate content-based sizes for fr tracks
-                // (implementing the "auto" part of minmax(auto, Nfr))
-                FloatList contentBasedSizes = new FloatArrayList();
-                for (int i = 0; i < sizes.size(); i++) {
-                    if (Float.isNaN(sizes.getFloat(i)) && expandedRows != null && i < expandedRows.size() && expandedRows.get(i).isFr()) {
-                        float contentHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]);
-                        contentBasedSizes.add(contentHeight);
-                    } else {
-                        contentBasedSizes.add(NaN);
-                    }
-                }
-
-                // Calculate fr sizes using an iterative approach similar to Rust's find_size_of_fr
-                // This handles the case where some tracks' content exceeds their fr-based allocation
-                float availableForFr = availableHeight - usedSpace;
-                float currentTotalFr = totalFr;
-                float usedByInflexible = 0f;
-                List<Boolean> isInflexible = new ArrayList<>();
-                for (int i = 0; i < sizes.size(); i++) {
-                    isInflexible.add(false);
-                }
-
-                // Iterative algorithm: tracks with content > fr*fraction become inflexible.
-                // Each pass marks at least one more track inflexible, so the loop always terminates within
-                // sizes.size() + 1 passes unless the inputs are non-finite (NaN comparisons are always
-                // false), which is why the iteration count is bounded explicitly here
-                // (GR-20 / upstream #1036 c579c315).
-                boolean changed = true;
-                int flexIterations = 0;
-                int maxFlexIterations = sizes.size() + 1;
-                while (changed && flexIterations++ < maxFlexIterations) {
-                    changed = false;
-                    float remainingForFr = availableForFr - usedByInflexible;
-                    float flexFraction = currentTotalFr > 0 ? remainingForFr / currentTotalFr : 0f;
-
-                    for (int i = 0; i < sizes.size(); i++) {
-                        if (Float.isNaN(sizes.getFloat(i)) && expandedRows != null && i < expandedRows.size() && expandedRows.get(i).isFr()) {
-                            if (!isInflexible.get(i)) {
-                                float frValue = expandedRows.get(i).getFrValue();
-                                float frBasedSize = frValue * flexFraction;
-                                float contentSize = contentBasedSizes.getFloat(i);
-
-                                // If content exceeds fr-based size, this track becomes inflexible
-                                if (!Float.isNaN(contentSize) && contentSize > frBasedSize) {
-                                    isInflexible.set(i, true);
-                                    usedByInflexible += contentSize;
-                                    currentTotalFr -= frValue;
-                                    changed = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Now set final sizes
-                float remainingForFr = availableForFr - usedByInflexible;
-                float flexFraction = currentTotalFr > 0 ? remainingForFr / currentTotalFr : 0f;
-
-                for (int i = 0; i < sizes.size(); i++) {
-                    if (Float.isNaN(sizes.getFloat(i))) {
-                        if (expandedRows != null && i < expandedRows.size() && expandedRows.get(i).isFr()) {
-                            if (isInflexible.get(i)) {
-                                // Use content size for inflexible tracks
-                                sizes.set(i, contentBasedSizes.getFloat(i));
-                            } else {
-                                // Use fr-based size for flexible tracks
-                                float frValue = expandedRows.get(i).getFrValue();
-                                float frBasedSize = frValue * flexFraction;
-                                float contentSize = contentBasedSizes.getFloat(i);
-                                // Final size = max(content, fr-based) per CSS Grid spec
-                                sizes.set(i, !Float.isNaN(contentSize) ? Math.max(contentSize, frBasedSize) : frBasedSize);
-                            }
-                        } else {
-                            float maxRowHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]);
-                            sizes.set(i, maxRowHeight);
-                        }
-                    }
-                }
-            } else {
-                // Indefinite container (MaxContent) - fr tracks without content get 0
-                // Calculate flex fraction based on item content (similar to columns)
-                float flexFraction = 0f;
-
-                // Pre-compute fr track info ONCE outside the item loop (optimization)
-                boolean[] isFrRow = new boolean[numRows];
-                float[] frRowValue = new float[numRows];
-                for (int r = 0; r < numRows; r++) {
-                    if (expandedRows != null && r < expandedRows.size() && expandedRows.get(r).isFr()) {
-                        isFrRow[r] = true;
-                        frRowValue[r] = expandedRows.get(r).getFrValue();
-                    }
-                }
-
-                // Check items that cross flexible rows
-                for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
-                    GridItem item = items.get(itemIdx);
-                    int row = getItemRowWithCounts(item, itemIdx, columnSizes.size(), rowCounts);
-                    int span = item.rowSpan;
-
-                    // Check if this item crosses any fr tracks (O(1) lookup now)
-                    boolean crossesFr = false;
-                    float itemFrSum = 0f;
-
-                    for (int r = row; r < row + span && r < numRows; r++) {
-                        if (isFrRow[r]) {
-                            crossesFr = true;
-                            itemFrSum += frRowValue[r];
-                        }
-                    }
-
-                    if (crossesFr && !Float.isNaN(item.size.height)) {
-                        // Item has explicit height
-                        // Calculate flex fraction needed
-                        float usedByNonFr = 0f;
-                        for (int r = row; r < row + span && r < numRows; r++) {
-                            if (!isFrRow[r]) {
-                                float value = sizes.getFloat(r);
-                                usedByNonFr += !Float.isNaN(value) ? value : 0f;
-                            }
-                        }
-                        float leftover = item.size.height - usedByNonFr;
-                        if (leftover > 0 && itemFrSum > 0) {
-                            float itemFr = leftover / itemFrSum;
-                            flexFraction = Math.max(flexFraction, itemFr);
-                        }
-                    } else if (crossesFr) {
-                        // Measure content using cache
-                        int col = getItemColumnWithCounts(item, itemIdx, columnSizes.size(), colCounts);
-                        float colWidth = col < columnSizes.size() ? columnSizes.getFloat(col) : 0f;
-
-                        // Use cached contribution - key optimization!
-                        // Note: cached methods already include margin
-                        FloatSize availSpace = new FloatSize(colWidth, NaN);
-                        float contentHeight = item.getMaxContentContributionHeightCached(layoutComputer, availSpace, nodeInnerSize);
-
-                        float usedByNonFr = 0f;
-                        for (int r = row; r < row + span && r < numRows; r++) {
-                            if (!isFrRow[r]) {
-                                float value = sizes.getFloat(r);
-                                usedByNonFr += !Float.isNaN(value) ? value : 0f;
-                            }
-                        }
-                        float leftover = contentHeight - usedByNonFr;
-                        if (leftover > 0 && itemFrSum > 0) {
-                            float itemFr = leftover / itemFrSum;
-                            flexFraction = Math.max(flexFraction, itemFr);
-                        }
-                    }
-                }
-
-                // Apply flex fraction to fr tracks
-                for (int i = 0; i < sizes.size(); i++) {
-                    if (Float.isNaN(sizes.getFloat(i))) {
-                        if (expandedRows != null && i < expandedRows.size() && expandedRows.get(i).isFr()) {
-                            sizes.set(i, expandedRows.get(i).getFrValue() * flexFraction);
-                        } else {
-                            // Auto row - size based on content
-                            float maxRowHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]);
-                            sizes.set(i, maxRowHeight);
-                        }
-                    }
-                }
-            }
-        } else if (autoCount > 0 && (!Float.isNaN(nodeInnerSize.height)
-                                     || (!Float.isNaN(innerMinHeight) && !gridHeightSpace.isMinContent()))) {
-            // No fr units but have auto tracks with a definite container or inner min size
-            // 11.8 Stretch auto Tracks: expand auto tracks to fill remaining space. When the inner
-            // size is indefinite, the content-box min-size provides the space to stretch into
-            // (GR-03 / upstream #1023); a min-content constraint leaves no free space.
-            float stretchSpace = !Float.isNaN(nodeInnerSize.height)
-                                 ? availableHeight
-                                 : TaffyMath.maybeSub(innerMinHeight, gap.height * Math.max(0, numRows - 1));
-
-            // Step 1: Calculate content size for all auto tracks
-            FloatList autoContentSizes = new FloatArrayList();
-            float autoContentTotal = 0f;
-            for (int i = 0; i < sizes.size(); i++) {
-                if (Float.isNaN(sizes.getFloat(i))) {
-                    float maxRowHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]);
-                    autoContentSizes.add(maxRowHeight);
-                    autoContentTotal += maxRowHeight;
-                } else {
-                    autoContentSizes.add(0f); // Placeholder for non-auto tracks
-                }
-            }
-
-            // Step 2: Calculate actual remaining space after content sizes
-            float totalUsed = usedSpace + autoContentTotal;
-            float freeSpace = stretchSpace - totalUsed;
-
-            // Step 3: Distribute free space equally among auto tracks (only if positive)
-            float extraPerAutoTrack = freeSpace > 0 ? freeSpace / autoCount : 0f;
-
-            // Step 4: Set auto track sizes = content size + extra space
-            for (int i = 0; i < sizes.size(); i++) {
-                if (Float.isNaN(sizes.getFloat(i))) {
-                    float contentSize = autoContentSizes.getFloat(i);
-                    sizes.set(i, contentSize + extraPerAutoTrack);
-                }
-            }
-        } else if (autoCount > 0) {
-            // No fr units and indefinite container - calculate based on content
-            for (int i = 0; i < sizes.size(); i++) {
-                if (Float.isNaN(sizes.getFloat(i))) {
-                    float maxRowHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]);
-                    sizes.set(i, maxRowHeight);
-                }
+        // Resolve the non-flexible tracks' base sizes. Fixed rows were resolved in the first pass;
+        // auto/content-sized rows get their content height (the block-axis value this port has always
+        // used as the row base size).
+        for (int i = 0; i < sizes.size(); i++) {
+            if (Float.isNaN(sizes.getFloat(i)) && !frTrackIndices.contains(i)) {
+                sizes.set(i, calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]));
             }
         }
+        // Flexible rows start at a zero base size until the flexible contribution pass gives them one.
+        for (int frIndex = 0; frIndex < frTrackIndices.size(); frIndex++) {
+            int i = frTrackIndices.getInt(frIndex);
+            if (Float.isNaN(sizes.getFloat(i))) {
+                sizes.set(i, 0f);
+            }
+        }
+
+        // 11.5 Resolve Intrinsic Track Sizes, flexible rows (GR-01 / upstream #1019, #1084). See the
+        // inline-axis path for the rationale of the scaled, affected-only, minimum-floored
+        // distribution.
+        List<TrackSizingFunction> resolvedRowTracks = resolveTrackSizingList(expandedRows, autoRows, rowCounts, numRows);
+        List<FlexContribution> flexItemContributions = new ArrayList<>();
+        boolean intrinsicHeightConstraint = gridHeightSpace.isMinContent() || gridHeightSpace.isMaxContent();
+        for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+            GridItem item = items.get(itemIdx);
+            if (!item.crossesFlexibleRow) continue;
+
+            int row = getItemRowWithCounts(item, itemIdx, columnSizes.size(), rowCounts);
+            int span = item.rowSpan;
+            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
+
+            // The item's block-axis content contribution: the same content-height estimate the rest
+            // of the row sizing uses (it accounts for the item's grid area width, margins, padding
+            // and explicit height).
+            IntList singleItemRow = new IntArrayList();
+            singleItemRow.add(itemIdx);
+            float itemContent = calculateAutoRowHeight(
+                items, columnSizes, nodeInnerSize, colCounts, gap.width, singleItemRow);
+            boolean isScrollContainer = item.overflow != null
+                && (item.overflow.y == Overflow.HIDDEN || item.overflow.y == Overflow.SCROLL || item.overflow.y == Overflow.CLIP);
+            float minimumContribution = minimumContributionHeight(item, itemContent, marginAxisSums.height, isScrollContainer);
+            boolean crossesIntrinsic = false;
+            for (int r = row; r < row + span && r < numRows; r++) {
+                if (trackMinIsIntrinsic(resolvedRowTracks.get(r))) {
+                    crossesIntrinsic = true;
+                    break;
+                }
+            }
+            flexItemContributions.add(new FlexContribution(row, span, crossesIntrinsic, minimumContribution,
+                itemContent, itemContent));
+        }
+        resolveFlexibleTrackContributions(sizes, resolvedRowTracks, gap.height, flexItemContributions,
+            intrinsicHeightConstraint, availableGridSpace.height.isMaxContent());
+
+        // 11.7 Expand Flexible Tracks (GR-01): see the inline-axis path.
+        float expansionAvailableHeight = Float.isNaN(nodeInnerSize.height)
+                                         ? NaN
+                                         : nodeInnerSize.height - gap.height * Math.max(0, numRows - 1);
+        expandFlexibleTracks(sizes, gap.height, frTrackIndices, frValues, flexItemContributions,
+            expansionAvailableHeight, gridHeightSpace);
 
         // 11.7 Expand Flexible Tracks: min/max correction (GR-03 / upstream #1023). See the column
         // path for the rationale; the inner min/max sizes are content-box values and the gaps are not
@@ -4611,6 +4604,39 @@ public class GridComputer {
             applyFlexibleTrackMinMaxCorrection(sizes, frTrackIndices, frValues,
                 TaffyMath.maybeSub(innerMinHeight, gap.height * Math.max(0, numRows - 1)),
                 TaffyMath.maybeSub(innerMaxHeight, gap.height * Math.max(0, numRows - 1)));
+        }
+
+        // 11.8 Stretch auto Tracks: auto rows absorb the remaining positive, definite free space.
+        // When the container's inner size is indefinite the content-box min-size provides the space
+        // to stretch into (GR-03 / #1023); a min-content constraint leaves no free space.
+        float stretchSpace = NaN;
+        if (!Float.isNaN(nodeInnerSize.height)) {
+            stretchSpace = availableHeight;
+        } else if (!Float.isNaN(innerMinHeight) && !gridHeightSpace.isMinContent()) {
+            stretchSpace = TaffyMath.maybeSub(innerMinHeight, gap.height * Math.max(0, numRows - 1));
+        }
+        if (!Float.isNaN(stretchSpace)) {
+            int autoTrackCount = 0;
+            for (int i = 0; i < sizes.size(); i++) {
+                TrackSizingFunction track = resolvedRowTracks.get(i);
+                if (!isFlexibleTrack(track) && trackMaxIsAuto(track)) {
+                    autoTrackCount++;
+                }
+            }
+            float stretchUsedSpace = 0f;
+            for (int i = 0; i < sizes.size(); i++) {
+                stretchUsedSpace += sizes.getFloat(i);
+            }
+            float stretchFreeSpace = stretchSpace - stretchUsedSpace;
+            if (autoTrackCount > 0 && stretchFreeSpace > 0.001f) {
+                float extraPerTrack = stretchFreeSpace / autoTrackCount;
+                for (int i = 0; i < sizes.size(); i++) {
+                    TrackSizingFunction track = resolvedRowTracks.get(i);
+                    if (!isFlexibleTrack(track) && trackMaxIsAuto(track)) {
+                        sizes.set(i, sizes.getFloat(i) + extraPerTrack);
+                    }
+                }
+            }
         }
 
         // Final pass: ensure no null values remain (fallback for edge cases)
