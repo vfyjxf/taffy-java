@@ -42,6 +42,7 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -1389,9 +1390,12 @@ public class GridComputer {
                                                           GridAxisLines columnLines, GridAxisLines rowLines,
                                                           List<GridItem> items) {
         return new DetailedGridInfo(
-            buildTracksInfo(rowCounts, rowLines, namedLineResolver.getRowLineNames()),
-            buildTracksInfo(colCounts, columnLines, namedLineResolver.getColumnLineNames()),
-            buildItemAreas(items, colCounts, rowCounts));
+            buildTracksInfo(rowCounts, rowLines, namedLineResolver.getRowLineNameGroups(),
+                namedLineResolver.getRowLineNames()),
+            buildTracksInfo(colCounts, columnLines, namedLineResolver.getColumnLineNameGroups(),
+                namedLineResolver.getColumnLineNames()),
+            buildItemAreas(items, colCounts, rowCounts),
+            buildGridAreas(namedLineResolver));
     }
 
     /**
@@ -1401,6 +1405,7 @@ public class GridComputer {
      * position of its single grid line instead (upstream #1167).
      */
     private static DetailedGridInfo.Tracks buildTracksInfo(TrackCounts counts, GridAxisLines lines,
+                                                           List<List<String>> lineNameGroups,
                                                            Map<String, List<Integer>> lineNames) {
         int trackCount = lines.trackCount();
         List<GridTrackInfo> tracks = new ArrayList<>(trackCount);
@@ -1408,9 +1413,32 @@ public class GridComputer {
             tracks.add(new GridTrackInfo(lines.trackStart(i), lines.trackSize(i)));
         }
         Float emptyAxisLine = lines.hasSingleLine() ? Float.valueOf(lines.emptyAxisLine()) : null;
+        // The CSR keeps the declaration order of the template's name groups; the map is the
+        // placement lookup retained by the resolver (which also carries area-edge lines seeded
+        // for explicitly declared <area>-start/<area>-end names).
+        DetailedGridInfo.LineNames lineNameTable =
+            DetailedGridInfo.LineNames.fromLineGroups(lineNameGroups, lineNames);
         return new DetailedGridInfo.Tracks(
             counts.negativeImplicit, counts.explicit, counts.positiveImplicit,
-            tracks, emptyAxisLine, lineNames);
+            tracks, emptyAxisLine, lineNameTable);
+    }
+
+    /**
+     * The grid-area edge table exposed through {@link DetailedGridInfo#areas()}: a snapshot of
+     * the resolver's separate area table (the {@code grid-template-areas} entries plus areas
+     * synthesised from explicitly declared {@code <area>-start}/{@code <area>-end} names). It is
+     * deliberately not part of the line-name table (#1185). The line numbers are the style-side
+     * explicit-relative numbers, not full-grid lines.
+     */
+    private static Map<String, DetailedGridInfo.GridArea> buildGridAreas(NamedLineResolver namedLineResolver) {
+        Map<String, NamedLineResolver.AreaSnapshot> edges = namedLineResolver.getAreaEdges();
+        Map<String, DetailedGridInfo.GridArea> areas = new LinkedHashMap<>(edges.size() * 2);
+        for (Map.Entry<String, NamedLineResolver.AreaSnapshot> entry : edges.entrySet()) {
+            NamedLineResolver.AreaSnapshot edge = entry.getValue();
+            areas.put(entry.getKey(), new DetailedGridInfo.GridArea(
+                edge.rowStart(), edge.columnStart(), edge.rowEnd(), edge.columnEnd()));
+        }
+        return areas;
     }
 
     /**
