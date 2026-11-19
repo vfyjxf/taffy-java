@@ -1,6 +1,8 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.style.Clear;
+import dev.vfyjxf.taffy.style.TaffyDirection;
+import dev.vfyjxf.taffy.util.BfcSlot;
 import dev.vfyjxf.taffy.util.FloatContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -317,5 +319,215 @@ public class FloatPlacementP7Test {
         assertThrows(IllegalArgumentException.class,
                      () -> context.placeFloatedBox(Float.POSITIVE_INFINITY, 10.0f, 0.0f, 0.0f, 0.0f,
                                                    FloatContext.Direction.LEFT, Clear.NONE));
+    }
+
+    // === BFC slots ===
+
+    private static BfcSlot findSlot(
+        FloatContext context,
+        float minY,
+        float minHeight,
+        float marginLeft,
+        float marginRight,
+        TaffyDirection direction
+    ) {
+        return context.findBfcSlot(
+            minY, minHeight, 0.0f, 0.0f, marginLeft, marginRight,
+            direction, Clear.NONE, FloatContext.NO_REGION);
+    }
+
+    @Test
+    @DisplayName("without floats a BFC slot uses the margin-inset containing block")
+    void bfcSlotWithoutFloats() {
+        FloatContext context = context(200.0f);
+
+        BfcSlot slot = context.findBfcSlot(
+            10.0f, 0.0f, 10.0f, 20.0f, 5.0f, 10.0f,
+            TaffyDirection.LTR, Clear.NONE, FloatContext.NO_REGION);
+
+        assertEquals(BfcSlot.NO_SEGMENT, slot.segmentId());
+        assertFalse(slot.hasSegment());
+        assertEquals(15.0f, slot.x(), EPSILON);
+        assertEquals(10.0f, slot.y(), EPSILON);
+        assertEquals(155.0f, slot.borderWidth(), EPSILON);
+        assertEquals(155.0f, slot.stretchWidth(), EPSILON);
+        assertEquals(Float.POSITIVE_INFINITY, slot.height());
+    }
+
+    @Test
+    @DisplayName("a leading float absorbs the box's leading margin")
+    void bfcSlotAbsorbsLeadingMargin() {
+        FloatContext context = context(200.0f);
+        place(context, 50.0f, 40.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BfcSlot slot = findSlot(context, 0.0f, 0.0f, 10.0f, 20.0f, TaffyDirection.LTR);
+
+        assertEquals(1, slot.segmentId());
+        assertEquals(50.0f, slot.x(), EPSILON);
+        assertEquals(0.0f, slot.y(), EPSILON);
+        assertEquals(150.0f, slot.borderWidth(), EPSILON);
+        assertEquals(130.0f, slot.stretchWidth(), EPSILON);
+        assertEquals(Float.POSITIVE_INFINITY, slot.height());
+    }
+
+    @Test
+    @DisplayName("a trailing float absorbs only the part of the trailing margin beside it")
+    void bfcSlotAbsorbsTrailingMargin() {
+        FloatContext context = context(200.0f);
+        place(context, 50.0f, 40.0f, 0.0f, FloatContext.Direction.RIGHT, Clear.NONE);
+
+        BfcSlot slot = findSlot(context, 0.0f, 0.0f, 10.0f, 20.0f, TaffyDirection.LTR);
+
+        assertEquals(1, slot.segmentId());
+        assertEquals(10.0f, slot.x(), EPSILON);
+        assertEquals(140.0f, slot.borderWidth(), EPSILON);
+        assertEquals(140.0f, slot.stretchWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("RTL swaps the leading and trailing sides of the slot")
+    void bfcSlotRtlSwapsSides() {
+        FloatContext context = context(200.0f);
+        place(context, 50.0f, 40.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BfcSlot slot = findSlot(context, 0.0f, 0.0f, 10.0f, 20.0f, TaffyDirection.RTL);
+
+        assertEquals(50.0f, slot.x(), EPSILON);
+        assertEquals(130.0f, slot.borderWidth(), EPSILON);
+        assertEquals(130.0f, slot.stretchWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("a negative leading margin does not move past a leading float")
+    void bfcSlotNegativeLeadingMarginStopsAtFloat() {
+        FloatContext floating = context(200.0f);
+        place(floating, 50.0f, 40.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        BfcSlot besideFloat = findSlot(floating, 0.0f, 0.0f, -30.0f, 0.0f, TaffyDirection.LTR);
+        assertEquals(50.0f, besideFloat.x(), EPSILON);
+
+        FloatContext free = context(200.0f);
+        place(free, 50.0f, 40.0f, 0.0f, FloatContext.Direction.RIGHT, Clear.NONE);
+        BfcSlot noLeadingFloat = findSlot(free, 0.0f, 0.0f, -30.0f, 0.0f, TaffyDirection.LTR);
+        assertEquals(-30.0f, noLeadingFloat.x(), EPSILON);
+        assertEquals(180.0f, noLeadingFloat.borderWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("trailing margins apply to stretch width and only partly to border fit")
+    void bfcSlotTrailingMarginRules() {
+        FloatContext positive = context(200.0f);
+        place(positive, 50.0f, 40.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        BfcSlot positiveSlot = findSlot(positive, 0.0f, 0.0f, 0.0f, 30.0f, TaffyDirection.LTR);
+        assertEquals(150.0f, positiveSlot.borderWidth(), EPSILON);
+        assertEquals(120.0f, positiveSlot.stretchWidth(), EPSILON);
+
+        FloatContext negative = context(200.0f);
+        place(negative, 50.0f, 40.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        BfcSlot negativeSlot = findSlot(negative, 0.0f, 0.0f, 0.0f, -30.0f, TaffyDirection.LTR);
+        assertEquals(180.0f, negativeSlot.borderWidth(), EPSILON);
+        assertEquals(180.0f, negativeSlot.stretchWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("BFC slot height stops where a narrower float starts")
+    void bfcSlotHeightStopsAtNarrowerFloat() {
+        FloatContext context = context(200.0f);
+        place(context, 30.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        place(context, 50.0f, 30.0f, 0.0f, FloatContext.Direction.LEFT, Clear.LEFT);
+        assertEquals(20.0f, context.leftFloats().get(1).y(), EPSILON);
+
+        BfcSlot narrow = findSlot(context, 0.0f, 0.0f, 0.0f, 0.0f, TaffyDirection.LTR);
+        assertEquals(1, narrow.segmentId());
+        assertEquals(170.0f, narrow.borderWidth(), EPSILON);
+        assertEquals(20.0f, narrow.height(), EPSILON);
+
+        BfcSlot tall = findSlot(context, 0.0f, 30.0f, 0.0f, 0.0f, TaffyDirection.LTR);
+        assertEquals(150.0f, tall.borderWidth(), EPSILON);
+        assertEquals(Float.POSITIVE_INFINITY, tall.height());
+    }
+
+    @Test
+    @DisplayName("below all floats a BFC slot falls back to the containing block")
+    void bfcSlotBelowAllFloats() {
+        FloatContext context = context(200.0f);
+        place(context, 50.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BfcSlot slot = findSlot(context, 30.0f, 0.0f, 5.0f, 10.0f, TaffyDirection.LTR);
+
+        assertFalse(slot.hasSegment());
+        assertEquals(5.0f, slot.x(), EPSILON);
+        assertEquals(30.0f, slot.y(), EPSILON);
+        assertEquals(185.0f, slot.borderWidth(), EPSILON);
+        assertEquals(185.0f, slot.stretchWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("findBfcSlot can resume after a segment")
+    void bfcSlotAfterSegment() {
+        FloatContext context = context(200.0f);
+        place(context, 30.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        place(context, 50.0f, 30.0f, 0.0f, FloatContext.Direction.LEFT, Clear.LEFT);
+
+        BfcSlot afterFirst = context.findBfcSlot(
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            TaffyDirection.LTR, Clear.NONE, 1);
+
+        assertEquals(2, afterFirst.segmentId());
+        assertEquals(20.0f, afterFirst.y(), EPSILON);
+        assertEquals(150.0f, afterFirst.borderWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("clear:both moves a BFC slot below both float sides")
+    void bfcSlotClearBoth() {
+        FloatContext context = context(200.0f);
+        place(context, 50.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        place(context, 50.0f, 30.0f, 0.0f, FloatContext.Direction.RIGHT, Clear.NONE);
+
+        BfcSlot slot = context.findBfcSlot(
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            TaffyDirection.LTR, Clear.BOTH, FloatContext.NO_REGION);
+
+        assertFalse(slot.hasSegment());
+        assertEquals(0.0f, slot.x(), EPSILON);
+        assertEquals(30.0f, slot.y(), EPSILON);
+        assertEquals(200.0f, slot.borderWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("a zero-width float edge stops a negative leading margin")
+    void bfcSlotZeroWidthFloatEdge() {
+        FloatContext context = context(200.0f);
+        place(context, 0.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BfcSlot slot = findSlot(context, 0.0f, 0.0f, -10.0f, 0.0f, TaffyDirection.LTR);
+
+        assertEquals(1, slot.segmentId());
+        assertEquals(0.0f, slot.x(), EPSILON);
+        assertEquals(200.0f, slot.borderWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("a box crossing a zero-height float narrows beside it")
+    void bfcSlotCrossesZeroHeightFloat() {
+        FloatContext context = context(200.0f);
+        place(context, 50.0f, 0.0f, 40.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BfcSlot slot = findSlot(context, -10.0f, 60.0f, 0.0f, 0.0f, TaffyDirection.LTR);
+
+        assertEquals(0, slot.segmentId());
+        assertEquals(-10.0f, slot.y(), EPSILON);
+        assertEquals(50.0f, slot.x(), EPSILON);
+        assertEquals(150.0f, slot.borderWidth(), EPSILON);
+        assertEquals(Float.POSITIVE_INFINITY, slot.height());
+    }
+
+    @Test
+    @DisplayName("findBfcSlot rejects an invalid afterSegment")
+    void bfcSlotRejectsInvalidAfterSegment() {
+        FloatContext context = context(200.0f);
+        assertThrows(IllegalArgumentException.class,
+                     () -> context.findBfcSlot(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                               TaffyDirection.LTR, Clear.NONE, -2));
     }
 }

@@ -1,6 +1,7 @@
 package dev.vfyjxf.taffy.util;
 
 import dev.vfyjxf.taffy.style.Clear;
+import dev.vfyjxf.taffy.style.TaffyDirection;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -523,6 +524,158 @@ public final class FloatContext {
             availableWidth - x - right, Float.POSITIVE_INFINITY);
     }
 
+    /**
+     * Searches for a slot suitable for laying out a box that establishes an independent
+     * formatting context (whose border box must not overlap floats).
+     *
+     * <p>This ports upstream {@code find_bfc_slot} (#991, with the #1392 separate-inset
+     * subtraction and the #1394 slot-height field). The box's margins are resolved against the
+     * containing block's content edges, not the float edges, so they may overlap floats:</p>
+     * <ul>
+     *   <li>the leading margin (in flow direction) positions the border box's leading edge but
+     *       may be partially or fully absorbed by a float on the leading side; a negative
+     *       leading margin does not move the border edge past the float or containing-block
+     *       edge;</li>
+     *   <li>the trailing margin is subtracted from the width an auto width resolves to (except
+     *       for the part that overlaps a float on the trailing side). When no float intrudes on
+     *       the trailing side the margin applies as usual, so a positive margin may overflow
+     *       the containing-block edge and a negative margin widens the border box.</li>
+     * </ul>
+     *
+     * <p>The slot must not overlap floats beside any part of {@code minHeight} below its top
+     * edge; {@link BfcSlot#height()} reports how far down the slot's widths stay valid. When no
+     * float is active at or below {@code minY}, the slot uses the margin-inset containing-block
+     * width and has no segment id.</p>
+     *
+     * <p>A BFC root's own bottom padding and border are not part of this query: upstream
+     * #1384 adds them when the root's auto height is consumed. {@link BlockContext} exposes the
+     * corresponding pure helper for the later BlockComputer batch.</p>
+     *
+     * @param minY                      the minimum y position, in BFC-root coordinates
+     * @param minHeight                 a lower bound on the box's border-box height
+     * @param containingBlockLeftInset  the containing block's left content-box inset from the BFC edge
+     * @param containingBlockRightInset the containing block's right content-box inset from the BFC edge
+     * @param marginLeft                the box's left margin (may be negative)
+     * @param marginRight               the box's right margin (may be negative)
+     * @param direction                 the inline flow direction (LTR/RTL); any other value is
+     *                                  treated as LTR
+     * @param clear                     the box's {@code clear} value
+     * @param afterSegment              the segment after which the search starts, or
+     *                                  {@link #NO_REGION}
+     * @return the BFC slot, in BFC-root coordinates
+     */
+    public BfcSlot findBfcSlot(
+        float minY,
+        float minHeight,
+        float containingBlockLeftInset,
+        float containingBlockRightInset,
+        float marginLeft,
+        float marginRight,
+        TaffyDirection direction,
+        Clear clear,
+        int afterSegment
+    ) {
+        Objects.requireNonNull(direction, "direction");
+        Objects.requireNonNull(clear, "clear");
+        if (afterSegment < NO_REGION) {
+            throw new IllegalArgumentException("afterSegment must be >= " + NO_REGION + ": " + afterSegment);
+        }
+
+        float marginLeftInset = containingBlockLeftInset + marginLeft;
+        float marginRightInset = containingBlockRightInset + marginRight;
+        float noFloatWidth = availableWidth - marginLeftInset - marginRightInset;
+        BfcSlot noFloatSlot = new BfcSlot(
+            NO_REGION, marginLeftInset, minY,
+            noFloatWidth, noFloatWidth, Float.POSITIVE_INFINITY);
+
+        if (!hasActiveFloats(minY)) {
+            return noFloatSlot;
+        }
+
+        // Clearance clears past the bottom of floats on the relevant side, including zero-sized
+        // floats which occupy no segment.
+        float effectiveMinY = minY;
+        Float clearThreshold = clearedThreshold(clear);
+        if (clearThreshold != null) {
+            effectiveMinY = Math.max(effectiveMinY, clearThreshold);
+        }
+
+        int atLeast = afterSegment == NO_REGION ? 0 : afterSegment + 1;
+        int cleared = clearedSegment(clear);
+        int hwm = Math.max(atLeast, cleared == NO_REGION ? 0 : cleared + 1);
+
+        int startIndex = firstSegmentEndingAfter(hwm, effectiveMinY);
+        if (startIndex >= segments.size()) {
+            // Below all floats.
+            float y = segments.isEmpty()
+                      ? effectiveMinY
+                      : Math.max(segments.get(segments.size() - 1).endY, effectiveMinY);
+            return new BfcSlot(
+                NO_REGION, marginLeftInset, y,
+                noFloatWidth, noFloatWidth, Float.POSITIVE_INFINITY);
+        }
+
+        Segment segment = segments.get(startIndex);
+        float y = Math.max(segment.startY, effectiveMinY);
+
+        // Combine the float insets of every segment beside the box's minimum height, then
+        // extend the slot down over any further segments that do not narrow it.
+        Segment combined = segment.copy();
+        int next = startIndex + 1;
+        while (next < segments.size() && segments.get(next).startY < y + minHeight) {
+            combined.union(segments.get(next));
+            next++;
+        }
+        float slotHeight = Float.POSITIVE_INFINITY;
+        for (int i = next; i < segments.size(); i++) {
+            if (segments.get(i).isNarrowerThan(combined)) {
+                slotHeight = segments.get(i).startY - y;
+                break;
+            }
+        }
+
+        Direction lead = direction == TaffyDirection.RTL ? Direction.RIGHT : Direction.LEFT;
+        Direction trail = lead.opposite();
+        boolean hasLeadFloat = lead == Direction.LEFT ? combined.floatLeft : combined.floatRight;
+        boolean hasTrailFloat = trail == Direction.LEFT ? combined.floatLeft : combined.floatRight;
+        float leadInset = lead == Direction.LEFT ? combined.leftInset : combined.rightInset;
+        float trailInset = trail == Direction.LEFT ? combined.leftInset : combined.rightInset;
+        float cbLead = lead == Direction.LEFT ? containingBlockLeftInset : containingBlockRightInset;
+        float cbTrail = trail == Direction.LEFT ? containingBlockLeftInset : containingBlockRightInset;
+        float marginLead = lead == Direction.LEFT ? marginLeft : marginRight;
+        float marginTrail = trail == Direction.LEFT ? marginLeft : marginRight;
+
+        float fitLead = hasLeadFloat ? Math.max(leadInset, marginLead) : marginLead;
+        float fitTrail = hasTrailFloat ? Math.max(trailInset, cbTrail) : Math.min(marginTrail, cbTrail);
+        float stretchLead = fitLead;
+        float stretchTrail = hasTrailFloat ? Math.max(trailInset, marginTrail) : marginTrail;
+
+        float fitLeft = lead == Direction.LEFT ? fitLead : fitTrail;
+        float fitRight = lead == Direction.LEFT ? fitTrail : fitLead;
+        float stretchLeft = lead == Direction.LEFT ? stretchLead : stretchTrail;
+        float stretchRight = lead == Direction.LEFT ? stretchTrail : stretchLead;
+
+        return new BfcSlot(
+            startIndex,
+            fitLeft,
+            y,
+            availableWidth - fitLeft - fitRight,
+            availableWidth - stretchLeft - stretchRight,
+            slotHeight
+        );
+    }
+
+    private int clearedSegment(Clear clear) {
+        int leftEnd = lastPlacedFloats[Direction.LEFT.slot()][1];
+        int rightEnd = lastPlacedFloats[Direction.RIGHT.slot()][1];
+        return switch (clear) {
+            case NONE -> NO_REGION;
+            case LEFT -> leftEnd > 0 ? leftEnd : NO_REGION;
+            case RIGHT -> rightEnd > 0 ? rightEnd : NO_REGION;
+            case BOTH -> (leftEnd > 0 || rightEnd > 0) ? Math.max(leftEnd, rightEnd) : NO_REGION;
+        };
+    }
+
     // === Placement implementation ===
 
     private PlacedFloatedBox placeFloatedBoxInner(
@@ -824,6 +977,29 @@ public final class FloatContext {
 
         private Segment copy() {
             return new Segment(startY, endY, leftInset, rightInset, floatLeft, floatRight);
+        }
+
+        /**
+         * Widens this segment's float insets and occupied sides to cover {@code other}'s.
+         */
+        private void union(Segment other) {
+            leftInset = Math.max(leftInset, other.leftInset);
+            rightInset = Math.max(rightInset, other.rightInset);
+            floatLeft = floatLeft || other.floatLeft;
+            floatRight = floatRight || other.floatRight;
+        }
+
+        /**
+         * Whether this segment is narrower than {@code other} on either side: a larger inset,
+         * or a float on a side where {@code other} has none. The latter counts even if the
+         * inset does not grow, because {@link #findBfcSlot} only applies the insets on sides
+         * that have a float.
+         */
+        private boolean isNarrowerThan(Segment other) {
+            return leftInset > other.leftInset
+                   || rightInset > other.rightInset
+                   || (floatLeft && !other.floatLeft)
+                   || (floatRight && !other.floatRight);
         }
 
         private BfcRegion toRegion() {
