@@ -73,6 +73,11 @@ snapshot.
   margin-isolation part (float containment awaits F7). Known partials: BK-15's
   height-only aspect-ratio derivation and BK-04's block stretch exclusion
   (tracked in the workspace residuals).
+- **P5 (partial)**: ST-02/ST-03/ST-04 keyword model + `AlignmentHelper`, BK-14/BK-16
+  and FL-18/19/20 are merged across block/flex/grid. Deferred: ST-01/FL-17/BK-19
+  (sizing-keyword parser and its flex/stretch consumers), ST-08 (min/max type
+  change, per the S5 decision) and FL-15/16 (need the 2.0
+  `knownDimensionsAreDefinite` component).
 - **P4 (done, tag `p4-complete`)**: leaf/block/flex/grid populate
   `ScrollableOverflow`; `scrollWidth()`/`scrollHeight()` derive the reachable
   range from it (including reversed origins); `ScrollableOverflowUtil` shared by

@@ -34,11 +34,10 @@ import dev.vfyjxf.taffy.style.TaffyDirection;
  *       {@code compute_alignment_offset}.</li>
  * </ul>
  *
- * <p><b>Scope of this batch.</b> The helper is not wired into the flexbox, grid or block
- * algorithms yet: this batch only adds the model and its unit tests (the call sites are
- * wired in the later P5 batches). Consequently, call sites that still switch directly on
- * the enums map {@code SAFE_*} to the behaviour of the corresponding non-safe keyword and
- * {@code NORMAL} to the legacy {@code AUTO} behaviour.</p>
+ * <p><b>Scope.</b> The flexbox, grid and block algorithms wire this helper (P5): the
+ * algorithms resolve {@code NORMAL}/{@code SELF_*}/{@code SAFE_*} through it, while
+ * {@code AUTO} remains the Java "unset" sentinel. Absolute positioning still bypasses the
+ * container fallback for flex (OF-05/P6); grid/block abspos only normalize the new keywords.</p>
  *
  * <p><b>Direction.</b> {@link TaffyDirection#INHERIT} is a Java extension resolved by
  * {@code LayoutComputer} before layout; this helper treats it as LTR so an unresolved

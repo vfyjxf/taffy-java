@@ -59,8 +59,8 @@ public enum AlignItems {
      * writing mode/direction rather than the container's (upstream #1077).
      * <p>
      * Equivalent to {@link #START} when the item's direction matches the container's and to
-     * {@link #END} when they differ in the inline axis. Resolution is not wired into the layout
-     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     * {@link #END} when they differ in the inline axis. The layout algorithms resolve this through
+     * {@code AlignmentHelper.resolveSelfRelative}.
      */
     SELF_START,
 

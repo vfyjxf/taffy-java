@@ -44,6 +44,17 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
   instructions in `gentest/README.md`.
 
+### P5 additions (alignment keywords)
+
+- `NORMAL`, `SELF_START`/`SELF_END` and the `SAFE_*` overflow-position variants were
+  appended to `AlignItems`, `AlignSelf`, `AlignContent` and `JustifyContent` (old
+  ordinals unchanged; `AUTO` remains the "unset" sentinel). `AlignmentHelper`
+  provides normal/self/safe resolution, fallbacks and offsets, wired into the block,
+  flexbox and grid algorithms.
+- P5 also adds block `justify-self` (BK-16), flex intrinsic `CONTENT_SIZE` sizing with
+  the definite-preferred fast path (FL-18), on-demand transferred min/max sizes
+  (FL-19) and column intrinsic cross clamping (FL-20).
+
 ### P4 additions (scrollable overflow)
 
 - `Layout.scrollableOverflow()` / `LayoutOutput.scrollableOverflow()` are now
@@ -125,6 +136,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   [docs/migration-1.2.md](docs/migration-1.2.md) explains how to compare your
   output against it. Downstream pixel/snapshot tests may need updated
   expectations.
+- **P5 batch (partial)**: explicit `NORMAL` can override inherited alignment;
+  `SELF_START`/`SELF_END` resolve against the item's own direction; `SAFE_*` falls
+  back to start only on overflow. Block-level boxes honor `justify-self`; flex
+  intrinsic main sizing uses the content size and transferred aspect-ratio
+  min/max sizes are applied on demand. ST-01/FL-17/BK-19 (sizing-keyword parser,
+  flex consumption, stretch-height margins) and ST-08 (min/max type change) remain
+  deferred; FL-15/16 wait for the 2.0 `knownDimensionsAreDefinite` component.
 - **P4 batch**: `scrollWidth()`/`scrollHeight()` now report the reachable range
   from the scrollable-overflow rectangle instead of `contentSize`; leaf
   `contentSize` is `start padding + measured + (scroll ? end padding)` (RTL
