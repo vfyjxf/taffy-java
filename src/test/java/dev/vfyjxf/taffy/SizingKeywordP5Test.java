@@ -569,6 +569,103 @@ public class SizingKeywordP5Test {
         }
     }
 
+
+    // ------------------------------------------------------------------
+    // 5. flex cross-axis wiring (FL-17)
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("flex cross axis (FL-17)")
+    class FlexCrossKeywordTests {
+
+        @Test
+        @DisplayName("height: min-content measures under a min-content constraint")
+        void crossMinContentMeasuresUnderMinContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.minContent()));
+
+            assertEquals(20f, layout.size().height, EPSILON);
+            assertTrue(measure.calls.stream().anyMatch(call -> call.availableSpaces().height.isMinContent()),
+                    "the hypothetical cross size is measured under min-content");
+        }
+
+        @Test
+        @DisplayName("height: max-content measures under a max-content constraint")
+        void crossMaxContentMeasuresUnderMaxContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.maxContent()));
+
+            assertEquals(80f, layout.size().height, EPSILON);
+            assertTrue(measure.calls.stream().anyMatch(call -> call.availableSpaces().height.isMaxContent()),
+                    "the hypothetical cross size is measured under max-content");
+        }
+
+        @Test
+        @DisplayName("height: fit-content measures under the cross stretch size")
+        void crossFitContentMeasuresUnderCrossStretchSize() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.fitContent()));
+
+            assertEquals(80f, layout.size().height, EPSILON);
+            assertTrue(measure.calls.stream().anyMatch(call ->
+                            call.availableSpaces().height.isDefinite()
+                                    && Math.abs(call.availableSpaces().height.getValue() - 100f) < EPSILON),
+                    "bare fit-content measures under the definite container cross size");
+        }
+
+        @Test
+        @DisplayName("height: fit-content(40px) measures under the limit")
+        void crossFitContentLengthClampsToLimit() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 10f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.AUTO,
+                            TaffyDimension.fitContent(LengthPercentage.length(40f))));
+
+            assertEquals(40f, layout.size().height, EPSILON);
+            assertTrue(measure.calls.stream().anyMatch(call ->
+                            call.availableSpaces().height.isDefinite()
+                                    && Math.abs(call.availableSpaces().height.getValue() - 40f) < EPSILON),
+                    "fit-content(40px) measures under a 40px constraint");
+        }
+
+        @Test
+        @DisplayName("height: fit-content(calc()) measures under the resolved limit")
+        void crossFitContentCalcUsesCrossBasis() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 10f, 80f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.AUTO,
+                            TaffyDimension.fitContent(LengthPercentage.calc(
+                                    CalcExpression.percentPlusLength(0.5f, 10f)))));
+
+            assertEquals(60f, layout.size().height, EPSILON);
+            assertTrue(measure.calls.stream().anyMatch(call ->
+                            call.availableSpaces().height.isDefinite()
+                                    && Math.abs(call.availableSpaces().height.getValue() - 60f) < EPSILON),
+                    "fit-content(calc(50% + 10px)) measures under a 60px constraint");
+        }
+
+        @Test
+        @DisplayName("an unresolvable fit-content(percentage) cross keyword behaves as content")
+        void crossFitContentPercentUnresolvableBehavesAsContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 80f);
+            Layout layout = rowLayout(300f, Float.NaN, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.AUTO,
+                            TaffyDimension.fitContent(LengthPercentage.percent(0.5f))));
+
+            assertEquals(80f, layout.size().height, EPSILON,
+                    "unknown cross basis falls back to the default max-content constraint");
+            assertTrue(measure.calls.stream().anyMatch(call -> call.availableSpaces().height.isMaxContent()),
+                    "the keyword is treated as content, not as a definite percentage");
+            assertFalse(measure.calls.stream().anyMatch(call ->
+                            call.availableSpaces().height.isDefinite()
+                                    && Math.abs(call.availableSpaces().height.getValue() - 150f) < EPSILON),
+                    "no percentage limit is resolved without a basis");
+        }
+    }
+
     // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
@@ -639,7 +736,9 @@ public class SizingKeywordP5Test {
         containerStyle.display = TaffyDisplay.FLEX;
         containerStyle.flexDirection = FlexDirection.ROW;
         containerStyle.alignItems = AlignItems.START;
-        containerStyle.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
+        containerStyle.size = new TaffySize<>(
+                TaffyDimension.length(width),
+                Float.isNaN(height) ? TaffyDimension.AUTO : TaffyDimension.length(height));
         NodeId container = tree.newLeaf(containerStyle);
 
         TaffyStyle childStyle = new TaffyStyle();

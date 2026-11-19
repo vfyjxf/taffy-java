@@ -1766,6 +1766,20 @@ public class FlexboxComputer {
                 availCross = AvailableSpace.definite(val);
             }
 
+            // ST-01/FL-17 (#1099): a cross size that is a sizing keyword (min-content,
+            // max-content, fit-content, fit-content(...)) determines the available-space
+            // constraint the item is measured under. 'stretch' is not resolved here: it
+            // stretches to the flex line like align-self: stretch (determineUsedCrossSize).
+            TaffyStyle childStyle = layoutComputer.getTree().getStyle(item.nodeId);
+            TaffyDimension crossDim = isRow ? childStyle.getSize().height : childStyle.getSize().width;
+            float crossResolutionBasis = isRow ? nodeInnerSize.height : nodeInnerSize.width;
+            float crossStretchSize = TaffyMath.maybeSub(crossResolutionBasis, marginCross);
+            SizingKeyword.Resolution crossKeyword = SizingKeyword.resolve(
+                crossDim, crossStretchSize, crossResolutionBasis);
+            if (crossKeyword != null && crossKeyword.isMeasure()) {
+                availCross = crossKeyword.getMeasureAvailableSpace();
+            }
+
             float childInnerCross;
             if (!Float.isNaN(itemCross)) {
                 childInnerCross = itemCross;
@@ -1971,9 +1985,23 @@ public class FlexboxComputer {
                                                 ? new FloatSize(targetMain, NaN)
                                                 : new FloatSize(NaN, targetMain);
 
+                    // ST-01/FL-17: a sizing keyword on the cross axis replaces the definite
+                    // line cross size as the constraint for this measurement. `stretch` is
+                    // ignored here (it is staged from the line in determineUsedCrossSize).
+                    TaffyStyle itemStyle = layoutComputer.getTree().getStyle(item.nodeId);
+                    TaffyDimension crossDim = isRow ? itemStyle.getSize().height : itemStyle.getSize().width;
+                    float crossResolutionBasis = isRow ? nodeInnerSize.height : nodeInnerSize.width;
+                    float crossStretchSize = TaffyMath.maybeSub(crossResolutionBasis, marginCross);
+                    SizingKeyword.Resolution crossKeyword = SizingKeyword.resolve(
+                        crossDim, crossStretchSize, crossResolutionBasis);
+                    AvailableSpace measuredCrossAvail =
+                        crossKeyword != null && crossKeyword.isMeasure()
+                        ? crossKeyword.getMeasureAvailableSpace()
+                        : AvailableSpace.definite(availableCross);
+
                     TaffySize<AvailableSpace> availSpace = new TaffySize<>(
-                        isRow ? AvailableSpace.definite(targetMain) : AvailableSpace.definite(availableCross),
-                        isRow ? AvailableSpace.definite(availableCross) : AvailableSpace.definite(targetMain)
+                        isRow ? AvailableSpace.definite(targetMain) : measuredCrossAvail,
+                        isRow ? measuredCrossAvail : AvailableSpace.definite(targetMain)
                     );
 
                     // Use measureChildSize to avoid setting unroundedLayout prematurely
