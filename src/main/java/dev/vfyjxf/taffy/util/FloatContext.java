@@ -1,5 +1,6 @@
 package dev.vfyjxf.taffy.util;
 
+import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.Clear;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 
@@ -938,6 +939,79 @@ public final class FloatContext {
             return left;
         }
         return Math.max(left, right);
+    }
+
+    /**
+     * Computes the intrinsic (content-based) width contribution of a set of floats.
+     *
+     * <p>This ports upstream's {@code FloatIntrinsicWidthCalculator} (#1055/#1150). It is used
+     * only while sizing an auto-width block container: under a definite available width the
+     * floats' max-content sides are clamped to that width but never below the widest single
+     * float; under max-content they accumulate; under min-content only the widest float
+     * contributes. {@code clear} resets the cleared side sums before the new float is added.</p>
+     *
+     * <p>This is linear float accounting only; it does not place boxes. Per the FT-03 scope it
+     * feeds {@code BlockComputer.determineContentBasedContainerWidth}; no non-float result
+     * changes.</p>
+     */
+    public static final class IntrinsicWidthCalculator {
+        private final AvailableSpace availableWidth;
+        private final float[] sideSums = new float[2];
+        private float contribution;
+        private float widest;
+
+        /**
+         * Creates a calculator for the container's available width.
+         */
+        public IntrinsicWidthCalculator(AvailableSpace availableWidth) {
+            this.availableWidth = Objects.requireNonNull(availableWidth, "availableWidth");
+        }
+
+        /**
+         * Adds one floated box's outer width (border box + horizontal margins).
+         */
+        public void addFloat(float width, Direction direction, Clear clear) {
+            Objects.requireNonNull(direction, "direction");
+            Objects.requireNonNull(clear, "clear");
+            if (availableWidth.isMinContent()) {
+                contribution = Math.max(contribution, width);
+            } else {
+                // Definite and max-content both accumulate adjacent floats on each side.
+                if (clear.clearsLeft()) {
+                    sideSums[Direction.LEFT.slot()] = 0.0f;
+                }
+                if (clear.clearsRight()) {
+                    sideSums[Direction.RIGHT.slot()] = 0.0f;
+                }
+                sideSums[direction.slot()] += width;
+                contribution = Math.max(contribution, sideSums[0] + sideSums[1]);
+            }
+            widest = Math.max(widest, width);
+        }
+
+        /**
+         * Returns the accumulated side sum for one side.
+         */
+        public float sideSum(Direction direction) {
+            return sideSums[direction.slot()];
+        }
+
+        /**
+         * Returns the widest single float contributed so far.
+         */
+        public float widest() {
+            return widest;
+        }
+
+        /**
+         * Returns the computed intrinsic width contribution.
+         */
+        public float result() {
+            if (availableWidth.isDefinite()) {
+                return Math.max(Math.min(contribution, availableWidth.getValue()), widest);
+            }
+            return contribution;
+        }
     }
 
     /**
