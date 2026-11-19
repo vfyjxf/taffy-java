@@ -39,7 +39,27 @@ public enum AlignSelf {
      * keyword that can override an inherited alignment. Appended after the existing constants so
      * their ordinals stay stable (1.2 compatibility policy S2/Q2).
      */
-    NORMAL;
+    NORMAL,
+
+    /**
+     * Items are packed toward the start of the axis as determined by the item's own
+     * writing mode/direction rather than the container's (upstream #1077).
+     * <p>
+     * Equivalent to {@link #START} when the item's direction matches the container's and to
+     * {@link #END} when they differ in the inline axis. Resolution is not wired into the layout
+     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     */
+    SELF_START,
+
+    /**
+     * Items are packed toward the end of the axis as determined by the item's own writing
+     * mode/direction rather than the container's (upstream #1077).
+     * <p>
+     * Equivalent to {@link #END} when the item's direction matches the container's and to
+     * {@link #START} when they differ in the inline axis. Resolution is not wired into the layout
+     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     */
+    SELF_END;
 
     /**
      * Creates an AlignSelf from an AlignItems value.
@@ -59,6 +79,8 @@ public enum AlignSelf {
             case BASELINE -> BASELINE;
             case STRETCH -> STRETCH;
             case NORMAL -> NORMAL;
+            case SELF_START -> SELF_START;
+            case SELF_END -> SELF_END;
             case AUTO -> STRETCH; // defensive (handled above)
         };
     }
@@ -75,6 +97,8 @@ public enum AlignSelf {
             case CENTER -> AlignItems.CENTER;
             case BASELINE -> AlignItems.BASELINE;
             case NORMAL -> AlignItems.NORMAL;
+            case SELF_START -> AlignItems.SELF_START;
+            case SELF_END -> AlignItems.SELF_END;
             case STRETCH, AUTO -> AlignItems.STRETCH;
         };
     }

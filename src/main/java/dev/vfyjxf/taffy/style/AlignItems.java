@@ -52,5 +52,25 @@ public enum AlignItems {
      * keyword that can override an inherited alignment. Appended after the existing constants so
      * their ordinals stay stable (1.2 compatibility policy S2/Q2).
      */
-    NORMAL;
+    NORMAL,
+
+    /**
+     * Items are packed toward the start of the axis as determined by the item's own
+     * writing mode/direction rather than the container's (upstream #1077).
+     * <p>
+     * Equivalent to {@link #START} when the item's direction matches the container's and to
+     * {@link #END} when they differ in the inline axis. Resolution is not wired into the layout
+     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     */
+    SELF_START,
+
+    /**
+     * Items are packed toward the end of the axis as determined by the item's own writing
+     * mode/direction rather than the container's (upstream #1077).
+     * <p>
+     * Equivalent to {@link #END} when the item's direction matches the container's and to
+     * {@link #START} when they differ in the inline axis. Resolution is not wired into the layout
+     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     */
+    SELF_END;
 }
