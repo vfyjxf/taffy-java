@@ -73,6 +73,26 @@ public final class TaffyStyle {
      */
     public float scrollbarWidth = 0;
 
+    // === Containment Properties ===
+
+    /**
+     * The layout-affecting parts of the CSS {@code contain} property.
+     *
+     * <p>This port implements the {@link Contain#LAYOUT} and {@link Contain#PAINT} containment
+     * types, following upstream taffy #1128 ({@code 4ae4219}): both make the box establish an
+     * independent formatting context (its margins do not collapse with those of its children, it
+     * contains its own floats and avoids external ones), and {@link Contain#LAYOUT} additionally
+     * suppresses the box's baseline for baseline-alignment purposes. The {@link Contain#SIZE} and
+     * {@link Contain#INLINE_SIZE} flags exist for CSS/API parity but have no layout effect, matching
+     * upstream (size containment is not implemented there either).</p>
+     *
+     * <p>The field defaults to {@link Contain#NONE}, so a style that never sets it lays out exactly
+     * as before containment existed.</p>
+     *
+     * @see Contain
+     */
+    public Contain contain = Contain.NONE;
+
     // === Float Properties ===
 
     /**
@@ -486,6 +506,7 @@ public final class TaffyStyle {
         copy.boxSizing = this.boxSizing;
         copy.overflow = this.overflow.copy();
         copy.scrollbarWidth = this.scrollbarWidth;
+        copy.contain = this.contain;
         copy.float_ = this.float_;
         copy.clear = this.clear;
         copy.position = this.position;
@@ -584,6 +605,16 @@ public final class TaffyStyle {
     public TaffyPoint<Overflow> getOverflow() {return overflow;}
 
     public float getScrollbarWidth() {return scrollbarWidth;}
+
+    /**
+     * Returns the layout-affecting parts of this style's CSS {@code contain} property.
+     *
+     * <p>Never returns {@code null}: a {@code null} field (which a caller could only produce by
+     * assigning it explicitly) reads back as {@link Contain#NONE}.</p>
+     *
+     * @return the containment flags of this style
+     */
+    public Contain getContain() {return contain == null ? Contain.NONE : contain;}
 
     /**
      * Returns the CSS {@code float} value of this style. The field backing it is named
