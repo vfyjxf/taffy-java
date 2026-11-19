@@ -1134,7 +1134,13 @@ public class BlockComputer {
             boolean pushedBelowFloat = false;
             float minYForSlot = committedYOffset + activeCollapsibleMarginSet.resolve();
             if (blockContext.hasActiveFloats(minYForSlot)) {
-                float minHeight = !Float.isNaN(item.size.height) ? item.size.height : 0.0f;
+                // Only the styled (minimum) height is known before the box is laid out. Clamp it
+                // by min/max and fall back to min-height, matching upstream #1385; otherwise a
+                // style height larger than max-height would check the box against floats it can
+                // never reach.
+                float clampedStyleHeight = maybeClamp(
+                    item.size, item.minSize, item.maxSize).height;
+                float minHeight = !Float.isNaN(clampedStyleHeight) ? clampedStyleHeight : 0.0f;
                 if (!Float.isNaN(item.minSize.height)) {
                     minHeight = Math.max(minHeight, item.minSize.height);
                 }
