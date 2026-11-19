@@ -5684,79 +5684,73 @@ public class GridComputer {
      * Helper method to distribute space to tracks while respecting fit-content limits.
      * Returns the remaining space that couldn't be distributed.
      */
+    /**
+     * Distribute space to tracks with a fit-content() cap but no growth-limit cap, as upstream's
+     * {@code fit_content_limited_growth_limit} does for the tracks this variant is used for.
+     * Returns the remaining space that couldn't be distributed.
+     */
     private float distributeSpaceToTracks(
         float spaceToDistribute,
         IntList targetTracks,
         FloatList sizes,
         Int2FloatMap fitContentLimits) {
-
-        float remaining = spaceToDistribute;
-
-        while (remaining > 0.001f) {
-            // Find tracks that can still grow (not at fit-content limit)
-            IntList growableTracks = new IntArrayList();
-            for (int c : targetTracks) {
-                float limit = fitContentLimits.get(c);
-                if (Float.isNaN(limit) || sizes.getFloat(c) < limit - 0.001f) {
-                    growableTracks.add(c);
-                }
-            }
-
-            if (growableTracks.isEmpty()) {
-                break;  // All tracks at limit
-            }
-
-            float extraPerTrack = remaining / growableTracks.size();
-            float distributed = 0f;
-
-            for (int c : growableTracks) {
-                float limit = fitContentLimits.get(c);
-                float currentSize = sizes.getFloat(c);
-                float increase = extraPerTrack;
-
-                if (!Float.isNaN(limit)) {
-                    // Limit growth for fit-content tracks
-                    float maxIncrease = limit - currentSize;
-                    increase = Math.min(increase, Math.max(0f, maxIncrease));
-                }
-
-                sizes.set(c, currentSize + increase);
-                distributed += increase;
-            }
-
-            remaining -= distributed;
-
-            // Prevent infinite loop if we can't distribute anything
-            if (distributed < 0.001f) {
-                break;
-            }
+        FloatList limits = new FloatArrayList(Math.max(1, sizes.size()));
+        for (int i = 0; i < sizes.size(); i++) {
+            limits.add(NaN);
         }
-
-        return remaining;
+        for (var entry : fitContentLimits.int2FloatEntrySet()) {
+            limits.set(entry.getIntKey(), entry.getFloatValue());
+        }
+        return distributeSpaceUpToLimits(spaceToDistribute, targetTracks, sizes, limits);
     }
 
     /**
-     * Distribute space to tracks while respecting growth limits.
-     * This follows the CSS Grid algorithm where space is distributed only to tracks
-     * that haven't reached their growth limit yet.
-     * Returns the remaining space that couldn't be distributed.
+     * Distribute space to tracks while respecting their growth limits.
+     * This follows the CSS Grid algorithm where space is distributed only to tracks that haven't
+     * reached their growth limit yet. Returns the remaining space that couldn't be distributed.
      */
     private float distributeSpaceWithGrowthLimit(
         float spaceToDistribute,
         IntList targetTracks,
         FloatList sizes,
         FloatList growthLimits) {
+        return distributeSpaceUpToLimits(spaceToDistribute, targetTracks, sizes, growthLimits);
+    }
+
+    /**
+     * The shared "distribute space up to limits" loop (CSS Grid 11.5.1; upstream
+     * {@code distribute_space_up_to_limits}): space is spread evenly over all still-growable affected
+     * tracks and never past a track's limit. A {@code NaN} limit means "no limit".
+     *
+     * <p>GR-04 / upstream #1001 ({@code 51dfca63}): the upstream version keeps a per-track
+     * <em>item-incurred increase</em> separate from the affected property, and its initial version
+     * forgot to subtract that increase when computing the per-iteration headroom, so a track could
+     * grow past its limit (and the acceptance check accepted it because it also ignored the
+     * increase). This port updates the affected size in place on every iteration, so the headroom
+     * computed from the current size always reflects the increases already distributed for the
+     * current item. The invariant therefore holds by construction; both call-site families
+     * (growth-limit-limited and fit-content-limited) share this single implementation so the rule
+     * only exists once.</p>
+     *
+     * @param limits per-track limit, indexed by absolute track index ({@code NaN} = no limit)
+     * @return the space that could not be distributed
+     */
+    private float distributeSpaceUpToLimits(
+        float spaceToDistribute,
+        IntList targetTracks,
+        FloatList sizes,
+        FloatList limits) {
 
         float remaining = spaceToDistribute;
 
         while (remaining > 0.001f) {
-            // Find tracks that can still grow (not at growth limit)
+            // Find tracks that can still grow (not at their limit). The current size already
+            // includes every increase incurred so far, so this is the item-incurred-increase-aware
+            // headroom test from upstream #1001.
             IntList growableTracks = new IntArrayList();
             for (int c : targetTracks) {
                 float currentSize = Float.isNaN(sizes.getFloat(c)) ? 0f : sizes.getFloat(c);
-                float limit = Float.isNaN(growthLimits.getFloat(c)) ? Float.MAX_VALUE : growthLimits.getFloat(c);
-
-                // Track can grow if it hasn't reached its limit
+                float limit = limits == null || Float.isNaN(limits.getFloat(c)) ? Float.MAX_VALUE : limits.getFloat(c);
                 if (currentSize < limit - 0.001f) {
                     growableTracks.add(c);
                 }
@@ -5770,10 +5764,10 @@ public class GridComputer {
             float distributed = 0f;
 
             for (int c : growableTracks) {
-                float currentSize = !Float.isNaN(sizes.getFloat(c)) ? sizes.getFloat(c) : 0f;
-                float limit = !Float.isNaN(growthLimits.getFloat(c)) ? growthLimits.getFloat(c) : Float.MAX_VALUE;
+                float currentSize = Float.isNaN(sizes.getFloat(c)) ? 0f : sizes.getFloat(c);
+                float limit = limits == null || Float.isNaN(limits.getFloat(c)) ? Float.MAX_VALUE : limits.getFloat(c);
 
-                // Calculate maximum possible increase
+                // Clamp the per-track increase to the remaining headroom: never past the limit
                 float maxIncrease = limit - currentSize;
                 float increase = Math.min(extraPerTrack, Math.max(0f, maxIncrease));
 

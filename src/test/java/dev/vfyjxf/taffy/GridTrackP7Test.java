@@ -212,6 +212,78 @@ class GridTrackP7Test {
     }
 
     // ------------------------------------------------------------------
+    // GR-04: space distribution does not grow tracks past their growth limit
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("GR-04: distribution respects growth limits")
+    class DistributionGrowthLimits {
+
+        @Test
+        @DisplayName("grid_definite_size_auto_tracks_asymmetric_max_content")
+        void definiteSizeAutoTracksAsymmetricMaxContent() {
+            TaffyTree tree = new TaffyTree();
+
+            TaffyStyle firstStyle = new TaffyStyle();
+            MeasureFunc firstMeasure = ahemTextMeasure("XX\u200BXX", false);
+            NodeId first = tree.newLeafWithMeasure(firstStyle, firstMeasure);
+
+            TaffyStyle secondStyle = new TaffyStyle();
+            MeasureFunc secondMeasure = ahemTextMeasure("XX\u200BXX\u200BXX\u200BXX", false);
+            NodeId second = tree.newLeafWithMeasure(secondStyle, secondMeasure);
+
+            TaffyStyle grid = new TaffyStyle();
+            grid.display = TaffyDisplay.GRID;
+            grid.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.AUTO);
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.auto(), TrackSizingFunction.auto());
+            NodeId root = tree.newWithChildren(grid, first, second);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Chrome 151: tracks resolve to [40, 60] inside the 100px container.
+            assertSize(tree.getLayout(root), 100f, 20f, "container");
+            assertLocation(tree.getLayout(first), 0f, 0f, "first item");
+            assertSize(tree.getLayout(first), 40f, 20f, "first item");
+            assertLocation(tree.getLayout(second), 40f, 0f, "second item");
+            assertSize(tree.getLayout(second), 60f, 20f, "second item");
+        }
+
+        @Test
+        @DisplayName("grid_definite_size_auto_tracks_asymmetric_max_content_issue_1000")
+        void definiteSizeAutoTracksAsymmetricMaxContentIssue1000() {
+            TaffyTree tree = new TaffyTree();
+
+            TaffyStyle firstStyle = new TaffyStyle();
+            MeasureFunc firstMeasure = ahemTextMeasure(
+                "XXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXX", false);
+            NodeId first = tree.newLeafWithMeasure(firstStyle, firstMeasure);
+
+            TaffyStyle secondStyle = new TaffyStyle();
+            secondStyle.maxSize = new TaffySize<>(TaffyDimension.length(674f), TaffyDimension.AUTO);
+            MeasureFunc secondMeasure = ahemTextMeasure(
+                "XXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX"
+                    + "\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXXXXXX\u200BXX", false);
+            NodeId second = tree.newLeafWithMeasure(secondStyle, secondMeasure);
+
+            TaffyStyle grid = new TaffyStyle();
+            grid.display = TaffyDisplay.GRID;
+            grid.size = new TaffySize<>(TaffyDimension.length(928f), TaffyDimension.AUTO);
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.auto(), TrackSizingFunction.auto());
+            NodeId root = tree.newWithChildren(grid, first, second);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // Issue #1000 on Chrome 151: the 928px grid with min-contents 60 and max-contents 400/674
+            // resolves to [400, 528]. The second track must not receive more than its growth limit.
+            assertSize(tree.getLayout(root), 928f, 20f, "container");
+            assertLocation(tree.getLayout(first), 0f, 0f, "first item");
+            assertSize(tree.getLayout(first), 400f, 20f, "first item");
+            assertLocation(tree.getLayout(second), 400f, 0f, "second item");
+            assertSize(tree.getLayout(second), 528f, 20f, "second item");
+        }
+    }
+
+    // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
 
