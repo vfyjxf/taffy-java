@@ -187,6 +187,13 @@ public class BlockComputer {
     public LayoutOutput compute(
         NodeId node, LayoutInput inputs, TaffyStyle style, BlockContext inheritedContext) {
         TaffyTree tree = layoutComputer.getTree();
+        // The tree root is the initial formatting context root (CSS2 §9.4.1): its own floats
+        // contribute to its auto height. This is deliberately separate from the BFC/margin
+        // collapse decision below so ordinary blocks keep their existing behavior.
+        boolean isTreeRoot = tree.getParent(node) == null;
+        // A box laid out as a float establishes its own BFC even when its display is BLOCK. The
+        // flag is passed through BlockContext by the parent's float branch.
+        boolean laidOutAsFloat = inheritedContext != null && inheritedContext.isFloatBfcRoot();
         FloatSize knownDimensions = inputs.knownDimensions();
         FloatSize parentSize = inputs.parentSize();
         TaffySize<AvailableSpace> availableSpace = inputs.availableSpace();
@@ -242,7 +249,11 @@ public class BlockComputer {
             style.getDisplay() == TaffyDisplay.FLOW_ROOT ||
             style.getOverflow().x.isScrollContainer() ||
             style.getOverflow().y.isScrollContainer() ||
-            contain.establishesIndependentFormattingContext();
+            contain.establishesIndependentFormattingContext() ||
+            laidOutAsFloat;
+        // Only a BFC root (or the initial tree-root formatting context) contains its floats in
+        // its auto height; a plain nested block keeps ignoring them.
+        boolean containsFloats = establishesNewBlockFormattingContext || isTreeRoot;
 
         // Determine margin collapsing behaviour.
         //
@@ -459,7 +470,7 @@ public class BlockComputer {
             // edge of any floated descendant, and the root's bottom padding and border sit below
             // that (upstream #1384, f6b87ac4). This runs before min/max clamping, matching the
             // upstream order.
-            if (establishesNewBlockFormattingContext && layoutResult.floatContentContribution > 0.0f) {
+            if (containsFloats && layoutResult.floatContentContribution > 0.0f) {
                 contentHeight = Math.max(
                     contentHeight,
                     layoutResult.floatContentContribution + contentBoxInset.bottom
@@ -1092,7 +1103,10 @@ public class BlockComputer {
                     // A float establishes a new block formatting context: its margins never
                     // collapse with its children's or its siblings'.
                     TaffyLine.FALSE,
-                    runMode
+                    runMode,
+                    // Marks this immediate child layout as a float so its own floats are
+                    // contained by its height; the context also bypasses the normal cache.
+                    BlockContext.rootAsFloat()
                 );
                 FloatSize finalSize = itemOutput.size();
                 // Negative margins can make the margin box smaller than the border box; the
@@ -1481,9 +1495,10 @@ public class BlockComputer {
                     : floatSlotX + extraLeft + insetOffsetX;
             }
 
-            if (childBlockContext != null) {
+            if (childBlockContext != null && childBlockContext.hasFloatedContentContribution()) {
                 // Floats placed by a same-BFC child are relative to its border top; merge them
-                // into this block in this block's local coordinate space.
+                // into this block in this block's local coordinate space. A child with no floats
+                // must not contribute its y position.
                 blockContext.addChildFloatedContentHeightContribution(
                     y - insetOffsetY + childBlockContext.floatedContentHeightContribution());
             }

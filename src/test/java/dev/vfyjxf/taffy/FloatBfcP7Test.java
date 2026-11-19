@@ -222,8 +222,9 @@ public class FloatBfcP7Test {
 
         tree.computeLayout(root, TaffySize.maxContent());
 
-        // 80 + 70 = 150; the non-BFC root contains no floats, so its height stays 0.
-        assertSize(tree.getLayout(root), 150f, 0f, "root");
+        // 80 + 70 = 150 for the width. The tree root is the initial formatting context, so its
+        // auto height now contains the 10px floats.
+        assertSize(tree.getLayout(root), 150f, 10f, "root");
     }
 
     @Test

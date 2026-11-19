@@ -303,24 +303,30 @@ public class BlockFloatP7Test {
     }
 
     @Test
-    @DisplayName("a plain block does not contain its floats (only a BFC root does)")
+    @DisplayName("a non-root plain block does not contain its floats (only a BFC root does)")
     void plainBlockDoesNotContainFloat() {
         TaffyTree tree = new TaffyTree();
 
-        TaffyStyle rootStyle = sized(200f, Float.NaN);
-        rootStyle.padding = TaffyRect.ltrb(
+        TaffyStyle innerStyle = sized(200f, Float.NaN);
+        innerStyle.padding = TaffyRect.ltrb(
             LengthPercentage.ZERO,
             LengthPercentage.ZERO,
             LengthPercentage.ZERO,
             LengthPercentage.length(10f)
         );
         NodeId floatNode = tree.newLeaf(floated(TaffyFloat.LEFT, 50f, 30f));
-        NodeId root = tree.newWithChildren(rootStyle, floatNode);
+        NodeId inner = tree.newWithChildren(innerStyle, floatNode);
+
+        // The outer flow-root contains the float (shared BFC contribution); the non-root plain
+        // block inside it does not, so only its bottom padding contributes to its auto height.
+        TaffyStyle rootStyle = flowRoot();
+        rootStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, inner);
 
         tree.computeLayout(root, TaffySize.maxContent());
 
-        // Only the bottom padding contributes to the non-BFC block's auto height.
-        assertSize(tree.getLayout(root), 200f, 10f, "root");
+        assertSize(tree.getLayout(inner), 200f, 10f, "inner");
+        assertSize(tree.getLayout(root), 200f, 30f, "root");
     }
 
     @Test
