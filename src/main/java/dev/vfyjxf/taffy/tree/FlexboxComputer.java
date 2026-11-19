@@ -261,11 +261,12 @@ public class FlexboxComputer {
                 isScrollContainer, clientSize, reversedX, reversedY, padding);
 
             // Still need to layout absolute children even if no flow children.
-            // When justify-content is unspecified, use START for absolute positioning (matches previous null-sentinel behavior).
-            JustifyContent jc = style.justifyContent != AlignContent.AUTO ? style.getJustifyContent() : JustifyContent.START;
+            // FL-23 (#1072): the default justify-content behaves as flex-start (upstream resolves
+            // `normal` to FLEX_START for flex containers), not writing-mode-relative start.
+            JustifyContent jc = style.justifyContent != AlignContent.AUTO ? style.getJustifyContent() : JustifyContent.FLEX_START;
             FloatRect absoluteOverflow = layoutAbsoluteChildren(
                 node, containerSize, contentBoxInset, flexDirection, style.getAlignItems(), jc,
-                isWrapReverse, border, scrollbarGutter, paddingBoxInset, overflowContainer);
+                isWrapReverse, isRtl, border, scrollbarGutter, paddingBoxInset, overflowContainer);
 
             // Layout hidden children (display: none)
             for (int order = 0; order < children.size(); order++) {
@@ -2970,11 +2971,12 @@ public class FlexboxComputer {
         // Layout absolutely positioned children and union their contributions. An absolutely
         // positioned box does not extend the container's padding (upstream oof.rs passes a zero
         // margin and a zero-padding container), so only its own border box/overflow propagates.
-        // When justify-content is unspecified, use START for absolute positioning (matches previous null-sentinel behavior).
-        JustifyContent jc = containerStyle.justifyContent != AlignContent.AUTO ? containerStyle.getJustifyContent() : JustifyContent.START;
+        // FL-23 (#1072): the default justify-content behaves as flex-start (upstream resolves
+        // `normal` to FLEX_START for flex containers), not writing-mode-relative start.
+        JustifyContent jc = containerStyle.justifyContent != AlignContent.AUTO ? containerStyle.getJustifyContent() : JustifyContent.FLEX_START;
         FloatRect absoluteOverflow = layoutAbsoluteChildren(
             node, containerSize, contentBoxInset, flexDirection, containerStyle.getAlignItems(), jc,
-            isWrapReverse, border, scrollbarGutter, paddingBoxInset, overflowContainer);
+            isWrapReverse, isRtl, border, scrollbarGutter, paddingBoxInset, overflowContainer);
         accumulated = ScrollableOverflowUtil.union(accumulated, absoluteOverflow);
 
         ScrollableOverflow scrollableOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
@@ -2989,11 +2991,19 @@ public class FlexboxComputer {
 
     private FloatRect layoutAbsoluteChildren(NodeId node, FloatSize containerSize, FloatRect contentBoxInset,
                                              FlexDirection flexDirection, AlignItems alignItems, JustifyContent justifyContent,
-                                             boolean isWrapReverse, FloatRect border, FloatSize scrollbarGutter,
+                                             boolean isWrapReverse, boolean isRtl, FloatRect border, FloatSize scrollbarGutter,
                                              FloatRect paddingBoxInset,
                                              ScrollableOverflowUtil.Container overflowContainer) {
         TaffyTree tree = layoutComputer.getTree();
         boolean isRow = flexDirection.isRow();
+        // FL-23 (#1072): an axis is writing-mode relative only when it is horizontal. The flex
+        // start edge is reversed by a reversed flex-direction and by RTL on the main axis, and by
+        // wrap-reverse and by RTL on a horizontal cross axis. `start`/`end` themselves are never
+        // affected by the flex reversal flags.
+        boolean mainIsRtl = isRow && isRtl;
+        boolean crossIsRtl = !isRow && isRtl;
+        boolean mainAxisFlexStartReversed = flexDirection.isReverse() ^ mainIsRtl;
+        boolean crossAxisFlexStartReversed = isWrapReverse ^ crossIsRtl;
         FloatRect overflowRect = FloatRect.zero();
 
         // Out-of-flow boxes do not extend their containing block's padding (upstream oof.rs uses
@@ -3176,10 +3186,13 @@ public class FlexboxComputer {
             if (alignSelf == null || alignSelf == AlignItems.AUTO) alignSelf = alignItems;
             AlignSelf alignSelfEnum = AlignSelf.fromAlignItems(alignSelf);
 
-            // Calculate main-axis offset
+            // Calculate main-axis offset. FL-23 (#1072): the static position follows the flex
+            // main axis (reversed flex-direction, RTL for row containers) while the explicit
+            // `start`/`end` keywords follow the writing mode only.
             float offsetMain = computeAbsoluteMainOffset(
                 startMain, endMain, finalSize, containerSize, border, scrollbarGutter,
-                contentBoxInset, resolvedMargin, justifyContent, isRow, isWrapReverse
+                contentBoxInset, resolvedMargin, justifyContent, isRow,
+                mainIsRtl, mainAxisFlexStartReversed
             );
 
             // FL-22 (#958): a `safe` cross-axis self-alignment falls back to logical start when the
@@ -3194,10 +3207,13 @@ public class FlexboxComputer {
                                             : resolvedMargin.left + resolvedMargin.right);
             boolean crossOverflows = crossOuterSize > crossContainerSize - crossContentBoxInsetSum;
 
-            // Calculate cross-axis offset
+            // Calculate cross-axis offset. FL-23 (#1072): the flex-relative keywords follow the
+            // cross axis (wrap-reverse, RTL for column containers) while `start`/`end`/`baseline`
+            // follow the writing mode only.
             float offsetCross = computeAbsoluteCrossOffset(
                 startCross, endCross, finalSize, containerSize, border, scrollbarGutter,
-                contentBoxInset, resolvedMargin, alignSelfEnum, isRow, isWrapReverse, crossOverflows
+                contentBoxInset, resolvedMargin, alignSelfEnum, isRow,
+                crossIsRtl, crossAxisFlexStartReversed, crossOverflows
             );
 
             // Convert to x, y
@@ -3329,7 +3345,8 @@ public class FlexboxComputer {
     private float computeAbsoluteMainOffset(float startMain, float endMain, FloatSize finalSize,
                                             FloatSize containerSize, FloatRect border, FloatSize scrollbarGutter,
                                             FloatRect contentBoxInset, FloatRect resolvedMargin,
-                                            JustifyContent justifyContent, boolean isRow, boolean isWrapReverse) {
+                                            JustifyContent justifyContent, boolean isRow,
+                                            boolean mainIsRtl, boolean mainAxisFlexStartReversed) {
         float containerMain = isRow ? containerSize.width : containerSize.height;
         float finalMain = isRow ? finalSize.width : finalSize.height;
         float borderMainStart = isRow ? border.left : border.top;
@@ -3345,32 +3362,37 @@ public class FlexboxComputer {
         } else if (!Float.isNaN(endMain)) {
             return containerMain - borderMainEnd - scrollbarMain - finalMain - endMain - marginMainEnd;
         } else {
-            // Use justify-content to position
-            JustifyContent jc = justifyContent != null ? justifyContent : JustifyContent.START;
-            return switch (jc) {
-                case SPACE_BETWEEN, START, SAFE_START -> contentBoxMainStart + marginMainStart;
-                case NORMAL, FLEX_START, STRETCH, SAFE_FLEX_START -> {
-                    // FLEX_START behaves like START normally, like END when wrap-reverse
-                    // STRETCH has no effect on main axis in flexbox, treat as FLEX_START
-                    if (isWrapReverse) yield containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
-                    yield contentBoxMainStart + marginMainStart;
-                }
-                case END, SAFE_END -> containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
-                case FLEX_END, SAFE_FLEX_END -> {
-                    if (isWrapReverse) yield contentBoxMainStart + marginMainStart;
-                    yield containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
-                }
-                case SPACE_EVENLY, SPACE_AROUND, CENTER, SAFE_CENTER ->
-                    (containerMain + contentBoxMainStart - contentBoxMainEnd - finalMain
-                     + marginMainStart - marginMainEnd) / 2.0f;
-            };
+            // FL-23 (#1072) static position. `start`/`end` are writing-mode relative: they flip
+            // for RTL but not for reversed flex directions. `flex-start`/`flex-end`, the default
+            // `normal` and the `space-between`/`stretch` fallbacks are flex-relative.
+            float startPosition = contentBoxMainStart + marginMainStart;
+            float endPosition = containerMain - contentBoxMainEnd - finalMain - marginMainEnd;
+            JustifyContent configured = justifyContent != null ? justifyContent : JustifyContent.FLEX_START;
+            JustifyContent keyword = AlignmentHelper.keyword(configured);
+            if (keyword == JustifyContent.START || keyword == JustifyContent.END) {
+                boolean startSide = keyword == JustifyContent.START ? !mainIsRtl : mainIsRtl;
+                return startSide ? startPosition : endPosition;
+            }
+            if (keyword == JustifyContent.FLEX_END) {
+                return mainAxisFlexStartReversed ? startPosition : endPosition;
+            }
+            if (keyword == JustifyContent.CENTER
+                || keyword == JustifyContent.SPACE_AROUND
+                || keyword == JustifyContent.SPACE_EVENLY) {
+                return (containerMain + contentBoxMainStart - contentBoxMainEnd - finalMain
+                        + marginMainStart - marginMainEnd) / 2.0f;
+            }
+            // FLEX_START / NORMAL / STRETCH / SPACE_BETWEEN: flex-relative start. Stretch has no
+            // effect on the main axis of a flex container and space-between falls back to it.
+            return mainAxisFlexStartReversed ? endPosition : startPosition;
         }
     }
 
     private float computeAbsoluteCrossOffset(float startCross, float endCross, FloatSize finalSize,
                                              FloatSize containerSize, FloatRect border, FloatSize scrollbarGutter,
                                              FloatRect contentBoxInset, FloatRect resolvedMargin,
-                                             AlignSelf alignSelf, boolean isRow, boolean isWrapReverse,
+                                             AlignSelf alignSelf, boolean isRow,
+                                             boolean crossIsRtl, boolean crossAxisFlexStartReversed,
                                              boolean overflows) {
         float containerCross = isRow ? containerSize.height : containerSize.width;
         float finalCross = isRow ? finalSize.height : finalSize.width;
@@ -3387,34 +3409,42 @@ public class FlexboxComputer {
         } else if (!Float.isNaN(endCross)) {
             return containerCross - borderCrossEnd - scrollbarCross - finalCross - endCross - marginCrossEnd;
         } else {
-            // Use align-self to position
-            // Stretch does not apply to absolutely positioned items, treat as flex-start
-            // AlignSelf enum: AUTO, FLEX_START, FLEX_END, CENTER, BASELINE, STRETCH, START, END
-            // START/END are physical (never flip with wrap-reverse); FLEX_START/FLEX_END are
-            // flex-relative and flip under wrap-reverse (PA-02). AUTO/BASELINE/STRETCH keep their
-            // existing flex-start-like fallback: upstream resolves the "normal" fallback to
-            // flex-start rather than start, and the generated wrap-reverse abspos fixtures rely
-            // on it. Writing-mode/RTL refinements are tracked separately (P6).
+            // Use align-self to position. Stretch does not apply to absolutely positioned items.
             //
             // FL-22 (#958): resolve the `safe` overflow-position modifier first. A safe keyword
             // whose item overflows the content box falls back to logical START; otherwise the
             // modifier is dropped and the bare keyword is used.
+            //
+            // FL-23 (#1072): `start`/`end` (and `baseline`, whose static-position fallback is
+            // `start`) are writing-mode relative: they flip for RTL but not for `wrap-reverse`.
+            // `flex-start`/`flex-end` and the `stretch`/`normal` fallback are flex-relative.
             AlignSelf crossKeyword = AlignmentHelper.resolveSelfSafety(alignSelf, overflows);
-            return switch (crossKeyword) {
-                case START -> contentBoxCrossStart + marginCrossStart;
-                case END -> containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
-                case AUTO, BASELINE, STRETCH, FLEX_START -> {
-                    if (isWrapReverse) yield containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
-                    yield contentBoxCrossStart + marginCrossStart;
-                }
-                case FLEX_END -> {
-                    if (isWrapReverse) yield contentBoxCrossStart + marginCrossStart;
-                    yield containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
-                }
-                case CENTER -> (containerCross + contentBoxCrossStart - contentBoxCrossEnd - finalCross
-                                + marginCrossStart - marginCrossEnd) / 2.0f;
-                default -> contentBoxCrossStart + marginCrossStart;
-            };
+            if (crossKeyword == AlignSelf.NORMAL) {
+                // `normal` behaves as `stretch` for flex items (upstream #1254); stretch does not
+                // apply to absolutely positioned items, hence the flex-relative start below.
+                crossKeyword = AlignSelf.STRETCH;
+            }
+            float startPosition = contentBoxCrossStart + marginCrossStart;
+            float endPosition = containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
+            if (crossKeyword == AlignSelf.START || crossKeyword == AlignSelf.END
+                || crossKeyword == AlignSelf.BASELINE) {
+                boolean startSide = crossKeyword == AlignSelf.END ? crossIsRtl : !crossIsRtl;
+                return startSide ? startPosition : endPosition;
+            }
+            if (crossKeyword == AlignSelf.FLEX_END) {
+                return crossAxisFlexStartReversed ? startPosition : endPosition;
+            }
+            if (crossKeyword == AlignSelf.CENTER) {
+                return (containerCross + contentBoxCrossStart - contentBoxCrossEnd - finalCross
+                        + marginCrossStart - marginCrossEnd) / 2.0f;
+            }
+            if (crossKeyword == AlignSelf.SELF_START || crossKeyword == AlignSelf.SELF_END) {
+                // Self-relative resolution against the item's own writing mode is not wired into
+                // the absolute positioning path in this batch; keep the legacy start placement.
+                return startPosition;
+            }
+            // AUTO / STRETCH / FLEX_START: flex-relative start.
+            return crossAxisFlexStartReversed ? endPosition : startPosition;
         }
     }
 
