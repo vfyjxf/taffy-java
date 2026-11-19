@@ -16,6 +16,7 @@ import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.util.BlockContext;
 import dev.vfyjxf.taffy.util.MeasureContext;
 import dev.vfyjxf.taffy.util.MeasureFunc;
 import dev.vfyjxf.taffy.util.MeasureFuncAdapter;
@@ -720,6 +721,41 @@ public class LayoutComputer {
     }
 
     /**
+     * Performs layout for a child node with an inherited block formatting context.
+     *
+     * <p>This overload is used by {@code BlockComputer} for children that participate in the
+     * parent's block formatting context: their floats are placed into the shared
+     * {@link BlockContext}, so a nested ordinary block can affect (and be affected by) the
+     * ancestor's floats. A {@code null} context means "fresh BFC". The result is not stored in
+     * the layout cache when the child is block-laid-out, because the output depends on the
+     * mutable float state of the inherited context rather than on {@link LayoutInput} alone.</p>
+     *
+     * @param blockContext the inherited BFC context, or {@code null} for a fresh BFC
+     */
+    public LayoutOutput performChildLayout(
+        NodeId node,
+        FloatSize knownDimensions,
+        FloatSize parentSize,
+        TaffySize<AvailableSpace> availableSpace,
+        SizingMode sizingMode,
+        TaffyLine<Boolean> verticalMarginsAreCollapsible,
+        RunMode runMode,
+        BlockContext blockContext) {
+
+        LayoutInput inputs = new LayoutInput(
+            runMode,
+            sizingMode,
+            RequestedAxis.BOTH,
+            knownDimensions,
+            parentSize,
+            availableSpace,
+            verticalMarginsAreCollapsible
+        );
+
+        return computeChildLayout(node, inputs, blockContext);
+    }
+
+    /**
      * Measures a child node's size without performing full layout.
      * Uses COMPUTE_SIZE run mode which doesn't set unrounded layout.
      * This should be used during sizing calculations (like flex base size)
@@ -829,7 +865,10 @@ public class LayoutComputer {
      * Computes layout for a child, using cache if available.
      */
     public LayoutOutput computeChildLayout(NodeId node, LayoutInput inputs) {
+        return computeChildLayoutCached(node, inputs);
+    }
 
+    private LayoutOutput computeChildLayoutCached(NodeId node, LayoutInput inputs) {
         // Handle hidden layout
         if (inputs.runMode() == RunMode.PERFORM_HIDDEN_LAYOUT) {
             return computeHiddenLayout(node);
@@ -851,9 +890,59 @@ public class LayoutComputer {
     }
 
     /**
+     * Computes layout for a child with an inherited block formatting context.
+     *
+     * <p>Block layout with a non-{@code null} context is context-dependent: the same
+     * {@link LayoutInput} can produce different floats depending on the ancestor BFC's current
+     * segments, so such results bypass the layout cache. Other display types establish their own
+     * formatting context and are handled by the ordinary cached path.</p>
+     */
+    public LayoutOutput computeChildLayout(NodeId node, LayoutInput inputs, BlockContext blockContext) {
+        if (blockContext == null) {
+            return computeChildLayoutCached(node, inputs);
+        }
+
+        // Handle hidden layout
+        if (inputs.runMode() == RunMode.PERFORM_HIDDEN_LAYOUT) {
+            return computeHiddenLayout(node);
+        }
+
+        TaffyStyle style = tree.getStyle(node);
+        if (isBlockLayout(style.getDisplay())) {
+            boolean hadFloats = blockContext.hasFloats();
+            LayoutOutput output = computeLayoutUncached(node, inputs, blockContext);
+            if (hadFloats || blockContext.hasFloats()) {
+                // The output depends on the inherited float state, so it must not be returned by
+                // an ordinary cache lookup. Still store it under a non-matching key: TaffyTree
+                // uses "cache is empty" as its dirty sentinel, and leaving the cache empty would
+                // stop a later style change from marking ancestors dirty.
+                LayoutInput staleMarker = new LayoutInput(
+                    RunMode.PERFORM_LAYOUT,
+                    inputs.sizingMode(),
+                    inputs.axis(),
+                    inputs.knownDimensions(),
+                    new FloatSize(-Float.MAX_VALUE, -Float.MAX_VALUE),
+                    inputs.availableSpace(),
+                    inputs.verticalMarginsAreCollapsible()
+                );
+                tree.storeCacheEntry(node, staleMarker, output);
+            } else {
+                tree.storeCacheEntry(node, inputs, output);
+            }
+            return output;
+        }
+
+        return computeChildLayoutCached(node, inputs);
+    }
+
+    /**
      * Computes layout without using cache.
      */
     private LayoutOutput computeLayoutUncached(NodeId node, LayoutInput inputs) {
+        return computeLayoutUncached(node, inputs, null);
+    }
+
+    private LayoutOutput computeLayoutUncached(NodeId node, LayoutInput inputs, BlockContext blockContext) {
         TaffyStyle style = tree.getStyle(node);
         TaffyDisplay display = style.getDisplay();
         int childCount = tree.childCount(node);
@@ -872,7 +961,7 @@ public class LayoutComputer {
             // Flow-root lays its children out with the block algorithm too; its difference from
             // BLOCK is that it establishes a new block formatting context (handled by
             // BlockComputer). Upstream #997 (BK-17).
-            case BLOCK, FLOW_ROOT -> computeBlockLayout(node, inputs, style);
+            case BLOCK, FLOW_ROOT -> computeBlockLayout(node, inputs, style, blockContext);
             case FLEX -> computeFlexboxLayout(node, inputs, style);
             case GRID -> computeGridLayout(node, inputs, style);
             default -> computeLeafLayout(node, inputs, style);
@@ -1281,8 +1370,13 @@ public class LayoutComputer {
      * Computes layout for a block container.
      */
     private LayoutOutput computeBlockLayout(NodeId node, LayoutInput inputs, TaffyStyle style) {
+        return computeBlockLayout(node, inputs, style, null);
+    }
+
+    private LayoutOutput computeBlockLayout(
+        NodeId node, LayoutInput inputs, TaffyStyle style, BlockContext blockContext) {
         // Simplified block layout - full implementation in BlockComputer
-        return new BlockComputer(this).compute(node, inputs, style);
+        return new BlockComputer(this).compute(node, inputs, style, blockContext);
     }
 
     /**
