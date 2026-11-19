@@ -154,6 +154,9 @@ public class GridComputer {
         // Is this a "compressible replaced element"? (CSS Sizing / Grid min-size-auto behavior)
         // https://drafts.csswg.org/css-sizing-3/#min-content-zero
         boolean isCompressibleReplaced;
+        // Is this a replaced element (images, video, ... but not form controls)? Used by the minimum
+        // contribution to resolve an indefinite percentage max-size against zero (upstream #1351).
+        boolean isReplaced;
 
         // Grid placement (OriginZero coordinates, null means auto)
         Integer columnStart;
@@ -327,6 +330,18 @@ public class GridComputer {
                 boxSizingAdjustment(gridAreaSize));
         }
 
+        /**
+         * The item's preferred size clamped by its resolved min/max size, mirroring the clamp that
+         * upstream applies in {@code GridItem::known_dimensions}. A size contribution is the clamped
+         * preferred size, not the raw preferred size: {@code width:25px; max-width:10px} contributes
+         * 10px. The minimum size is floored at the item's padding + border by
+         * {@link #resolveMinSize(FloatSize)}.
+         */
+        FloatSize clampedPreferredSize(FloatSize gridAreaSize) {
+            return maybeClamp(resolvePreferredSize(gridAreaSize), resolveMinSize(gridAreaSize),
+                resolveMaxSize(gridAreaSize));
+        }
+
         /** The item's specified min size resolved against the grid area, floored at padding + border. */
         FloatSize resolveMinSize(FloatSize gridAreaSize) {
             FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio),
@@ -421,8 +436,9 @@ public class GridComputer {
         private float computeMinContentContributionWidth(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
             FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // If the preferred width resolves against the grid area, use it
-            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            // A definite preferred width is clamped by the item's min/max size before it becomes a
+            // contribution (upstream known_dimensions, #1282).
+            FloatSize inherentSize = clampedPreferredSize(gridAreaSize);
             if (!Float.isNaN(inherentSize.width)) {
                 return inherentSize.width + marginAxisSums.width;
             }
@@ -461,8 +477,9 @@ public class GridComputer {
         private float computeMaxContentContributionWidth(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
             FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // If the preferred width resolves against the grid area, use it
-            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            // A definite preferred width is clamped by the item's min/max size before it becomes a
+            // contribution (upstream known_dimensions, #1282).
+            FloatSize inherentSize = clampedPreferredSize(gridAreaSize);
             if (!Float.isNaN(inherentSize.width)) {
                 return inherentSize.width + marginAxisSums.width;
             }
@@ -497,8 +514,9 @@ public class GridComputer {
         private float computeMaxContentContributionHeight(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
             FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // If the preferred height resolves against the grid area, use it
-            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            // A definite preferred height is clamped by the item's min/max size before it becomes a
+            // contribution (upstream known_dimensions, #1282).
+            FloatSize inherentSize = clampedPreferredSize(gridAreaSize);
             if (!Float.isNaN(inherentSize.height)) {
                 return inherentSize.height + marginAxisSums.height;
             }
@@ -615,37 +633,49 @@ public class GridComputer {
 
     }
 
-    private static float capCompressibleReplacedMinimumContributionWidth(GridItem item, float currentWithMargin,
-                                                                          float marginWidth, FloatSize gridAreaSize) {
+    /**
+     * The compressible-replaced cap on the content-based automatic minimum (CSS Sizing
+     * "min-content-zero"): a definite preferred size or max-size caps the content-based minimum, with
+     * indefinite percentages resolved against zero. The result is margin-inclusive and never drops
+     * below the item's padding + border.
+     */
+    private static float capCompressibleReplacedMinimumContribution(GridItem item, float currentWithMargin,
+                                                                    float marginAxisSum, FloatSize gridAreaSize,
+                                                                    boolean inlineAxis) {
         if (item == null || !item.isCompressibleReplaced) return currentWithMargin;
 
         // Border+padding minimum (outer size can't be smaller than this), resolved against the grid area
-        float paddingBorderWidth = item.paddingBorderSize(gridAreaSize).width;
+        float paddingBorder = inlineAxis
+                              ? item.paddingBorderSize(gridAreaSize).width
+                              : item.paddingBorderSize(gridAreaSize).height;
 
-        float preferred = resolveReplacedCapValueWidth(item.rawSize, item.boxSizing, paddingBorderWidth);
-        float max = resolveReplacedCapValueWidth(item.rawMaxSize, item.boxSizing, paddingBorderWidth);
+        float preferred = resolveReplacedCapValue(item.rawSize, item.boxSizing, paddingBorder, inlineAxis);
+        float max = resolveReplacedCapValue(item.rawMaxSize, item.boxSizing, paddingBorder, inlineAxis);
 
         float capped = currentWithMargin;
-        if (!Float.isNaN(preferred)) capped = Math.min(capped, preferred + marginWidth);
-        if (!Float.isNaN(max)) capped = Math.min(capped, max + marginWidth);
+        if (!Float.isNaN(preferred)) capped = Math.min(capped, preferred + marginAxisSum);
+        if (!Float.isNaN(max)) capped = Math.min(capped, max + marginAxisSum);
 
         // Keep consistent with min padding/border invariants
-        float minPossible = paddingBorderWidth + marginWidth;
+        float minPossible = paddingBorder + marginAxisSum;
         if (capped < minPossible) capped = minPossible;
         return capped;
     }
 
-    private static float resolveReplacedCapValueWidth(TaffySize<TaffyDimension> rawSize, BoxSizing boxSizing, float paddingBorderWidth) {
-        if (rawSize == null || rawSize.width == null) return NaN;
+    private static float resolveReplacedCapValue(TaffySize<TaffyDimension> rawSize, BoxSizing boxSizing,
+                                                 float paddingBorder, boolean inlineAxis) {
+        if (rawSize == null) return NaN;
+        TaffyDimension dimension = inlineAxis ? rawSize.width : rawSize.height;
+        if (dimension == null) return NaN;
         // Resolve against 0 so that indefinite percentages are treated as definite 0 for capping purposes.
-        float v = rawSize.width.maybeResolve(0f);
+        float v = dimension.maybeResolve(0f);
         if (Float.isNaN(v)) return NaN;
         // If size applies to content-box, convert to border-box by adding padding+border.
         if (boxSizing == BoxSizing.CONTENT_BOX) {
-            v += paddingBorderWidth;
+            v += paddingBorder;
         }
         // Ensure not smaller than padding+border.
-        return Math.max(v, paddingBorderWidth);
+        return Math.max(v, paddingBorder);
     }
 
     /**
@@ -1736,12 +1766,11 @@ public class GridComputer {
             item.inset = childStyle.getInset();
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
-            // TODO(T17/T4): upstream #1351 resolves the max-size basis of the minimum contribution
-            // against zero only for replaced elements; the cap below still applies to every
-            // compressible replaced item. Wiring that split needs the "definite preferred size
-            // clamped by min/max" branch from #1022/#1282, which the minimum contribution does not
-            // have yet.
+            // The minimum contribution resolves an indefinite percentage max-size against zero only
+            // for replaced elements (upstream #1351); its compressible-replaced cap still applies to
+            // every compressible replaced item (form controls included).
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
+            item.isReplaced = childStyle.getItemIsReplaced();
 
             // Alignment for track sizing: use child's preference, or parent's default, or STRETCH.
             // This merged value is used during track sizing (GridItem#computeKnownDimensions), where
@@ -3261,8 +3290,15 @@ public class GridComputer {
                             sizes.add(NaN);
                             // Set growth limit to max value to cap growth
                             growthLimits.set(i, maybeSize);
+                        } else if (minF != null && minF.isAuto()) {
+                            // An auto min starts at zero and is raised to the item's minimum
+                            // contribution during intrinsic sizing; the fixed max only caps the
+                            // growth limit. Taking the max as the base here would ignore the
+                            // minimum contribution (upstream #1097 / #1278).
+                            sizes.add(NaN);
+                            growthLimits.set(i, maybeSize);
                         } else {
-                            // minF is auto or null - use max as base size
+                            // minF is null or a non-intrinsic function - use max as base size
                             sizes.add(maybeSize);
                             usedSpace += maybeSize;
                             // Set growth limit to same as base to prevent further growth
@@ -3352,7 +3388,8 @@ public class GridComputer {
                         // Calculate minimum size from padding+border (size cannot be less than this)
                         float itemPaddingBorderWidth = item.paddingBorderSize(itemGridAreaSize).width;
 
-                        FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+                        // A definite preferred width is clamped by the item's min/max size (#1282).
+                        FloatSize preferredSize = item.clampedPreferredSize(itemGridAreaSize);
                         if (!Float.isNaN(preferredSize.width)) {
                             // Size must be at least padding+border
                             float effectiveWidth = Math.max(preferredSize.width, itemPaddingBorderWidth);
@@ -3399,20 +3436,18 @@ public class GridComputer {
 
                             // Compressible replaced element capping (Rust: is_compressible_replaced)
                             // If preferred/max sizes are definite (including % resolved against 0), cap the content-based minimum.
-                            itemMinWidth = capCompressibleReplacedMinimumContributionWidth(item, itemMinWidth, marginAxisSums.width, itemGridAreaSize);
+                            itemMinWidth = capCompressibleReplacedMinimumContribution(item, itemMinWidth,
+                                marginAxisSums.width, itemGridAreaSize, true);
 
                             minContentSize = Math.max(minContentSize, itemMinWidth);
 
                             // The minimum contribution differs from the min-content contribution for
-                            // scroll containers and for a cyclic percentage min-size (which resolves
-                            // against zero, #1257).
-                            float measuredMinForMinimum = hasOverflow
-                                ? 0f
-                                : item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
-                            float minimumContribution = minimumContributionWidth(item, measuredMinForMinimum,
-                                marginAxisSums.width, hasOverflow, itemGridAreaSize);
-                            minimumContribution = capCompressibleReplacedMinimumContributionWidth(item,
-                                minimumContribution, marginAxisSums.width, itemGridAreaSize);
+                            // scroll containers, for a cyclic percentage min-size (which resolves
+                            // against zero, #1257), and for an item spanning no auto-min track (#1228).
+                            float measuredMinForMinimum =
+                                item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
+                            float minimumContribution = minimumContribution(item, true, resolvedColumnTracks,
+                                i, 1, itemGridAreaSize, nodeInnerSize.width, measuredMinForMinimum, hasOverflow);
                             minimumContributionSize = Math.max(minimumContributionSize, minimumContribution);
                         }
                     }
@@ -3461,10 +3496,15 @@ public class GridComputer {
                     } else if (minFunc != null && minFunc.isMaxContent()) {
                         minContribution = maxContentSize;
                     } else if (minFunc != null && minFunc.isAuto()) {
-                        minContribution = minContentSize;  // auto uses min-content as base
+                        // An auto min is sized by the item's minimum contribution, which may be
+                        // larger than the track's fixed max (an explicit min-size or a content-based
+                        // minimum). The max below raises the base, and step 4 raises the growth limit
+                        // to match (#1097 / #1278 / #1282).
+                        minContribution = minimumContributionSize;
                     } else if (minFunc != null && minFunc.isFixed()) {
                         float fixedSize = minFunc.getFixedValue().maybeResolve(nodeInnerSize.width);
-                        minContribution = !Float.isNaN(fixedSize) ? fixedSize : minContentSize;
+                        // An indefinite percentage min behaves as auto (upstream #1261).
+                        minContribution = !Float.isNaN(fixedSize) ? fixedSize : minimumContributionSize;
                     }
 
                     // Then, determine the max limit (growth limit)
@@ -3625,7 +3665,8 @@ public class GridComputer {
                 // Note: cached methods already include margin
                 float itemMaxContent;
                 float itemMinContent;
-                FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+                // A definite preferred width is clamped by the item's min/max size (#1282).
+                FloatSize preferredSize = item.clampedPreferredSize(itemGridAreaSize);
                 if (!Float.isNaN(preferredSize.width)) {
                     itemMaxContent = preferredSize.width + marginAxisSums.width;
                     itemMinContent = itemMaxContent;
@@ -3634,11 +3675,10 @@ public class GridComputer {
                     itemMinContent = item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
                 }
 
-                // For scroll containers, minimum contribution is 0 (unless min-size is set)
-                float minimumContribution = isScrollContainer ? 0f : itemMinContent;
-
-                // Compressible replaced element capping (Rust: is_compressible_replaced)
-                minimumContribution = capCompressibleReplacedMinimumContributionWidth(item, minimumContribution, marginAxisSums.width, itemGridAreaSize);
+                // CSS Grid 6.6 minimum contribution (preferred clamped by min/max, specified
+                // min-size, scroll container zero, or the capped content-based automatic minimum).
+                float minimumContribution = minimumContribution(item, true, resolvedColumnTracks, col, span,
+                    itemGridAreaSize, nodeInnerSize.width, itemMinContent, isScrollContainer);
 
                 // Identify track types
                 IntList intrinsicTracks = new IntArrayList();  // All intrinsic min tracks (auto, min-content, max-content)
@@ -3821,17 +3861,12 @@ public class GridComputer {
                 // For auto tracks with infinite growth_limit, cap it to current base_size
                 // This prevents maximise_tracks from over-allocating space that should go to stretch_auto_tracks
                 if (currentLimit == Float.MAX_VALUE) {
-                    // Check if this is an auto track
-                    TrackSizingFunction track = null;
-                    int expStart = colCounts.negativeImplicit;
-                    int expEnd = expStart + colCounts.explicit;
-                    if (i >= expStart && i < expEnd && templateCols != null) {
-                        int templateIndex = i - expStart;
-                        if (templateIndex < templateCols.size()) {
-                            track = templateCols.get(templateIndex);
-                        }
-                    }
-                    // Auto track (explicit auto or implicit) should have growth_limit = base_size
+                    // Resolve the track's sizing function the same way as the initial sizing pass:
+                    // explicit tracks come from the (grid-template-areas-expanded) template and
+                    // implicit tracks cycle through grid-auto-columns (GR-20).
+                    TrackSizingFunction track = resolvedColumnTracks.get(i);
+                    // Auto track (explicit auto or an implicit track whose grid-auto-columns entry is
+                    // auto) should have growth_limit = base_size.
                     if (track == null || track.isAuto()) {
                         growthLimits.set(i, currentSize);
                     }
@@ -3863,7 +3898,8 @@ public class GridComputer {
 
             float itemMinContent;
             float itemMaxContent;
-            FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+            // A definite preferred width is clamped by the item's min/max size (#1282).
+            FloatSize preferredSize = item.clampedPreferredSize(itemGridAreaSize);
             if (!Float.isNaN(preferredSize.width)) {
                 itemMinContent = preferredSize.width + marginAxisSums.width;
                 itemMaxContent = itemMinContent;
@@ -3873,8 +3909,8 @@ public class GridComputer {
             }
             boolean isScrollContainer = item.overflow != null
                 && (item.overflow.x == Overflow.HIDDEN || item.overflow.x == Overflow.SCROLL || item.overflow.x == Overflow.CLIP);
-            float minimumContribution = minimumContributionWidth(item, itemMinContent, marginAxisSums.width,
-                isScrollContainer, itemGridAreaSize);
+            float minimumContribution = minimumContribution(item, true, resolvedColumnTracks, col, span,
+                itemGridAreaSize, nodeInnerSize.width, itemMinContent, isScrollContainer);
             boolean crossesIntrinsic = false;
             for (int c = col; c < col + span && c < numColumns; c++) {
                 if (trackMinIsIntrinsic(resolvedColumnTracks.get(c))) {
@@ -3951,32 +3987,24 @@ public class GridComputer {
             if (freeSpace > 0) {
                 // Find tracks that can grow (auto, minmax with room to grow)
                 IntList growableTrackIndices = new IntArrayList();
-                int growExplicitStart = colCounts.negativeImplicit;
-                int growExplicitEnd = growExplicitStart + colCounts.explicit;
 
                 for (int i = 0; i < sizes.size(); i++) {
-                    // Determine track type using colCounts
-                    TrackSizingFunction track;
-                    if (i >= growExplicitStart && i < growExplicitEnd) {
-                        // Explicit track
-                        int templateIndex = i - growExplicitStart;
-                        track = (templateCols != null && templateIndex < templateCols.size())
-                                ? templateCols.get(templateIndex) : null;
-                    } else {
-                        // Implicit track (negative or positive)
-                        track = null;
-                    }
+                    // Resolve the track's sizing function the same way as the initial sizing pass
+                    // (explicit from the template, implicit from grid-auto-columns). A fixed implicit
+                    // track is not growable; only a null function (no grid-auto-* entry) defaults to
+                    // auto (GR-20).
+                    TrackSizingFunction track = resolvedColumnTracks.get(i);
                     float currentSize = sizes.getFloat(i);
                     float limit = growthLimits.getFloat(i);
 
                     // Track can grow if:
-                    // 1. It's an auto track (explicit or implicit)
+                    // 1. It's an auto track (explicit auto or implicit auto)
                     // 2. It's a minmax track with room to grow
                     boolean canGrow = false;
                     if (track != null && track.isAuto()) {
                         canGrow = true;
                     } else if (track == null) {
-                        canGrow = true;  // Implicit auto track
+                        canGrow = true;  // Implicit auto track (no grid-auto-columns entry)
                     } else if (track != null && track.isMinmax()) {
                         // minmax track - check if it has a growth limit set and room to grow
                         if (!Float.isNaN(currentSize) && !Float.isNaN(limit) && currentSize < limit) {
@@ -4113,21 +4141,12 @@ public class GridComputer {
             }
             float stretchFreeSpace = stretchAvailableSpace - stretchUsedSpace;
             if (stretchFreeSpace > 0.001f) {
-                int stretchExplicitStart = colCounts.negativeImplicit;
-                int stretchExplicitEnd = stretchExplicitStart + colCounts.explicit;
-                // Only tracks with an auto max track sizing function are stretched (not minmax tracks
-                // and not flexible tracks).
+                // Only tracks whose max track sizing function is auto are stretched (not fixed
+                // implicit tracks, minmax tracks, or flexible tracks). Implicit tracks are resolved
+                // through grid-auto-columns instead of being assumed auto (GR-20).
                 List<Integer> autoTracks = new ArrayList<>();
                 for (int i = 0; i < sizes.size(); i++) {
-                    TrackSizingFunction track;
-                    if (i >= stretchExplicitStart && i < stretchExplicitEnd) {
-                        int templateIndex = i - stretchExplicitStart;
-                        track = (templateCols != null && templateIndex < templateCols.size())
-                                ? templateCols.get(templateIndex) : null;
-                    } else {
-                        track = null;
-                    }
-                    if (track == null || track.isAuto()) {
+                    if (trackMaxIsAuto(resolvedColumnTracks.get(i))) {
                         autoTracks.add(i);
                     }
                 }
@@ -4297,26 +4316,149 @@ public class GridComputer {
     }
 
     /**
-     * The item's minimum contribution in the inline axis (CSS Grid 6.6): the min-content contribution
-     * for the automatic minimum size, the specified min-width when it is definite, and only the
-     * margins for scroll containers (whose automatic minimum size is zero).
+     * The item's minimum contribution (CSS Grid 6.6, upstream {@code GridItem::minimum_contribution})
+     * in one axis, including its margins.
+     *
+     * <p>The rule is evaluated in the same order as upstream:</p>
+     * <ol>
+     *   <li>a definite preferred size, clamped by the item's min/max size; an indefinite percentage
+     *       max-size resolves against zero for replaced elements only (upstream #1282 / #1351);</li>
+     *   <li>a preferred size that is a sizing keyword other than {@code stretch} does not behave as
+     *       auto, so the minimum contribution is the min-content contribution (#1283);</li>
+     *   <li>a specified min-size, with cyclic percentages resolved against zero (#1257);</li>
+     *   <li>zero for a scroll container (its automatic minimum size);</li>
+     *   <li>otherwise the content-based automatic minimum, but only when the item spans at least one
+     *       auto-min track and is either a single-span item or crosses no flexible track (#1228).
+     *       That content-based minimum is capped by the item's compressible-replaced preferred/max
+     *       size and by the sum of the spanned fixed max track sizing functions, with the item's
+     *       padding + border as the floor (#1278 / #1362).</li>
+     * </ol>
+     *
+     * @param inlineAxis           true for the inline (column) axis, false for the block (row) axis
+     * @param axisTracks           the resolved track sizing function of every track in the axis
+     * @param trackStart           the index of the item's first spanned track
+     * @param span                 the number of tracks the item spans
+     * @param gridAreaSize         the item's grid area, used as the percentage basis
+     * @param innerNodeAxisSize    the container's inner size in this axis, used by
+     *                             {@code behaves_as_auto} for percentage tracks
+     * @param contentContribution  the item's content contribution (min-content in the inline axis,
+     *                             max-content height in the block axis), including margins
+     * @param isScrollContainer    whether the item's overflow in this axis makes it a scroll container
      */
-    private static float minimumContributionWidth(GridItem item, float minContentContribution,
-                                                  float marginWidth, boolean isScrollContainer,
-                                                  FloatSize gridAreaSize) {
-        // A definite preferred width resolved against the grid area short-circuits to the min-content
-        // contribution, which was itself computed from that preferred size.
-        if (!Float.isNaN(item.resolvePreferredSize(gridAreaSize).width)) return minContentContribution;
-        // The specified min-size is floored at padding+border even for an auto min-size, so only an
-        // explicitly specified min-width replaces the content-based automatic minimum. An indefinite
-        // grid-area dimension makes a percentage resolve against zero (upstream #1257), which is what
-        // stops a cyclic percentage minimum from falling through to the content-based minimum.
-        FloatSize minSize = item.resolveMinSizePercentAsZero(gridAreaSize);
-        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.width : null, minSize.width)) {
-            return Math.max(minSize.width + marginWidth, 0f);
+    private static float minimumContribution(GridItem item, boolean inlineAxis,
+                                             List<TrackSizingFunction> axisTracks, int trackStart, int span,
+                                             FloatSize gridAreaSize, float innerNodeAxisSize,
+                                             float contentContribution, boolean isScrollContainer) {
+        FloatSize margins = item.getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
+        float marginAxisSum = inlineAxis ? margins.width : margins.height;
+
+        // 1. A definite preferred size, clamped by the item's min/max size.
+        FloatSize preferred = item.resolvePreferredSize(gridAreaSize);
+        float preferredAxis = inlineAxis ? preferred.width : preferred.height;
+        if (!Float.isNaN(preferredAxis)) {
+            return clampedPreferredMinimumContribution(item, inlineAxis, gridAreaSize, preferredAxis,
+                marginAxisSum);
         }
-        if (isScrollContainer) return Math.max(marginWidth, 0f);
-        return minContentContribution;
+
+        // 2. A sizing keyword other than stretch does not behave as auto.
+        TaffyDimension sizeStyle = item.rawSize == null
+                                   ? null
+                                   : (inlineAxis ? item.rawSize.width : item.rawSize.height);
+        if (sizeStyle != null && sizeStyle.isSizingKeyword() && !sizeStyle.isStretch()) {
+            return contentContribution;
+        }
+
+        // 3. A specified min-size replaces the automatic minimum. Percentages in the min-size resolve
+        //    against the grid area, treating an indefinite grid area as zero (upstream #1257).
+        FloatSize minSize = item.resolveMinSizePercentAsZero(gridAreaSize);
+        float resolvedMin = inlineAxis ? minSize.width : minSize.height;
+        TaffyDimension rawMin = item.rawMinSize == null
+                                ? null
+                                : (inlineAxis ? item.rawMinSize.width : item.rawMinSize.height);
+        if (hasExplicitMinSize(rawMin, resolvedMin)) {
+            return Math.max(resolvedMin + marginAxisSum, 0f);
+        }
+
+        // 4. A scroll container's automatic minimum size is zero.
+        if (isScrollContainer) return Math.max(marginAxisSum, 0f);
+
+        // 5. The automatic minimum is content-based only when the item spans an auto-min track.
+        boolean spansAutoMinTrack = false;
+        boolean spansFlexibleTrack = false;
+        for (int i = Math.max(0, trackStart); i < trackStart + span && axisTracks != null
+                                              && i < axisTracks.size(); i++) {
+            TrackSizingFunction track = axisTracks.get(i);
+            if (trackMinBehavesAsAuto(track, innerNodeAxisSize)) spansAutoMinTrack = true;
+            if (span > 1 && isFlexibleTrack(track)) spansFlexibleTrack = true;
+        }
+        if (!spansAutoMinTrack || spansFlexibleTrack) return Math.max(marginAxisSum, 0f);
+
+        // 5a. Compressible replaced elements cap the content-based minimum by their definite preferred
+        //     and max sizes (indefinite percentages resolve against zero).
+        float contribution = capCompressibleReplacedMinimumContribution(item, contentContribution,
+            marginAxisSum, gridAreaSize, inlineAxis);
+
+        // 5b. The content-based minimum is additionally clamped by the sum of the spanned fixed max
+        //     track sizing functions. This clamp is a stretch fit of the item's margin box into the
+        //     limit and never shrinks the item below its padding + border (upstream #1278 / #1362).
+        float limit = spannedFixedTrackLimit(axisTracks, trackStart, span, innerNodeAxisSize);
+        if (!Float.isNaN(limit)) {
+            float paddingBorder = inlineAxis
+                                  ? item.paddingBorderSize(gridAreaSize).width
+                                  : item.paddingBorderSize(gridAreaSize).height;
+            float capped = Math.max(limit - marginAxisSum, paddingBorder) + marginAxisSum;
+            contribution = Math.min(contribution, capped);
+        }
+        return contribution;
+    }
+
+    /**
+     * The definite preferred size branch of {@link #minimumContribution}: clamp the preferred size
+     * by the resolved min/max size. Unlike the {@code known_dimensions} clamp this branch does not
+     * apply the aspect ratio to the min/max sizes (upstream {@code GridItem::minimum_contribution}).
+     */
+    private static float clampedPreferredMinimumContribution(GridItem item, boolean inlineAxis,
+                                                             FloatSize gridAreaSize, float preferredAxis,
+                                                             float marginAxisSum) {
+        TaffyDimension rawMin = item.rawMinSize == null
+                                ? null
+                                : (inlineAxis ? item.rawMinSize.width : item.rawMinSize.height);
+        TaffyDimension rawMax = item.rawMaxSize == null
+                                ? null
+                                : (inlineAxis ? item.rawMaxSize.width : item.rawMaxSize.height);
+        boolean minAuto = rawMin == null || rawMin.isAuto();
+        boolean maxAuto = rawMax == null || rawMax.isAuto();
+        if (minAuto && maxAuto) return preferredAxis + marginAxisSum;
+
+        float basis = inlineAxis ? gridAreaSize.width : gridAreaSize.height;
+        // A replaced element resolves an indefinite percentage max-size against zero (upstream #1351).
+        float maxBasis = item.isReplaced && Float.isNaN(basis) ? 0f : basis;
+        float adjustment = inlineAxis
+                           ? item.boxSizingAdjustment(gridAreaSize).width
+                           : item.boxSizingAdjustment(gridAreaSize).height;
+        float resolvedMin = rawMin == null ? NaN : rawMin.maybeResolve(basis);
+        float resolvedMax = rawMax == null ? NaN : rawMax.maybeResolve(maxBasis);
+        float minWithAdjustment = Float.isNaN(resolvedMin) ? NaN : resolvedMin + adjustment;
+        float maxWithAdjustment = Float.isNaN(resolvedMax) ? NaN : resolvedMax + adjustment;
+        return TaffyMath.maybeClamp(preferredAxis, minWithAdjustment, maxWithAdjustment) + marginAxisSum;
+    }
+
+    /**
+     * The sum of the spanned tracks' fixed max track sizing functions, or {@link Float#NaN} when any
+     * spanned track's max is not fixed (upstream {@code GridItem::spanned_fixed_track_limit}).
+     * {@code fit-content()} arguments are not part of this limit.
+     */
+    private static float spannedFixedTrackLimit(List<TrackSizingFunction> tracks, int start, int span,
+                                                float parentAxisSize) {
+        if (tracks == null || span < 1 || start < 0) return NaN;
+        float limit = 0f;
+        for (int i = start; i < start + span; i++) {
+            if (i >= tracks.size()) return NaN;
+            float value = trackDefiniteValue(trackMaxFunction(tracks.get(i)), parentAxisSize);
+            if (Float.isNaN(value)) return NaN;
+            limit += value;
+        }
+        return limit;
     }
 
     /**
@@ -4347,24 +4489,6 @@ public class GridComputer {
     /** Whether the style's min size in one axis is explicitly specified and resolved to a definite value. */
     private static boolean hasExplicitMinSize(TaffyDimension rawMinSize, float resolvedMinSize) {
         return rawMinSize != null && !rawMinSize.isAuto() && !Float.isNaN(resolvedMinSize);
-    }
-
-    /**
-     * The item's minimum contribution in the block axis. The Java port measures the block-axis
-     * min-content contribution as the max-content height (the same value for every item it supports:
-     * a block-axis min-content contribution is the content height under a min-content constraint,
-     * which equals the max-content height unless a percentage height or an aspect ratio is involved).
-     */
-    private static float minimumContributionHeight(GridItem item, float contentContribution,
-                                                   float marginHeight, boolean isScrollContainer,
-                                                   FloatSize gridAreaSize) {
-        if (!Float.isNaN(item.resolvePreferredSize(gridAreaSize).height)) return contentContribution;
-        FloatSize minSize = item.resolveMinSizePercentAsZero(gridAreaSize);
-        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.height : null, minSize.height)) {
-            return Math.max(minSize.height + marginHeight, 0f);
-        }
-        if (isScrollContainer) return Math.max(marginHeight, 0f);
-        return contentContribution;
     }
 
     /**
@@ -5119,8 +5243,8 @@ public class GridComputer {
             FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
             boolean isScrollContainer = item.overflow != null
                 && (item.overflow.y == Overflow.HIDDEN || item.overflow.y == Overflow.SCROLL || item.overflow.y == Overflow.CLIP);
-            float minimumContribution = minimumContributionHeight(item, itemContent, marginAxisSums.height,
-                isScrollContainer, itemGridAreaSize);
+            float minimumContribution = minimumContribution(item, false, resolvedRowTracks, row, span,
+                itemGridAreaSize, nodeInnerSize.height, itemContent, isScrollContainer);
             boolean crossesIntrinsic = false;
             for (int r = row; r < row + span && r < numRows; r++) {
                 if (trackMinIsIntrinsic(resolvedRowTracks.get(r))) {
@@ -5312,7 +5436,8 @@ public class GridComputer {
                 && (item.overflow.y == Overflow.HIDDEN || item.overflow.y == Overflow.SCROLL
                     || item.overflow.y == Overflow.CLIP);
 
-            FloatSize preferredSize = item.resolvePreferredSize(gridAreaSize);
+            // A definite preferred height is clamped by the item's min/max size (#1282).
+            FloatSize preferredSize = item.clampedPreferredSize(gridAreaSize);
             float contentContribution;
             if (!Float.isNaN(preferredSize.height)) {
                 contentContribution = Math.max(preferredSize.height, item.paddingBorderSize(gridAreaSize).height)
@@ -5321,8 +5446,8 @@ public class GridComputer {
                 contentContribution = item.getMaxContentContributionHeightCached(layoutComputer, gridAreaSize);
             }
 
-            maxMinimum = Math.max(maxMinimum, minimumContributionHeight(item, contentContribution,
-                marginAxisSums.height, isScrollContainer, gridAreaSize));
+            maxMinimum = Math.max(maxMinimum, minimumContribution(item, false, rowTracks, row,
+                item.rowSpan, gridAreaSize, nodeInnerSize.height, contentContribution, isScrollContainer));
         }
         return maxMinimum;
     }
