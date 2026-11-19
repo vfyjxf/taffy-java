@@ -42,8 +42,10 @@ public enum TaffyPosition {
      * The item is taken out of normal flow and positioned relative to the root (viewport),
      * unless an ancestor overrides containing-block behavior.
      * <p>
-     * The 1.2 port has no out-of-flow hoisting yet (OF-01), so {@code FIXED} behaves exactly like
-     * {@link #ABSOLUTE}: it is positioned against its parent's positioning area.
+     * The 1.2 port has no full out-of-flow hoisting yet (OF-01). A {@code FIXED} root and a
+     * {@code FIXED} direct child of a non-positioned root are positioned against the viewport
+     * (OF-07); deeper {@code FIXED} boxes still use their parent's positioning area until hoisting
+     * lands.
      */
     FIXED,
 
