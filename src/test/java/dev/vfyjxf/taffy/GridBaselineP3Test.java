@@ -30,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *       part in the row's baseline; the container baseline selection also skips it
  *       ({@code grid_align_items_baseline_child_auto_margin},
  *       {@code grid_baseline_child_auto_margin_container_baseline}).</li>
+ *   <li><b>A4</b> {@code 3dbf2e46}: an item whose block size depends on the size of an intrinsic or
+ *       flexible row (percentage height) does not participate, avoiding the cyclic dependency
+ *       between the baseline shim and the row size. Upstream has no generated fixture for this.</li>
  * </ul>
  */
 public class GridBaselineP3Test {
@@ -190,8 +193,63 @@ public class GridBaselineP3Test {
         assertNode(tree, content1, 25f, 30f, 25f, 10f, "content 1 (auto margin)");
     }
 
+    // ==================================================================
+    // A4 / 3dbf2e46: cyclic block-size dependency excludes participation
+    // ==================================================================
 
+    @Test
+    @DisplayName("A4: a percentage block size in an intrinsic row does not participate in baseline alignment")
+    void a4CyclicPercentHeightItemDoesNotParticipate() {
+        TaffyTree tree = new TaffyTree();
 
+        TaffyStyle rootStyle = grid(200f, 100f);
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.gridTemplateColumns = fixedTracks(100f, 100f);
+
+        // The item's block size depends on the (intrinsic) row it is being baseline-aligned in.
+        TaffyStyle itemAStyle = grid(100f, Float.NaN);
+        itemAStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.percent(0.5f));
+        itemAStyle.alignSelf = AlignItems.BASELINE;
+        NodeId itemA = tree.newLeaf(itemAStyle);
+
+        NodeId itemB = tree.newLeaf(gridItem(20f, AlignItems.BASELINE));
+
+        NodeId root = tree.newWithChildren(rootStyle, itemA, itemB);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // A is excluded (percentage height + intrinsic row), leaving a single participant, so no
+        // baseline alignment happens and B stays at the row start instead of being shimmed by 30.
+        assertNode(tree, root, 0f, 0f, 200f, 100f, "root");
+        assertNode(tree, itemA, 0f, 0f, 100f, 50f, "item A (percentage height, not baselined)");
+        assertNode(tree, itemB, 100f, 0f, 100f, 20f, "item B (single participant, no shim)");
+    }
+
+    @Test
+    @DisplayName("A4: a percentage block size in a fixed row still participates")
+    void a4PercentHeightItemParticipatesInFixedRow() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle rootStyle = grid(200f, 100f);
+        rootStyle.alignItems = AlignItems.BASELINE;
+        rootStyle.gridTemplateColumns = fixedTracks(100f, 100f);
+        rootStyle.gridTemplateRows = fixedTracks(100f);
+
+        TaffyStyle itemAStyle = grid(100f, Float.NaN);
+        itemAStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.percent(0.5f));
+        itemAStyle.alignSelf = AlignItems.BASELINE;
+        NodeId itemA = tree.newLeaf(itemAStyle);
+
+        NodeId itemB = tree.newLeaf(gridItem(20f, AlignItems.BASELINE));
+
+        NodeId root = tree.newWithChildren(rootStyle, itemA, itemB);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // No intrinsic/flexible row is crossed, so the percentage item participates: its baseline
+        // is 50 and B is shimmed by 50 - 20 = 30.
+        assertNode(tree, root, 0f, 0f, 200f, 100f, "root");
+        assertNode(tree, itemA, 0f, 0f, 100f, 50f, "item A (percentage height, baselined)");
+        assertNode(tree, itemB, 100f, 30f, 100f, 20f, "item B (shim 30)");
+    }
 
 
 

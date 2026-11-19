@@ -206,11 +206,28 @@ public class GridComputer {
         }
 
         /**
-         * Returns true if the item participates in baseline alignment: it has {@code align-self: baseline}
-         * and neither of its block-axis margins is auto (upstream #1125, css-align-3 §9.5).
+         * Whether the item's block size depends on the size of its row(s), creating a cyclic
+         * dependency with baseline alignment (which itself affects row sizing). Mirrors upstream
+         * GridItem::has_cyclic_block_size_dependency: {@code size.height.uses_percentage()} is true
+         * for percentage values and for calc() expressions (the compact-length percentage bit is
+         * set for every calc tag), and the item must cross an intrinsic or flexible row.
+         * Per css-grid-1 §12.5 such items do not participate and use their fallback alignment.
+         */
+        boolean hasCyclicBlockSizeDependency() {
+            if (rawSize == null || rawSize.height == null) return false;
+            boolean usesPercentage = rawSize.height.isPercent() || rawSize.height.isCalc();
+            return usesPercentage && (crossesIntrinsicRow || crossesFlexibleRow);
+        }
+
+        /**
+         * Returns true if the item participates in baseline alignment: it has {@code align-self: baseline},
+         * neither of its block-axis margins is auto, and its block size does not depend on the row
+         * size (upstream #1125 / 3dbf2e46, css-align-3 §9.5 and css-grid-1 §12.5).
          */
         boolean participatesInBaselineAlignment() {
-            return alignSelf == AlignItems.BASELINE && !hasAutoBlockMargin();
+            return alignSelf == AlignItems.BASELINE
+                && !hasAutoBlockMargin()
+                && !hasCyclicBlockSizeDependency();
         }
 
         /**
@@ -1179,7 +1196,7 @@ public class GridComputer {
      * Calculate the first baseline of the grid container.
      * <p>
      * Only items participating in baseline alignment can provide the container's baseline
-     * (upstream #1125): if the row's first item does not participate, the row's first
+     * (upstream #1125 / 3dbf2e46): if the row's first item does not participate, the row's first
      * participating item is used, and the row's first item is the fallback. The value itself is
      * still the one measured during track sizing; taking it from the item's final layout is a
      * separate upstream fix (#1322).
@@ -3830,8 +3847,8 @@ public class GridComputer {
      * <p>
      * This method computes the baseline and baseline_shim for each item that participates in baseline
      * alignment (see {@link GridItem#participatesInBaselineAlignment()}): it has
-     * {@code align-self: baseline} and no auto block-axis margin (#1125). Items that do not
-     * participate are neither measured nor
+     * {@code align-self: baseline}, no auto block-axis margin (#1125) and no cyclic block-size
+     * dependency on its row (3dbf2e46). Items that do not participate are neither measured nor
      * shimmed, and do not contribute their baseline to the row (upstream only measures the
      * participants). Items are grouped by row; a row with one or zero participants is a no-op.
      * The baseline_shim acts as an extra top margin during track sizing and final positioning.
