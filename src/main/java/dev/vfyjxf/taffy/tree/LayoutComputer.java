@@ -10,6 +10,7 @@ import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
+import dev.vfyjxf.taffy.style.Contain;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
@@ -1089,12 +1090,19 @@ public class LayoutComputer {
             nodeMinSize = minSize;
         }
 
-        // Check if styles prevent being collapsed through (for margin collapse)
+        // Check if styles prevent being collapsed through (for margin collapse).
+        //
+        // Layout and paint containment both make the box establish an independent formatting
+        // context, so its margins cannot collapse through it (upstream #1128; the same flag also
+        // suppresses the empty-box collapse-through probe below). Size/inline-size containment have
+        // no layout effect in this port.
+        Contain contain = style.getContain();
         boolean hasStylesPreventingBeingCollapsedThrough =
             !style.isBlock() ||
             overflow.x.isScrollContainer() ||
             overflow.y.isScrollContainer() ||
             style.getPosition().isOutOfFlow() ||
+            contain.establishesIndependentFormattingContext() ||
             ( !Float.isNaN(style.getAspectRatio())) ||
             padding.top > 0 ||
             padding.bottom > 0 ||
