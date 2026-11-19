@@ -1789,10 +1789,18 @@ public class BlockComputer {
     private static float absoluteAxisOffset(AbsoluteAxis axis) {
         float marginBox = axis.size() + axis.marginStart() + axis.marginEnd();
         if (!axis.hasStartInset() && !axis.hasEndInset()) {
-            // Both insets auto: static alignment within the static-position rectangle.
-            // Upstream #1206 (a4dff69e).
+            // Both insets auto: static alignment within the static-position rectangle. The IMCB is
+            // derived from that rectangle and the physical edge the alignment selects
+            // (css-position-3 resolving-insets), and an explicit 'safe' alignment whose margin box
+            // overflows it falls back to the containing block's physical start edge. The default
+            // (auto-safety) modifier deliberately does not fall back here: it keeps static
+            // alignment unchanged. Upstream #1206 (a4dff69e), refined by #1267 (5f6ec1d4).
             OofEdge keyword = alignmentEdge(axis.alignment(), axis.reversed());
             OofInterval staticArea = new OofInterval(axis.staticStart(), axis.staticEnd());
+            OofInterval imcb = staticPositionImcb(staticArea, axis.cbSize(), keyword, axis.reversed());
+            if (axis.safe() && marginBox > imcb.end() - imcb.start()) {
+                return alignInLine(imcb, marginBox, startEdge(axis.reversed())) + axis.marginStart();
+            }
             return alignInLine(staticArea, marginBox, keyword) + axis.marginStart();
         }
 
@@ -1849,6 +1857,48 @@ public class BlockComputer {
         }
         return alignInLine(new OofInterval(limitStart, limitEnd), marginBox, startEdge(axis.reversed()))
                + axis.marginStart();
+    }
+
+    /**
+     * The inset-modified containing block of an axis whose insets are both {@code auto},
+     * mirroring upstream {@code OofAxis::inset_modified_containing_block} for the static-position
+     * case (css-position-3 <em>resolving insets</em>).
+     *
+     * <p>The static-position rectangle and the physical edge the resolved self-alignment selects
+     * derive the line: a start alignment takes the static rectangle's start and the containing
+     * block's end, an end alignment the containing block's start and the static rectangle's end,
+     * and a center alignment the line centered on the static rectangle's center and bounded by the
+     * nearer containing-block edge. An over-constrained result collapses towards the containing
+     * block's logical end edge, like the generic rule.</p>
+     *
+     * @param staticArea the static-position rectangle in the containing-block frame
+     * @param cbSize     the containing block size in this axis
+     * @param keyword    the physical edge selected by the resolved alignment
+     * @param reversed   whether the logical start edge is the physical end edge (RTL inline axis)
+     * @return the derived IMCB in the containing-block frame
+     */
+    private static OofInterval staticPositionImcb(
+        OofInterval staticArea, float cbSize, OofEdge keyword, boolean reversed) {
+        OofInterval imcb = switch (keyword) {
+            case START -> new OofInterval(staticArea.start(), cbSize);
+            case END -> new OofInterval(0f, staticArea.end());
+            case CENTER -> {
+                float center = (staticArea.start() + staticArea.end()) / 2f;
+                float startDistance = center;
+                float endDistance = cbSize - center;
+                yield Math.abs(startDistance) <= Math.abs(endDistance)
+                      ? new OofInterval(0f, 2f * startDistance)
+                      : new OofInterval(cbSize - 2f * endDistance, cbSize);
+            }
+        };
+        if (imcb.end() < imcb.start()) {
+            // Over-constrained: the weaker inset is the logical end edge (the physical end edge in
+            // LTR, the physical start edge in RTL), which is reduced until the IMCB is empty.
+            return startEdge(reversed) == OofEdge.START
+                   ? new OofInterval(imcb.start(), imcb.start())
+                   : new OofInterval(imcb.end(), imcb.end());
+        }
+        return imcb;
     }
 
     // Helper methods
