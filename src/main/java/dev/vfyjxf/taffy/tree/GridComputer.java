@@ -131,6 +131,8 @@ public class GridComputer {
         TaffySize<TaffyDimension> rawMinSize;   // Original unresolved min-size
         TaffySize<TaffyDimension> rawMaxSize;   // Original unresolved max-size
         BoxSizing boxSizing;          // Box sizing mode for padding/border adjustment
+        TaffyRect<LengthPercentage> rawPadding;   // Original padding style (resolved against the grid area)
+        TaffyRect<LengthPercentage> rawBorder;    // Original border style (resolved against the grid area)
         TaffyPosition position;
         TaffyRect<LengthPercentageAuto> inset;
         TaffyRect<LengthPercentageAuto> rawMargin;  // Original margin style (for special percentage resolution)
@@ -195,12 +197,11 @@ public class GridComputer {
         FloatSize inlineContributionInputCache;
         FloatSize blockContributionInputCache;
         // Cache for the known_dimensions input to intrinsic sizing computation, together with the
-        // inputs it was computed for. The min- and max-content contributions of an item are both
+        // grid area it was computed for. The min- and max-content contributions of an item are both
         // computed from the same known_dimensions, so sharing the result halves that work
         // (GR-09 / upstream #1226). Must be cleared whenever an input changes (baseline_shim, grid
-        // area size, inner node size); see clearKnownDimensionsCache().
+        // area size); see clearKnownDimensionsCache().
         FloatSize knownDimensionsCacheGridArea;
-        FloatSize knownDimensionsCacheInnerNodeSize;
         FloatSize knownDimensionsCache;
         // Cache for the min-content contribution
         Float minContentContributionWidth;
@@ -265,64 +266,140 @@ public class GridComputer {
          * @param innerNodeWidth The inner width of the node, used for vertical percentage margins
          * @return Size with width being sum of horizontal margins, height being sum of vertical margins
          */
-        FloatSize getMarginAxisSumsWithBaselineShims(float innerNodeWidth) {
-            // Horizontal percentage margins resolve against 0 (not the container width)
+        FloatSize getMarginAxisSumsWithBaselineShims(float percentageBasis) {
+            // Horizontal percentage margins resolve against 0 (not the containing block width)
             // This is per CSS Grid spec to avoid cyclic dependencies
             float left = Resolve.resolveLpaOrZero(rawMargin.left, 0f);
             float right = Resolve.resolveLpaOrZero(rawMargin.right, 0f);
-            // Vertical percentage margins resolve against inner_node_width
-            float top = Resolve.resolveLpaOrZero(rawMargin.top, innerNodeWidth) + baselineShim;
-            float bottom = Resolve.resolveLpaOrZero(rawMargin.bottom, innerNodeWidth);
+            // Vertical percentage margins resolve against the inline size of the containing block,
+            // which is the grid area's inline size during intrinsic sizing (upstream #960).
+            float top = Resolve.resolveLpaOrZero(rawMargin.top, percentageBasis) + baselineShim;
+            float bottom = Resolve.resolveLpaOrZero(rawMargin.bottom, percentageBasis);
             return new FloatSize(left + right, top + bottom);
         }
 
         /**
+         * The item's padding resolved against the grid area. Percentage padding and border resolve
+         * against the inline size of the containing block, which for a grid item under intrinsic
+         * measurement is the grid area's inline size when it is definite (upstream #960).
+         *
+         * @param gridAreaSize the grid area size, either dimension NaN when indefinite
+         */
+        FloatRect resolvePadding(FloatSize gridAreaSize) {
+            return rawPadding != null ? Resolve.resolveRectOrZero(rawPadding, gridAreaSize.width) : FloatRect.zero();
+        }
+
+        /** The item's border resolved against the grid area's inline size (upstream #960). */
+        FloatRect resolveBorder(FloatSize gridAreaSize) {
+            return rawBorder != null ? Resolve.resolveRectOrZero(rawBorder, gridAreaSize.width) : FloatRect.zero();
+        }
+
+        /** The border-box padding + border sums resolved against the grid area. */
+        FloatSize paddingBorderSize(FloatSize gridAreaSize) {
+            FloatRect padding = resolvePadding(gridAreaSize);
+            FloatRect border = resolveBorder(gridAreaSize);
+            return new FloatSize(
+                padding.left + padding.right + border.left + border.right,
+                padding.top + padding.bottom + border.top + border.bottom
+            );
+        }
+
+        /** Box-sizing adjustment: content-box styles add their padding + border to the used size. */
+        private FloatSize boxSizingAdjustment(FloatSize gridAreaSize) {
+            return boxSizing == BoxSizing.CONTENT_BOX ? paddingBorderSize(gridAreaSize) : FloatSize.ZERO;
+        }
+
+        /**
+         * The item's preferred size resolved against the grid area (upstream alignment.rs). A
+         * percentage resolves against the grid area when that dimension is definite; otherwise it
+         * stays unresolved. The box-sizing adjustment is added for content-box items.
+         */
+        FloatSize resolvePreferredSize(FloatSize gridAreaSize) {
+            return maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawSize, gridAreaSize), aspectRatio),
+                boxSizingAdjustment(gridAreaSize));
+        }
+
+        /** The item's specified min size resolved against the grid area, floored at padding + border. */
+        FloatSize resolveMinSize(FloatSize gridAreaSize) {
+            FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio),
+                boxSizingAdjustment(gridAreaSize));
+            FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
+            return new FloatSize(
+                Math.max(!Float.isNaN(min.width) ? min.width : 0f, paddingBorder.width),
+                Math.max(!Float.isNaN(min.height) ? min.height : 0f, paddingBorder.height)
+            );
+        }
+
+        /**
+         * The item's specified min size resolved against the grid area, treating an indefinite
+         * grid-area dimension as zero (upstream #1257). A cyclic percentage min size therefore
+         * contributes padding + border (normally zero) instead of falling through to the
+         * content-based automatic minimum size.
+         */
+        FloatSize resolveMinSizePercentAsZero(FloatSize gridAreaSize) {
+            FloatSize basis = new FloatSize(
+                !Float.isNaN(gridAreaSize.width) ? gridAreaSize.width : 0f,
+                !Float.isNaN(gridAreaSize.height) ? gridAreaSize.height : 0f
+            );
+            FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, basis), aspectRatio),
+                boxSizingAdjustment(gridAreaSize));
+            FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
+            return new FloatSize(
+                Math.max(!Float.isNaN(min.width) ? min.width : 0f, paddingBorder.width),
+                Math.max(!Float.isNaN(min.height) ? min.height : 0f, paddingBorder.height)
+            );
+        }
+
+        /** The item's specified max size resolved against the grid area. */
+        FloatSize resolveMaxSize(FloatSize gridAreaSize) {
+            return maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMaxSize, gridAreaSize), aspectRatio),
+                boxSizingAdjustment(gridAreaSize));
+        }
+
+        /** The item's margins resolved against the grid area's inline size. */
+        FloatRect resolveMargin(FloatSize gridAreaSize) {
+            return rawMargin != null ? Resolve.resolveRectLpaOrZero(rawMargin, gridAreaSize.width) : FloatRect.zero();
+        }
+
+
+        /**
          * Get min content contribution for width, using cache if available.
          */
-        float getMinContentContributionWidthCached(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
+        float getMinContentContributionWidthCached(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
             if (minContentContributionWidth != null) {
                 return minContentContributionWidth;
             }
-            float contribution = computeMinContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
+            float contribution = computeMinContentContributionWidth(layoutComputer, gridAreaSize);
             minContentContributionWidth = contribution;
             // Record the input this contribution was computed for (only on a cache miss, so the
             // recorded input always matches the cached contribution).
-            inlineContributionInputCache = availableSpace;
+            inlineContributionInputCache = gridAreaSize;
             return contribution;
         }
 
         /**
          * Get max content contribution for width, using cache if available.
          */
-        float getMaxContentContributionWidthCached(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
+        float getMaxContentContributionWidthCached(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
             if (maxContentContributionWidth != null) {
                 return maxContentContributionWidth;
             }
-            float contribution = computeMaxContentContributionWidth(layoutComputer, availableSpace, innerNodeSize);
+            float contribution = computeMaxContentContributionWidth(layoutComputer, gridAreaSize);
             maxContentContributionWidth = contribution;
-            inlineContributionInputCache = availableSpace;
+            inlineContributionInputCache = gridAreaSize;
             return contribution;
         }
 
         /**
          * Get max content contribution for height, using cache if available.
          */
-        float getMaxContentContributionHeightCached(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
+        float getMaxContentContributionHeightCached(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
             if (maxContentContributionHeight != null) {
                 return maxContentContributionHeight;
             }
-            float contribution = computeMaxContentContributionHeight(layoutComputer, availableSpace, innerNodeSize);
+            float contribution = computeMaxContentContributionHeight(layoutComputer, gridAreaSize);
             maxContentContributionHeight = contribution;
-            blockContributionInputCache = availableSpace;
+            blockContributionInputCache = gridAreaSize;
             return contribution;
         }
 
@@ -333,34 +410,32 @@ public class GridComputer {
          * This method returns the contribution INCLUDING margin, matching the
          * original behavior expected by callers in track sizing.
          */
-        private float computeMinContentContributionWidth(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
-            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(innerNodeSize.width);
+        private float computeMinContentContributionWidth(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
+            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // If explicit width is set, use it
-            if (!Float.isNaN(size.width)) {
-                return size.width + marginAxisSums.width;
+            // If the preferred width resolves against the grid area, use it
+            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            if (!Float.isNaN(inherentSize.width)) {
+                return inherentSize.width + marginAxisSums.width;
             }
 
             // Compute known dimensions with stretch alignment and aspect ratio
-            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(gridAreaSize);
 
-            // Build available space for measurement - match Rust's available_space.map() logic
-            // Both axes: Some(size) -> Definite(size), None -> MinContent
-            AvailableSpace widthAvail = !Float.isNaN(availableSpace.width)
-                                        ? AvailableSpace.definite(availableSpace.width)
-                                        : AvailableSpace.minContent();
-            AvailableSpace heightAvail = !Float.isNaN(availableSpace.height)
-                                         ? AvailableSpace.definite(availableSpace.height)
+            // Build available space for measurement - match Rust's available_space.map() logic.
+            // Upstream calls this with grid_area_size.with(axis, None), so the sized axis is
+            // unconstrained (min-content here) and the other axis is definite when the grid area is.
+            AvailableSpace widthAvail = AvailableSpace.minContent();
+            AvailableSpace heightAvail = !Float.isNaN(gridAreaSize.height)
+                                         ? AvailableSpace.definite(gridAreaSize.height)
                                          : AvailableSpace.minContent();
 
-            // Use measureChildSize for efficient sizing (returns just size, no full layout)
+            // Use measureChildSize for efficient sizing (returns just size, no full layout).
+            // The grid area is the item's containing block during intrinsic measurement (#960).
             FloatSize measuredSize = layoutComputer.measureChildSize(
                 nodeId,
                 knownDimensions,
-                innerNodeSize,
+                gridAreaSize,
                 new TaffySize<>(widthAvail, heightAvail),
                 SizingMode.INHERENT_SIZE,
                 TaffyLine.FALSE
@@ -375,32 +450,28 @@ public class GridComputer {
          * This method returns the contribution INCLUDING margin, matching the
          * original behavior expected by callers in track sizing.
          */
-        private float computeMaxContentContributionWidth(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
-            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(innerNodeSize.width);
+        private float computeMaxContentContributionWidth(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
+            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // If explicit width is set, use it
-            if (!Float.isNaN(size.width)) {
-                return size.width + marginAxisSums.width;
+            // If the preferred width resolves against the grid area, use it
+            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            if (!Float.isNaN(inherentSize.width)) {
+                return inherentSize.width + marginAxisSums.width;
             }
 
-            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(gridAreaSize);
 
-            // Build available space for measurement - match Rust's available_space.map() logic
-            // Both axes: Some(size) -> Definite(size), None -> MaxContent
-            AvailableSpace widthAvail = !Float.isNaN(availableSpace.width)
-                                        ? AvailableSpace.definite(availableSpace.width)
-                                        : AvailableSpace.maxContent();
-            AvailableSpace heightAvail = !Float.isNaN(availableSpace.height)
-                                         ? AvailableSpace.definite(availableSpace.height)
+            // Build available space for measurement - match Rust's available_space.map() logic.
+            // See the min-content path: the sized axis is unconstrained (max-content here).
+            AvailableSpace widthAvail = AvailableSpace.maxContent();
+            AvailableSpace heightAvail = !Float.isNaN(gridAreaSize.height)
+                                         ? AvailableSpace.definite(gridAreaSize.height)
                                          : AvailableSpace.maxContent();
 
             FloatSize measuredSize = layoutComputer.measureChildSize(
                 nodeId,
                 knownDimensions,
-                innerNodeSize,
+                gridAreaSize,
                 new TaffySize<>(widthAvail, heightAvail),
                 SizingMode.INHERENT_SIZE,
                 TaffyLine.FALSE
@@ -415,32 +486,29 @@ public class GridComputer {
          * This method returns the contribution INCLUDING margin, matching the
          * original behavior expected by callers in track sizing.
          */
-        private float computeMaxContentContributionHeight(
-            LayoutComputer layoutComputer,
-            FloatSize availableSpace,
-            FloatSize innerNodeSize) {
-            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(innerNodeSize.width);
+        private float computeMaxContentContributionHeight(LayoutComputer layoutComputer, FloatSize gridAreaSize) {
+            FloatSize marginAxisSums = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // If explicit height is set, use it
-            if (!Float.isNaN(size.height)) {
-                return size.height + marginAxisSums.height;
+            // If the preferred height resolves against the grid area, use it
+            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            if (!Float.isNaN(inherentSize.height)) {
+                return inherentSize.height + marginAxisSums.height;
             }
 
-            FloatSize knownDimensions = computeKnownDimensionsCached(availableSpace, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensionsCached(gridAreaSize);
 
-            // Build available space for measurement - match Rust's available_space.map() logic
-            // Both axes: Some(size) -> Definite(size), None -> MaxContent
-            AvailableSpace widthAvail = !Float.isNaN(availableSpace.width)
-                                        ? AvailableSpace.definite(availableSpace.width)
+            // Build available space for measurement - match Rust's available_space.map() logic.
+            // See the inline-axis paths: the sized axis is unconstrained (max-content here) and
+            // the grid area's other dimension is definite when available.
+            AvailableSpace widthAvail = !Float.isNaN(gridAreaSize.width)
+                                        ? AvailableSpace.definite(gridAreaSize.width)
                                         : AvailableSpace.maxContent();
-            AvailableSpace heightAvail = !Float.isNaN(availableSpace.height)
-                                         ? AvailableSpace.definite(availableSpace.height)
-                                         : AvailableSpace.maxContent();
+            AvailableSpace heightAvail = AvailableSpace.maxContent();
 
             FloatSize measuredSize = layoutComputer.measureChildSize(
                 nodeId,
                 knownDimensions,
-                innerNodeSize,
+                gridAreaSize,
                 new TaffySize<>(widthAvail, heightAvail),
                 SizingMode.INHERENT_SIZE,
                 TaffyLine.FALSE
@@ -451,12 +519,11 @@ public class GridComputer {
 
         /**
          * Clear the cached known dimensions. Called explicitly wherever an input of
-         * {@link #computeKnownDimensions(FloatSize, FloatSize)} changes (GR-08/GR-09 explicit
-         * invalidation), matching upstream #1226's {@code known_dimensions_cache = None} sites.
+         * {@link #computeKnownDimensions(FloatSize)} changes (GR-08/GR-09 explicit invalidation),
+         * matching upstream #1226's {@code known_dimensions_cache = None} sites.
          */
-        private void clearKnownDimensionsCache() {
+        void clearKnownDimensionsCache() {
             knownDimensionsCacheGridArea = null;
-            knownDimensionsCacheInnerNodeSize = null;
             knownDimensionsCache = null;
         }
 
@@ -466,15 +533,12 @@ public class GridComputer {
          * (GR-09 / #1226): the min-content and max-content contributions of an item are both computed
          * from the same known dimensions, so the second contribution can reuse the first one's result.
          */
-        private FloatSize computeKnownDimensionsCached(FloatSize gridAreaSize, FloatSize innerNodeSize) {
-            if (knownDimensionsCache != null
-                && floatSizeEquals(knownDimensionsCacheGridArea, gridAreaSize)
-                && floatSizeEquals(knownDimensionsCacheInnerNodeSize, innerNodeSize)) {
+        private FloatSize computeKnownDimensionsCached(FloatSize gridAreaSize) {
+            if (knownDimensionsCache != null && floatSizeEquals(knownDimensionsCacheGridArea, gridAreaSize)) {
                 return knownDimensionsCache;
             }
-            FloatSize knownDimensions = computeKnownDimensions(gridAreaSize, innerNodeSize);
+            FloatSize knownDimensions = computeKnownDimensions(gridAreaSize);
             knownDimensionsCacheGridArea = gridAreaSize;
-            knownDimensionsCacheInnerNodeSize = innerNodeSize;
             knownDimensionsCache = knownDimensions;
             return knownDimensions;
         }
@@ -483,20 +547,14 @@ public class GridComputer {
          * Compute known dimensions for sizing, applying stretch alignment and aspect ratio.
          * This is similar to Rust's GridItem::known_dimensions method.
          */
-        private FloatSize computeKnownDimensions(FloatSize gridAreaSize, FloatSize innerNodeSize) {
-            FloatSize margins = getMarginAxisSumsWithBaselineShims(innerNodeSize.width);
+        private FloatSize computeKnownDimensions(FloatSize gridAreaSize) {
+            FloatSize margins = getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-            // Note: item.size, item.minSize, item.maxSize already include boxSizingAdj from generateGridItems.
-            // So we should NOT add boxSizingAdj again here.
-            // Just use them directly with aspect ratio applied.
-            FloatSize inherentSize = maybeApplyAspectRatio(size, aspectRatio);
-            // DO NOT add boxSizingAdj - it's already included in `size`!
-
-            FloatSize minSizeResolved = maybeApplyAspectRatio(minSize, aspectRatio);
-            // DO NOT add boxSizingAdj - it's already included in `minSize`!
-
-            FloatSize maxSizeResolved = maybeApplyAspectRatio(maxSize, aspectRatio);
-            // DO NOT add boxSizingAdj - it's already included in `maxSize`!
+            // Resolve the preferred/min/max sizes against the grid area (upstream #960). A
+            // percentage stays unresolved when the corresponding grid-area dimension is indefinite.
+            FloatSize inherentSize = resolvePreferredSize(gridAreaSize);
+            FloatSize minSizeResolved = resolveMinSize(gridAreaSize);
+            FloatSize maxSizeResolved = resolveMaxSize(gridAreaSize);
 
             // Grid area minus margins
             FloatSize gridAreaMinusMargins = new FloatSize(
@@ -549,12 +607,12 @@ public class GridComputer {
 
     }
 
-    private static float capCompressibleReplacedMinimumContributionWidth(GridItem item, float currentWithMargin, float marginWidth) {
+    private static float capCompressibleReplacedMinimumContributionWidth(GridItem item, float currentWithMargin,
+                                                                          float marginWidth, FloatSize gridAreaSize) {
         if (item == null || !item.isCompressibleReplaced) return currentWithMargin;
 
-        // Border+padding minimum (outer size can't be smaller than this)
-        float paddingBorderWidth = (item.padding != null ? item.padding.left + item.padding.right : 0f)
-                                   + (item.border != null ? item.border.left + item.border.right : 0f);
+        // Border+padding minimum (outer size can't be smaller than this), resolved against the grid area
+        float paddingBorderWidth = item.paddingBorderSize(gridAreaSize).width;
 
         float preferred = resolveReplacedCapValueWidth(item.rawSize, item.boxSizing, paddingBorderWidth);
         float max = resolveReplacedCapValueWidth(item.rawMaxSize, item.boxSizing, paddingBorderWidth);
@@ -741,6 +799,13 @@ public class GridComputer {
         int numColumns = colCounts.len();
         int numRows = rowCounts.len();
 
+        // The per-index track sizing functions (explicit template + cycling grid-auto-*), shared by
+        // the grid-area-size estimates below and by the track sizing passes.
+        List<TrackSizingFunction> resolvedColumnTracks = resolveTrackSizingList(
+            expandedColumns, style.getGridAutoColumns(), colCounts, numColumns);
+        List<TrackSizingFunction> resolvedRowTracks = resolveTrackSizingList(
+            expandedRows, style.getGridAutoRows(), rowCounts, numRows);
+
         // Determine if items cross flexible or intrinsic tracks (for re-run optimization)
         determineIfItemCrossesFlexibleOrIntrinsicTracks(
             items, expandedColumns, style.getGridAutoColumns(),
@@ -770,68 +835,17 @@ public class GridComputer {
         }
         initialColumnSum += gap.width * Math.max(0, nonCollapsedColumns - 1);
 
-        // Store whether parent was indefinite before updating
-        boolean parentWidthIndefinite = !availableGridSpace.width.isDefinite();
+        // Whether the grid container's own size is indefinite, which is what decides whether
+        // percentage tracks/gaps have to be re-run (GR-11 / upstream #1243). This is deliberately
+        // not the available-space definiteness: a shrink-to-fit (e.g. inline-grid) container can have
+        // a definite available space while its own size is still content-based.
+        boolean parentWidthIndefinite = Float.isNaN(styledBasedKnownDimensions.width);
+        boolean parentHeightIndefinite = Float.isNaN(styledBasedKnownDimensions.height);
 
-        // If inner node width was indefinite, update it with the column sum
+        // If inner node width was indefinite, update it with the column sum. Row sizing resolves
+        // percentage heights against the content-sized container width (upstream #960).
         if (Float.isNaN(nodeInnerSize.width)) {
             nodeInnerSize = new FloatSize(initialColumnSum, nodeInnerSize.height);
-
-            // Per CSS Grid spec step 7: Resolve percentage track base sizes
-            // In the case of an indefinitely sized container, percentage gap resolves to zero during initial sizing
-            // and needs to be re-resolved based on the content-sized content box of the container
-            // Re-compute gap if it uses percentages (for use in positioning, NOT for container sizing)
-            if (style.getGap().width.isPercent()) {
-                float newGapWidth = style.getGap().width.resolveOrZero(nodeInnerSize.width);
-                gap = new FloatSize(newGapWidth, gap.height);
-                // Note: initialColumnSum is NOT recalculated - container size uses the initial value
-                // The new gap is used for child positioning
-            }
-        }
-
-        // CSS Grid spec Step 7: Re-resolve percentage column base sizes
-        // Percentage tracks that were treated as auto during initial sizing need to be clamped to their resolved sizes
-        // This is CRITICAL for minmax(auto, percent) where the track was sized to content, but needs to be clamped to percent
-        if (parentWidthIndefinite) {
-            // Resolve percentage column sizing functions against the now-known container width
-            for (int i = 0; i < columnSizes.size() && i < expandedColumns.size(); i++) {
-                TrackSizingFunction track = expandedColumns.get(i);
-                if (track != null && track.isMinmax()) {
-                    // Get min and max sizing functions
-                    TrackSizingFunction minF = track.getMinFunc();
-                    TrackSizingFunction maxF = track.getMaxFunc();
-
-                    // Resolve percentage values from min/max
-                    float resolvedMin = NaN;
-                    float resolvedMax = NaN;
-
-                    if (minF != null && minF.isFixed() && minF.getFixedValue() != null && minF.getFixedValue().isPercent()) {
-                        resolvedMin = minF.getFixedValue().resolveOrZero(nodeInnerSize.width);
-                    }
-                    if (maxF != null && maxF.isFixed() && maxF.getFixedValue() != null && maxF.getFixedValue().isPercent()) {
-                        resolvedMax = maxF.getFixedValue().resolveOrZero(nodeInnerSize.width);
-                    }
-
-                    // Clamp base_size to [min, max] as in Rust's maybe_clamp
-                    if (!Float.isNaN(resolvedMin) || !Float.isNaN(resolvedMax)) {
-                        float newSize = columnSizes.getFloat(i);
-                        if (!Float.isNaN(resolvedMin)) {
-                            newSize = Math.max(newSize, resolvedMin);
-                        }
-                        if (!Float.isNaN(resolvedMax)) {
-                            newSize = Math.min(newSize, resolvedMax);
-                        }
-                        columnSizes.set(i, newSize);
-                    }
-                } else if (track != null && track.isFixed() && track.getFixedValue() != null && track.getFixedValue().isPercent()) {
-                    // Simple fixed percentage track
-                    float resolvedSize = track.getFixedValue().resolveOrZero(nodeInnerSize.width);
-                    float currentSize = columnSizes.getFloat(i);
-                    // Clamp to the resolved percentage value
-                    float newSize = Math.max(resolvedSize, Math.min(currentSize, resolvedSize));
-                    columnSizes.set(i, newSize);
-                }
-            }
         }
 
         // If only the container's width has been requested then the rows do not need to be sized at all,
@@ -874,34 +888,29 @@ public class GridComputer {
         }
         initialRowSum += gap.height * Math.max(0, rowSizes.size() - 1);
 
-        // Per CSS Grid spec 11.8: Update inner_node_size.height if it was indefinite
-        boolean parentHeightIndefinite = !availableGridSpace.height.isDefinite();
-        if (Float.isNaN(nodeInnerSize.height)) {
-            nodeInnerSize = new FloatSize(nodeInnerSize.width, initialRowSum);
-
-            // Per CSS Grid spec step 7: Resolve percentage row base sizes and gap
-            // In the case of an indefinitely sized container, percentage gap resolves to zero during initial sizing
-            if (style.getGap().height.isPercent()) {
-                float newGapHeight = style.getGap().height.resolveOrZero(nodeInnerSize.height);
-                gap = new FloatSize(gap.width, newGapHeight);
-            }
+        // The container's size is now determined, so percentages resolve against its content box
+        // when track sizing is re-run (GR-11 / upstream #1243). Unlike the first pass, the content
+        // box is the min/max-clamped container content box. This replaces the old "step 7" clamp of
+        // percentage track base sizes: its results were always discarded by the re-run that follows
+        // (upstream #1244).
+        float containerBorderWidth = !Float.isNaN(styledBasedKnownDimensions.width)
+                                     ? styledBasedKnownDimensions.width
+                                     : initialColumnSum + contentBoxInsetWidth;
+        float containerBorderHeight = !Float.isNaN(styledBasedKnownDimensions.height)
+                                      ? styledBasedKnownDimensions.height
+                                      : initialRowSum + contentBoxInsetHeight;
+        containerBorderWidth = Math.max(TaffyMath.clamp(containerBorderWidth, minSize.width, maxSize.width),
+            paddingBorderSize.width);
+        containerBorderHeight = Math.max(TaffyMath.clamp(containerBorderHeight, minSize.height, maxSize.height),
+            paddingBorderSize.height);
+        nodeInnerSize = new FloatSize(
+            Math.max(0f, containerBorderWidth - contentBoxInsetWidth),
+            Math.max(0f, containerBorderHeight - contentBoxInsetHeight));
+        if (style.getGap().width.isPercent()) {
+            gap = new FloatSize(style.getGap().width.resolveOrZero(nodeInnerSize.width), gap.height);
         }
-
-        // CSS Grid spec step 7: Re-resolve percentage row base sizes
-        // Percentage tracks that were treated as auto during initial sizing need to be clamped to their resolved sizes
-        if (parentHeightIndefinite) {
-            // Check if any row has percentage sizing that needs re-resolution
-            for (int i = 0; i < rowSizes.size() && i < expandedRows.size(); i++) {
-                TrackSizingFunction track = expandedRows.get(i);
-                if (track != null && track.isFixed() && track.getFixedValue() != null && track.getFixedValue().isPercent()) {
-                    float resolvedMin = track.getFixedValue().resolveOrZero(nodeInnerSize.height);
-                    float resolvedMax = track.getFixedValue().resolveOrZero(nodeInnerSize.height);
-                    float currentSize = rowSizes.getFloat(i);
-                    // Clamp base_size to [min, max] as in Rust's maybe_clamp
-                    float newSize = Math.max(resolvedMin, Math.min(currentSize, resolvedMax));
-                    rowSizes.set(i, newSize);
-                }
-            }
+        if (style.getGap().height.isPercent()) {
+            gap = new FloatSize(gap.width, style.getGap().height.resolveOrZero(nodeInnerSize.height));
         }
 
         // === Rust-style Re-run Logic (CSS Grid spec 11.8) ===
@@ -912,11 +921,20 @@ public class GridComputer {
         boolean rerunColumnSizing;
         boolean hasPercentageColumn = expandedColumns.stream().anyMatch(TrackSizingFunction::usesPercentage);
         boolean hasPercentageGutter = style.getGap().width.isPercent();
+        boolean hasPercentageRow = expandedRows.stream().anyMatch(TrackSizingFunction::usesPercentage);
+        boolean hasPercentageRowGutter = style.getGap().height.isPercent();
         rerunColumnSizing = parentWidthIndefinite && (hasPercentageColumn || hasPercentageGutter);
 
         final FloatSize finalNodeInnerSize = nodeInnerSize;
         final FloatList finalRowSizes = rowSizes;
         final FloatSize finalGap = gap;
+
+        // Upstream #960: the intrinsic contributions that changed during the re-run checks force the
+        // container's size to be recomputed from the final track sizes (the first pass sized the
+        // tracks against an indefinite container, so its sums are stale). The flags are only set by
+        // the corresponding check actually running and finding a different min-content contribution.
+        boolean intrinsicColumnContributionChanged = false;
+        boolean intrinsicRowContributionChanged = false;
 
         if (!rerunColumnSizing) {
             // Check if any item crossing an intrinsic column has changed its min_content_contribution
@@ -924,7 +942,8 @@ public class GridComputer {
             // CRITICAL: Only trigger re-run if the cached value EXISTS and has changed.
             // If cache is empty, the item wasn't used in initial track sizing, so skip it.
             boolean minContentContributionChanged = false;
-            for (GridItem item : items) {
+            for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+                GridItem item = items.get(itemIdx);
                 if (!item.crossesIntrinsicColumn) continue;
 
                 // If no cached contribution from initial track sizing, skip this item
@@ -933,31 +952,36 @@ public class GridComputer {
                     continue;
                 }
 
-                // Compute available_space based on known row sizes (like Rust's item.available_space())
+                // Recompute the grid area from the initial column sizes and the initial row sizes,
+                // like Rust's item.grid_area_size() (upstream #960).
+                int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
+                float areaWidth = definiteGridAreaExtent(columnSizes, resolvedColumnTracks, col,
+                    item.columnSpan, finalNodeInnerSize.width);
                 float itemHeight = computeItemAvailableHeight(item, finalRowSizes, finalGap);
-                FloatSize itemAvailSpace = new FloatSize(NaN, itemHeight);
+                FloatSize itemGridAreaSize = new FloatSize(areaWidth, itemHeight);
 
-                // Check if the available space used for the cached inline-axis contribution actually
-                // changed (per-axis cache, GR-08 / #1227)
-                boolean availSpaceChanged = item.inlineContributionInputCache == null ||
-                                            !floatEquals(item.inlineContributionInputCache.height, itemHeight);
+                // Check if the grid-area input used for the cached inline-axis contribution changed
+                // (per-axis cache, GR-08 / #1227)
+                boolean inputChanged = item.inlineContributionInputCache == null ||
+                                       !floatSizeEquals(item.inlineContributionInputCache, itemGridAreaSize);
 
-                if (!availSpaceChanged) {
-                    // Available space didn't change, contribution won't change either
+                if (!inputChanged) {
+                    // The grid area didn't change, so the contribution cannot have changed either
                     continue;
                 }
 
                 // Compute new min_content_contribution (non-cached version)
-                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(finalNodeInnerSize.width);
+                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
                 float newMinContentContribution;
-                if (!Float.isNaN(item.size.width)) {
-                    newMinContentContribution = item.size.width + marginAxisSums.width;
+                FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+                if (!Float.isNaN(preferredSize.width)) {
+                    newMinContentContribution = preferredSize.width + marginAxisSums.width;
                 } else {
-                    FloatSize itemKnownDims = item.computeKnownDimensions(itemAvailSpace, finalNodeInnerSize);
+                    FloatSize itemKnownDims = item.computeKnownDimensions(itemGridAreaSize);
                     FloatSize measuredSize = layoutComputer.measureChildSize(
                         item.nodeId,
                         itemKnownDims,
-                        finalNodeInnerSize,
+                        itemGridAreaSize,
                         new TaffySize<>(AvailableSpace.minContent(),
                             !Float.isNaN(itemHeight) ? AvailableSpace.definite(itemHeight) : AvailableSpace.minContent()),
                         SizingMode.INHERENT_SIZE,
@@ -970,7 +994,7 @@ public class GridComputer {
                 boolean hasChanged = Math.abs(newMinContentContribution - item.minContentContributionWidth) > 0.001f;
 
                 // Update cache
-                item.inlineContributionInputCache = itemAvailSpace;
+                item.inlineContributionInputCache = itemGridAreaSize;
                 item.minContentContributionWidth = newMinContentContribution;
                 item.maxContentContributionWidth = null;
                 item.minimumContributionWidth = null;
@@ -979,6 +1003,7 @@ public class GridComputer {
                     minContentContributionChanged = true;
                 }
             }
+            intrinsicColumnContributionChanged = minContentContributionChanged;
             rerunColumnSizing = minContentContributionChanged;
         } else {
             // Clear intrinsic width caches since we're definitely re-running due to percentage tracks
@@ -992,6 +1017,25 @@ public class GridComputer {
             }
         }
 
+        // Row sizing must be re-run (once), independently of column sizing (GR-11 / upstream #1244):
+        //   - The grid container's height is indefinite and there are percentage rows/gaps
+        //   - Column sizing was re-run and an item crossing an intrinsic row changed its contribution
+        boolean rerunRowSizing = parentHeightIndefinite && (hasPercentageRow || hasPercentageRowGutter);
+
+        if (rerunRowSizing) {
+            // Clear the intrinsic height caches: the percentage-row re-run re-measures every item
+            // (upstream #1244; the caches are cleared before the column re-run so that the column
+            // re-run's contribution check is skipped).
+            for (GridItem item : items) {
+                item.inlineContributionInputCache = null;
+                item.blockContributionInputCache = null;
+                item.minContentContributionHeight = null;
+                item.maxContentContributionHeight = null;
+                item.minimumContributionHeight = null;
+                item.clearKnownDimensionsCache();
+            }
+        }
+
         if (rerunColumnSizing) {
             // Re-run column sizing with known row sizes
             columnSizes = calculateColumnSizesWithRowSizes(style, nodeInnerSize, innerMinSize.width, innerMaxSize.width,
@@ -999,22 +1043,17 @@ public class GridComputer {
             // Re-apply auto-fit collapse after re-run
             collapseEmptyAutoFitColumns(columnSizes, style, items, nodeInnerSize, gap.width, colCounts);
 
-            // Row sizing must be re-run (once) if:
-            //   - The grid container's height was initially indefinite and there are any rows with percentage track sizing functions
-            //   - Any grid item crossing an intrinsically sized track's min content contribution height has changed
-
-            boolean rerunRowSizing;
-            boolean hasPercentageRow = expandedRows.stream().anyMatch(TrackSizingFunction::usesPercentage);
-            boolean hasPercentageRowGutter = style.getGap().height.isPercent();
-            rerunRowSizing = parentHeightIndefinite && (hasPercentageRow || hasPercentageRowGutter);
-
+            // The column widths may have changed, so the items' intrinsic height contributions need
+            // to be recomputed. This is skipped when row sizing is being re-run anyway, because its
+            // caches have already been cleared above.
             final FloatList finalColumnSizes = columnSizes;
 
             if (!rerunRowSizing) {
                 // Check if any item crossing an intrinsic row has changed its min_content_contribution
                 // CRITICAL: Only trigger re-run if cached value EXISTS and has changed
                 boolean minContentContributionChanged = false;
-                for (GridItem item : items) {
+                for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+                    GridItem item = items.get(itemIdx);
                     if (!item.crossesIntrinsicRow) continue;
 
                     // If no cached contribution from initial track sizing, skip this item
@@ -1022,30 +1061,35 @@ public class GridComputer {
                         continue;
                     }
 
-                    // Compute available_space based on known column sizes
+                    // Recompute the grid area from the known column sizes and the initial row sizes
+                    // (upstream #960's item.grid_area_size()).
+                    int row = getItemRowWithCounts(item, itemIdx, numColumns, rowCounts);
+                    float areaHeight = definiteGridAreaExtent(rowSizes, resolvedRowTracks, row,
+                        item.rowSpan, finalNodeInnerSize.height);
                     float itemWidth = computeItemAvailableWidth(item, finalColumnSizes, finalGap);
-                    FloatSize itemAvailSpace = new FloatSize(itemWidth, NaN);
+                    FloatSize itemGridAreaSize = new FloatSize(itemWidth, areaHeight);
 
-                    // Check if the available space used for the cached block-axis contribution actually
-                    // changed (per-axis cache, GR-08 / #1227)
-                    boolean availSpaceChanged = item.blockContributionInputCache == null ||
-                                                !floatEquals(item.blockContributionInputCache.width, itemWidth);
+                    // Check if the grid-area input used for the cached block-axis contribution changed
+                    // (per-axis cache, GR-08 / #1227)
+                    boolean inputChanged = item.blockContributionInputCache == null ||
+                                           !floatSizeEquals(item.blockContributionInputCache, itemGridAreaSize);
 
-                    if (!availSpaceChanged) {
+                    if (!inputChanged) {
                         continue;
                     }
 
                     // Compute new min_content_contribution for height
-                    FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(finalNodeInnerSize.width);
+                    FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
                     float newMinContentContribution;
-                    if (!Float.isNaN(item.size.height)) {
-                        newMinContentContribution = item.size.height + marginAxisSums.height;
+                    FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+                    if (!Float.isNaN(preferredSize.height)) {
+                        newMinContentContribution = preferredSize.height + marginAxisSums.height;
                     } else {
-                        FloatSize itemKnownDims = item.computeKnownDimensions(itemAvailSpace, finalNodeInnerSize);
+                        FloatSize itemKnownDims = item.computeKnownDimensions(itemGridAreaSize);
                         FloatSize measuredSize = layoutComputer.measureChildSize(
                             item.nodeId,
                             itemKnownDims,
-                            finalNodeInnerSize,
+                            itemGridAreaSize,
                             new TaffySize<>(!Float.isNaN(itemWidth) ? AvailableSpace.definite(itemWidth) : AvailableSpace.minContent(),
                                 AvailableSpace.minContent()),
                             SizingMode.INHERENT_SIZE,
@@ -1058,7 +1102,7 @@ public class GridComputer {
                     boolean hasChanged = Math.abs(newMinContentContribution - item.minContentContributionHeight) > 0.001f;
 
                     // Update cache
-                    item.blockContributionInputCache = itemAvailSpace;
+                    item.blockContributionInputCache = itemGridAreaSize;
                     item.minContentContributionHeight = newMinContentContribution;
                     item.maxContentContributionHeight = null;
                     item.minimumContributionHeight = null;
@@ -1067,34 +1111,58 @@ public class GridComputer {
                         minContentContributionChanged = true;
                     }
                 }
+                intrinsicRowContributionChanged = minContentContributionChanged;
                 rerunRowSizing = minContentContributionChanged;
-            } else {
-                // Clear intrinsic height caches
-                for (GridItem item : items) {
-                    item.inlineContributionInputCache = null;
-                    item.blockContributionInputCache = null;
-                    item.minContentContributionHeight = null;
-                    item.maxContentContributionHeight = null;
-                    item.minimumContributionHeight = null;
-                    item.clearKnownDimensionsCache();
-                }
-            }
-
-            if (rerunRowSizing) {
-                // Re-run row sizing with known column sizes
-                rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
-                    availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
             }
         }
 
-        // Calculate container size based on tracks
-        // IMPORTANT: Use initialColumnSum for container size calculation (per CSS Grid spec)
-        // This ensures that max-content sizing returns the initial (unrestricted) size,
-        // while columnSizes (potentially re-run) is used for child positioning
-        float contentWidth = initialColumnSum;
+        if (rerunRowSizing) {
+            // Re-run row sizing with known column sizes
+            rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
+                availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
+        }
 
-        // IMPORTANT: Use initialRowSum for container size calculation (per CSS Grid spec)
+        // Calculate container size based on tracks.
+        // By default the initial (first-pass) sums determine the container's content size, which is
+        // what CSS Grid 11.8 specifies for percentage-track resolution steps. Upstream #960 adds one
+        // exception: when an intrinsic-axis contribution changed during the re-run check and that
+        // axis has no percentage tracks, the container's size is recomputed from the final track
+        // sizes, because the first pass had sized those tracks against an indefinite container.
+        float contentWidth = initialColumnSum;
         float contentHeight = initialRowSum;
+
+        if (intrinsicColumnContributionChanged && !hasPercentageColumn) {
+            float finalColumnSum = 0f;
+            int finalNonCollapsedColumns = 0;
+            for (float colSize : columnSizes) {
+                finalColumnSum += colSize;
+                if (colSize > 0) finalNonCollapsedColumns++;
+            }
+            contentWidth = finalColumnSum + gap.width * Math.max(0, finalNonCollapsedColumns - 1);
+            // Keep the downstream alignment/positioning pass in sync with the recomputed container.
+            float recomputedBorderWidth = !Float.isNaN(styledBasedKnownDimensions.width)
+                                          ? styledBasedKnownDimensions.width
+                                          : contentWidth + contentBoxInsetWidth;
+            recomputedBorderWidth = Math.max(TaffyMath.clamp(recomputedBorderWidth, minSize.width, maxSize.width),
+                paddingBorderSize.width);
+            nodeInnerSize = new FloatSize(Math.max(0f, recomputedBorderWidth - contentBoxInsetWidth),
+                nodeInnerSize.height);
+        }
+
+        if (intrinsicRowContributionChanged && !hasPercentageRow) {
+            float finalRowSum = 0f;
+            for (float rowSize : rowSizes) {
+                finalRowSum += rowSize;
+            }
+            contentHeight = finalRowSum + gap.height * Math.max(0, rowSizes.size() - 1);
+            float recomputedBorderHeight = !Float.isNaN(styledBasedKnownDimensions.height)
+                                           ? styledBasedKnownDimensions.height
+                                           : contentHeight + contentBoxInsetHeight;
+            recomputedBorderHeight = Math.max(TaffyMath.clamp(recomputedBorderHeight, minSize.height, maxSize.height),
+                paddingBorderSize.height);
+            nodeInnerSize = new FloatSize(nodeInnerSize.width,
+                Math.max(0f, recomputedBorderHeight - contentBoxInsetHeight));
+        }
 
         // If no items, return container size based on template
         if (items.isEmpty()) {
@@ -1631,6 +1699,10 @@ public class GridComputer {
             FloatRect itemBorder = Resolve.resolveRectOrZero(childStyle.getBorder(), nodeInnerSize.width);
             item.padding = itemPadding;
             item.border = itemBorder;
+            // Keep the raw styles: percentage padding/border/size/min/max/margin resolve against the
+            // grid area during intrinsic sizing and placement (GR-06 / upstream #960).
+            item.rawPadding = childStyle.getPadding();
+            item.rawBorder = childStyle.getBorder();
             item.aspectRatio = aspectRatio;
 
             // Store raw (unresolved) size styles for later re-resolution with known grid area
@@ -1674,7 +1746,7 @@ public class GridComputer {
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
 
             // Alignment for track sizing: use child's preference, or parent's default, or STRETCH.
-            // This merged value is used during track sizing (computeItemKnownDimensions), where
+            // This merged value is used during track sizing (GridItem#computeKnownDimensions), where
             // upstream's GridItem::is_stretch_aligned treats both 'stretch' and (non-replaced)
             // 'normal' as stretching (#1254). Final placement (placeItems) re-reads the raw values to
             // apply the grid item 'normal' rules and self-relative resolution.
@@ -2782,6 +2854,9 @@ public class GridComputer {
         // Get auto columns for implicit tracks
         List<TrackSizingFunction> autoColumns = style.getGridAutoColumns();
         int autoColCount = (autoColumns != null && !autoColumns.isEmpty()) ? autoColumns.size() : 0;
+        // Per-index track sizing functions, used for the grid-area-size estimates (GR-06 / #960).
+        List<TrackSizingFunction> resolvedColumnTracks =
+            resolveTrackSizingList(expandedCols, autoColumns, colCounts, numColumns);
         int explicitColCount = (templateCols != null) ? templateCols.size() : 0;
 
         // Initialize growth limits list
@@ -2898,6 +2973,27 @@ public class GridComputer {
             }
         }
 
+        // GR-12 / upstream #1261: when the container's width is indefinite, an indefinite percentage
+        // min track sizing function behaves as auto. Its base size is the item's minimum contribution:
+        // the automatic content-based minimum is clamped by the fixed max track size, but an explicit
+        // min-size or a definite preferred size larger than the fixed maximum raises the base above it.
+        for (int i = 0; i < numColumns; i++) {
+            if (!trackMinIsIndefinitePercent(resolvedColumnTracks.get(i), nodeInnerSize.width)) continue;
+            float maxLimit = trackDefiniteValue(trackMaxFunction(resolvedColumnTracks.get(i)), nodeInnerSize.width);
+            if (Float.isNaN(maxLimit) || Float.isNaN(sizes.getFloat(i))) continue;
+            float base = sizes.getFloat(i);
+            for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+                GridItem item = items.get(itemIdx);
+                int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
+                if (col != i || item.columnSpan != 1) continue;
+                float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows,
+                    numRows, nodeInnerSize.height, gap, knownRowSizes);
+                FloatSize itemGridAreaSize = new FloatSize(NaN, estimatedRowHeight);
+                base = Math.max(base, explicitMinimumContributionExtent(item, true, itemGridAreaSize));
+            }
+            sizes.set(i, base);
+        }
+
         // Step 1: Handle auto/content-sized tracks (min-content, max-content, auto)
         // First, calculate content-based sizes for span=1 items
         for (int i = 0; i < sizes.size(); i++) {
@@ -2909,6 +3005,10 @@ public class GridComputer {
                 float maxContentSize = 0f;     // For base_size - respects minSize
                 float pureMaxContentSize = 0f; // For growth_limit - pure content max-content, not minSize
                 float minContentSize = 0f;
+                // The aggregate minimum contribution (CSS Grid 6.6): used as the auto track base
+                // under a definite available space, where a cyclic percentage min-size contributes
+                // zero and scroll containers contribute no content size (GR-12 / upstream #1257).
+                float minimumContributionSize = 0f;
 
                 for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
                     GridItem item = items.get(itemIdx);
@@ -2917,19 +3017,28 @@ public class GridComputer {
 
                     // Only consider items that occupy this track with span of 1
                     if (col == i && span == 1) {
-                        // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
-                        FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
-                        // Calculate minimum size from padding+border (size cannot be less than this)
-                        float itemPaddingBorderWidth = (item.padding != null ? item.padding.left + item.padding.right : 0f)
-                                                       + (item.border != null ? item.border.left + item.border.right : 0f);
+                        // Estimate the height available for this item based on row tracks. This is the
+                        // item's grid area: during intrinsic sizing its percentages resolve against the
+                        // grid area, not the grid container (GR-06 / upstream #960).
+                        float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
+                        FloatSize itemGridAreaSize = new FloatSize(
+                            definiteGridAreaExtent(sizes, resolvedColumnTracks, i, 1, nodeInnerSize.width),
+                            estimatedRowHeight);
 
-                        if (!Float.isNaN(item.size.width)) {
+                        // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
+                        FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
+                        // Calculate minimum size from padding+border (size cannot be less than this)
+                        float itemPaddingBorderWidth = item.paddingBorderSize(itemGridAreaSize).width;
+
+                        FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+                        if (!Float.isNaN(preferredSize.width)) {
                             // Size must be at least padding+border
-                            float effectiveWidth = Math.max(item.size.width, itemPaddingBorderWidth);
+                            float effectiveWidth = Math.max(preferredSize.width, itemPaddingBorderWidth);
                             float itemWidth = effectiveWidth + marginAxisSums.width;
                             maxContentSize = Math.max(maxContentSize, itemWidth);
                             pureMaxContentSize = Math.max(pureMaxContentSize, itemWidth);  // Explicit size is pure max-content
                             minContentSize = Math.max(minContentSize, itemWidth);
+                            minimumContributionSize = Math.max(minimumContributionSize, itemWidth);
                         } else {
                             // Check if item has overflow: hidden/scroll/auto - affects min-content contribution
                             boolean hasOverflow = item.overflow != null &&
@@ -2937,20 +3046,14 @@ public class GridComputer {
                                                    item.overflow.x == Overflow.CLIP);
 
                             // Get item's min-width constraint (for auto track sizing)
-                            float itemMinWidthConstraint = (item.minSize != null && !Float.isNaN(item.minSize.width))
-                                                           ? item.minSize.width + marginAxisSums.width
+                            FloatSize resolvedMinSize = item.resolveMinSize(itemGridAreaSize);
+                            float itemMinWidthConstraint = !Float.isNaN(resolvedMinSize.width)
+                                                           ? resolvedMinSize.width + marginAxisSums.width
                                                            : 0f;
-
-                            // Estimate the height available for this item based on row tracks
-                            // This is crucial for flex children with column direction
-                            float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
-
-                            // Use cached contribution - key optimization!
-                            FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
 
                             // Measure max-content using cache
                             // Note: cached methods already include margin
-                            float itemMaxWidth = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
+                            float itemMaxWidth = item.getMaxContentContributionWidthCached(layoutComputer, itemGridAreaSize);
                             // NOTE: max-content contribution does NOT include min-size for growth_limit purposes!
                             // min-size affects minimum_contribution (base_size), not max_content_contribution (growth_limit)
                             // We track pure max-content separately for growth_limit
@@ -2967,16 +3070,28 @@ public class GridComputer {
                                 itemMinWidth = itemMinWidthConstraint;
                             } else {
                                 // Measure min-content using cache
-                                float measuredMinWidth = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
+                                float measuredMinWidth = item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
                                 // min-content contribution should respect min-size constraint
                                 itemMinWidth = Math.max(measuredMinWidth, itemMinWidthConstraint);
                             }
 
                             // Compressible replaced element capping (Rust: is_compressible_replaced)
                             // If preferred/max sizes are definite (including % resolved against 0), cap the content-based minimum.
-                            itemMinWidth = capCompressibleReplacedMinimumContributionWidth(item, itemMinWidth, marginAxisSums.width);
+                            itemMinWidth = capCompressibleReplacedMinimumContributionWidth(item, itemMinWidth, marginAxisSums.width, itemGridAreaSize);
 
                             minContentSize = Math.max(minContentSize, itemMinWidth);
+
+                            // The minimum contribution differs from the min-content contribution for
+                            // scroll containers and for a cyclic percentage min-size (which resolves
+                            // against zero, #1257).
+                            float measuredMinForMinimum = hasOverflow
+                                ? 0f
+                                : item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
+                            float minimumContribution = minimumContributionWidth(item, measuredMinForMinimum,
+                                marginAxisSums.width, hasOverflow, itemGridAreaSize);
+                            minimumContribution = capCompressibleReplacedMinimumContributionWidth(item,
+                                minimumContribution, marginAxisSums.width, itemGridAreaSize);
+                            minimumContributionSize = Math.max(minimumContributionSize, minimumContribution);
                         }
                     }
                 }
@@ -3103,10 +3218,13 @@ public class GridComputer {
                     // Per Rust: growth_limit is set to max_content_contribution after resolve_intrinsic_track_sizes
                     // The key is that maximise_tracks respects growth_limit, but stretch_auto_tracks does not.
                     if (!Float.isNaN(nodeInnerSize.width)) {
-                        // Container has definite size: base = min-content
+                        // Container has definite size: the base size is the item's minimum
+                        // contribution (upstream AUTO_TAG with a definite available space) — equal to
+                        // the min-content contribution except for scroll containers, definite
+                        // min-sizes and cyclic percentage minima (#1257).
                         // growth_limit = max-content (for maximise_tracks limit)
                         // stretch_auto_tracks will distribute additional space if justify-content: stretch
-                        size = minContentSize;
+                        size = minimumContributionSize;
                         // Use max-content as growth limit for maximise_tracks phase
                         // pureMaxContentSize is the max-content without min-size
                         if (pureMaxContentSize > 0) {
@@ -3117,11 +3235,10 @@ public class GridComputer {
                             // (already initialized to MAX_VALUE)
                         //}
                     } else if (!Float.isNaN(availableGridWidth)) {
-                        // Container is auto-sized but has definite available space:
-                        // Base = min-content, growth_limit = max-content (no stretch beyond max-content)
-                        // This matches Rust's behavior where growth_limit is updated to max_content_contribution
-                        // after resolve_intrinsic_track_sizes for span=1 items
-                        size = minContentSize;
+                        // Container is auto-sized but has definite available space: the base size is
+                        // the item's minimum contribution and the growth limit its max-content
+                        // contribution (upstream AUTO_TAG with a definite available space).
+                        size = minimumContributionSize;
                         growthLimits.set(i, pureMaxContentSize > 0 ? pureMaxContentSize : minContentSize);
                     } else {
                         // Indefinite available space
@@ -3172,32 +3289,34 @@ public class GridComputer {
                                             (item.overflow.x == Overflow.HIDDEN || item.overflow.x == Overflow.SCROLL ||
                                              item.overflow.x == Overflow.CLIP);
 
-                // Estimate the height available for this item based on row tracks
+                // Estimate the height available for this item based on row tracks and build the item's
+                // grid area: percentages resolve against it during intrinsic sizing (GR-06 / #960).
                 float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
-
-                // Use cached contribution - key optimization!
-                FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
+                FloatSize itemGridAreaSize = new FloatSize(
+                    definiteGridAreaExtent(sizes, resolvedColumnTracks, col, span, nodeInnerSize.width),
+                    estimatedRowHeight);
 
                 // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
-                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
+                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
 
                 // Calculate item's contributions using cache
                 // Note: cached methods already include margin
                 float itemMaxContent;
                 float itemMinContent;
-                if (!Float.isNaN(item.size.width)) {
-                    itemMaxContent = item.size.width + marginAxisSums.width;
+                FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+                if (!Float.isNaN(preferredSize.width)) {
+                    itemMaxContent = preferredSize.width + marginAxisSums.width;
                     itemMinContent = itemMaxContent;
                 } else {
-                    itemMaxContent = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
-                    itemMinContent = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
+                    itemMaxContent = item.getMaxContentContributionWidthCached(layoutComputer, itemGridAreaSize);
+                    itemMinContent = item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
                 }
 
                 // For scroll containers, minimum contribution is 0 (unless min-size is set)
                 float minimumContribution = isScrollContainer ? 0f : itemMinContent;
 
                 // Compressible replaced element capping (Rust: is_compressible_replaced)
-                minimumContribution = capCompressibleReplacedMinimumContributionWidth(item, minimumContribution, marginAxisSums.width);
+                minimumContribution = capCompressibleReplacedMinimumContributionWidth(item, minimumContribution, marginAxisSums.width, itemGridAreaSize);
 
                 // Identify track types
                 IntList intrinsicTracks = new IntArrayList();  // All intrinsic min tracks (auto, min-content, max-content)
@@ -3404,7 +3523,6 @@ public class GridComputer {
         // flexible tracks (in proportion to the affected flex factor sum, or equally when that sum is
         // zero), scaled by min(crossed flex factor sum, 1) and anchored at the spanned inflexible
         // track sizes with the item's minimum contribution as a floor.
-        List<TrackSizingFunction> resolvedColumnTracks = resolveTrackSizingList(expandedCols, autoColumns, colCounts, numColumns);
         List<FlexContribution> flexItemContributions = new ArrayList<>();
         boolean intrinsicWidthConstraint = gridWidthSpace.isMinContent() || gridWidthSpace.isMaxContent();
         for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
@@ -3413,23 +3531,28 @@ public class GridComputer {
 
             int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
             int span = item.columnSpan;
-            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
+            // The item's grid area: percentages resolve against it during intrinsic sizing (#960).
             float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(
                 item, templateRows, autoRows, numRows, nodeInnerSize.height, gap, knownRowSizes);
-            FloatSize availSpace = new FloatSize(NaN, estimatedRowHeight);
+            FloatSize itemGridAreaSize = new FloatSize(
+                definiteGridAreaExtent(sizes, resolvedColumnTracks, col, span, nodeInnerSize.width),
+                estimatedRowHeight);
+            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
 
             float itemMinContent;
             float itemMaxContent;
-            if (!Float.isNaN(item.size.width)) {
-                itemMinContent = item.size.width + marginAxisSums.width;
+            FloatSize preferredSize = item.resolvePreferredSize(itemGridAreaSize);
+            if (!Float.isNaN(preferredSize.width)) {
+                itemMinContent = preferredSize.width + marginAxisSums.width;
                 itemMaxContent = itemMinContent;
             } else {
-                itemMaxContent = item.getMaxContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
-                itemMinContent = item.getMinContentContributionWidthCached(layoutComputer, availSpace, nodeInnerSize);
+                itemMaxContent = item.getMaxContentContributionWidthCached(layoutComputer, itemGridAreaSize);
+                itemMinContent = item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
             }
             boolean isScrollContainer = item.overflow != null
                 && (item.overflow.x == Overflow.HIDDEN || item.overflow.x == Overflow.SCROLL || item.overflow.x == Overflow.CLIP);
-            float minimumContribution = minimumContributionWidth(item, itemMinContent, marginAxisSums.width, isScrollContainer);
+            float minimumContribution = minimumContributionWidth(item, itemMinContent, marginAxisSums.width,
+                isScrollContainer, itemGridAreaSize);
             boolean crossesIntrinsic = false;
             for (int c = col; c < col + span && c < numColumns; c++) {
                 if (trackMinIsIntrinsic(resolvedColumnTracks.get(c))) {
@@ -3777,6 +3900,26 @@ public class GridComputer {
         return min.isAuto() || track.isFr() || track.isFitContent();
     }
 
+    /**
+     * Whether the track's min sizing function behaves as {@code auto} in the given axis
+     * (upstream #1261 {@code MinTrackSizingFunction::behaves_as_auto}): an {@code auto} min, or an
+     * indefinite percentage min (percentage tracks whose container size is not yet known).
+     */
+    private static boolean trackMinBehavesAsAuto(TrackSizingFunction track, float containerAxisSize) {
+        if (track == null) return true;
+        TrackSizingFunction min = trackMinFunction(track);
+        if (min == null || min.isAuto() || track.isFr() || track.isFitContent()) return true;
+        return Float.isNaN(containerAxisSize)
+               && min.isFixed() && min.getFixedValue() != null && min.getFixedValue().isPercent();
+    }
+
+    /** Whether the track's min sizing function is a percentage that has to behave as auto (#1261). */
+    private static boolean trackMinIsIndefinitePercent(TrackSizingFunction track, float containerAxisSize) {
+        if (track == null || !Float.isNaN(containerAxisSize)) return false;
+        TrackSizingFunction min = trackMinFunction(track);
+        return min != null && min.isFixed() && min.getFixedValue() != null && min.getFixedValue().isPercent();
+    }
+
     private static boolean trackMaxIsMinContent(TrackSizingFunction track) {
         TrackSizingFunction max = trackMaxFunction(track);
         return max != null && max.isMinContent();
@@ -3832,16 +3975,46 @@ public class GridComputer {
      * margins for scroll containers (whose automatic minimum size is zero).
      */
     private static float minimumContributionWidth(GridItem item, float minContentContribution,
-                                                  float marginWidth, boolean isScrollContainer) {
-        if (!Float.isNaN(item.size.width)) return minContentContribution;
-        // item.minSize is floored at padding+border even for an auto min-size, so only an explicitly
-        // specified (and resolved) min-width replaces the content-based automatic minimum.
-        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.width : null,
-                               item.minSize != null ? item.minSize.width : NaN)) {
-            return Math.max(item.minSize.width + marginWidth, 0f);
+                                                  float marginWidth, boolean isScrollContainer,
+                                                  FloatSize gridAreaSize) {
+        // A definite preferred width resolved against the grid area short-circuits to the min-content
+        // contribution, which was itself computed from that preferred size.
+        if (!Float.isNaN(item.resolvePreferredSize(gridAreaSize).width)) return minContentContribution;
+        // The specified min-size is floored at padding+border even for an auto min-size, so only an
+        // explicitly specified min-width replaces the content-based automatic minimum. An indefinite
+        // grid-area dimension makes a percentage resolve against zero (upstream #1257), which is what
+        // stops a cyclic percentage minimum from falling through to the content-based minimum.
+        FloatSize minSize = item.resolveMinSizePercentAsZero(gridAreaSize);
+        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.width : null, minSize.width)) {
+            return Math.max(minSize.width + marginWidth, 0f);
         }
         if (isScrollContainer) return Math.max(marginWidth, 0f);
         return minContentContribution;
+    }
+
+    /**
+     * The part of an item's minimum contribution that can exceed a fixed track maximum: a definite
+     * preferred size or an explicitly specified min size (including an indefinite percentage min
+     * size, which resolves against zero). The content-based automatic minimum is clamped by the
+     * fixed limit and therefore cannot exceed it (CSS Grid 6.6; upstream #1261).
+     */
+    private static float explicitMinimumContributionExtent(GridItem item, boolean inlineAxis,
+                                                           FloatSize gridAreaSize) {
+        FloatSize preferred = item.resolvePreferredSize(gridAreaSize);
+        float extent = inlineAxis ? preferred.width : preferred.height;
+        if (Float.isNaN(extent)) {
+            FloatSize min = item.resolveMinSizePercentAsZero(gridAreaSize);
+            TaffyDimension rawMin = item.rawMinSize == null
+                                    ? null
+                                    : (inlineAxis ? item.rawMinSize.width : item.rawMinSize.height);
+            float resolvedMin = inlineAxis ? min.width : min.height;
+            if (hasExplicitMinSize(rawMin, resolvedMin)) {
+                extent = resolvedMin;
+            }
+        }
+        if (Float.isNaN(extent)) return 0f;
+        FloatSize margins = item.getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
+        return extent + (inlineAxis ? margins.width : margins.height);
     }
 
     /** Whether the style's min size in one axis is explicitly specified and resolved to a definite value. */
@@ -3856,11 +4029,12 @@ public class GridComputer {
      * which equals the max-content height unless a percentage height or an aspect ratio is involved).
      */
     private static float minimumContributionHeight(GridItem item, float contentContribution,
-                                                   float marginHeight, boolean isScrollContainer) {
-        if (!Float.isNaN(item.size.height)) return contentContribution;
-        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.height : null,
-                               item.minSize != null ? item.minSize.height : NaN)) {
-            return Math.max(item.minSize.height + marginHeight, 0f);
+                                                   float marginHeight, boolean isScrollContainer,
+                                                   FloatSize gridAreaSize) {
+        if (!Float.isNaN(item.resolvePreferredSize(gridAreaSize).height)) return contentContribution;
+        FloatSize minSize = item.resolveMinSizePercentAsZero(gridAreaSize);
+        if (hasExplicitMinSize(item.rawMinSize != null ? item.rawMinSize.height : null, minSize.height)) {
+            return Math.max(minSize.height + marginHeight, 0f);
         }
         if (isScrollContainer) return Math.max(marginHeight, 0f);
         return contentContribution;
@@ -4457,6 +4631,9 @@ public class GridComputer {
         int explicitStart = negativeImplicitCount;
         int explicitEnd = explicitStart + explicitRowCount;
 
+        // Per-index track sizing functions, used for the grid-area-size estimates (GR-06 / #960).
+        List<TrackSizingFunction> resolvedRowTracks = resolveTrackSizingList(expandedRows, autoRows, rowCounts, numRows);
+
         // First pass: resolve fixed sizes and count fr units
         for (int i = 0; i < numRows; i++) {
             // Determine the track sizing function for this row
@@ -4533,6 +4710,25 @@ public class GridComputer {
             }
         }
 
+        // GR-12 / upstream #1261: when the container's height is indefinite, an indefinite
+        // percentage min track sizing function behaves as auto. See the inline-axis pass for the
+        // rationale (explicit min sizes and definite preferred sizes can exceed the fixed maximum).
+        for (int i = 0; i < numRows; i++) {
+            if (!trackMinIsIndefinitePercent(resolvedRowTracks.get(i), nodeInnerSize.height)) continue;
+            float maxLimit = trackDefiniteValue(trackMaxFunction(resolvedRowTracks.get(i)), nodeInnerSize.height);
+            if (Float.isNaN(maxLimit) || Float.isNaN(sizes.getFloat(i))) continue;
+            float base = sizes.getFloat(i);
+            for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+                GridItem item = items.get(itemIdx);
+                int row = getItemRowWithCounts(item, itemIdx, columnSizes.size(), rowCounts);
+                if (row != i || item.rowSpan != 1) continue;
+                float itemWidth = computeItemAvailableWidth(item, columnSizes, gap);
+                FloatSize itemGridAreaSize = new FloatSize(itemWidth, NaN);
+                base = Math.max(base, explicitMinimumContributionExtent(item, false, itemGridAreaSize));
+            }
+            sizes.set(i, base);
+        }
+
         // Second pass: handle fr and auto tracks
         // Per CSS Grid spec, fr units are equivalent to minmax(auto, Nfr)
         // This means the track's minimum size is determined by its content (auto),
@@ -4540,11 +4736,18 @@ public class GridComputer {
 
 
         // Resolve the non-flexible tracks' base sizes. Fixed rows were resolved in the first pass;
-        // auto/content-sized rows get their content height (the block-axis value this port has always
-        // used as the row base size).
+        // auto/content-sized rows get their content height. An auto-min row in a container with a
+        // definite height uses the items' minimum contributions instead (GR-12 / upstream #1257),
+        // which the 11.8 stretch step then grows to the available space.
+        boolean definiteRowContainerHeight = !Float.isNaN(nodeInnerSize.height);
         for (int i = 0; i < sizes.size(); i++) {
             if (Float.isNaN(sizes.getFloat(i)) && !frTrackIndices.contains(i)) {
-                sizes.set(i, calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]));
+                boolean autoMinRow = trackMinBehavesAsAuto(resolvedRowTracks.get(i), nodeInnerSize.height);
+                sizes.set(i, definiteRowContainerHeight && autoMinRow
+                    ? calculateAutoRowMinimumContribution(items, columnSizes, nodeInnerSize, colCounts, gap.width,
+                        itemIndicesByRow[i], sizes, resolvedRowTracks)
+                    : calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width,
+                        itemIndicesByRow[i], sizes, resolvedRowTracks));
             }
         }
         // Flexible rows start at a zero base size until the flexible contribution pass gives them one.
@@ -4558,7 +4761,6 @@ public class GridComputer {
         // 11.5 Resolve Intrinsic Track Sizes, flexible rows (GR-01 / upstream #1019, #1084). See the
         // inline-axis path for the rationale of the scaled, affected-only, minimum-floored
         // distribution.
-        List<TrackSizingFunction> resolvedRowTracks = resolveTrackSizingList(expandedRows, autoRows, rowCounts, numRows);
         List<FlexContribution> flexItemContributions = new ArrayList<>();
         boolean intrinsicHeightConstraint = gridHeightSpace.isMinContent() || gridHeightSpace.isMaxContent();
         for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
@@ -4567,7 +4769,6 @@ public class GridComputer {
 
             int row = getItemRowWithCounts(item, itemIdx, columnSizes.size(), rowCounts);
             int span = item.rowSpan;
-            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
 
             // The item's block-axis content contribution: the same content-height estimate the rest
             // of the row sizing uses (it accounts for the item's grid area width, margins, padding
@@ -4575,10 +4776,18 @@ public class GridComputer {
             IntList singleItemRow = new IntArrayList();
             singleItemRow.add(itemIdx);
             float itemContent = calculateAutoRowHeight(
-                items, columnSizes, nodeInnerSize, colCounts, gap.width, singleItemRow);
+                items, columnSizes, nodeInnerSize, colCounts, gap.width, singleItemRow, sizes, resolvedRowTracks);
+
+            // The item's grid area: the inline size comes from the known column sizes, the block
+            // size from the current row sizes (indefinite unless all spanned rows are definite).
+            float itemWidth = computeItemAvailableWidth(item, columnSizes, gap);
+            FloatSize itemGridAreaSize = new FloatSize(itemWidth,
+                definiteGridAreaExtent(sizes, resolvedRowTracks, row, span, nodeInnerSize.height));
+            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
             boolean isScrollContainer = item.overflow != null
                 && (item.overflow.y == Overflow.HIDDEN || item.overflow.y == Overflow.SCROLL || item.overflow.y == Overflow.CLIP);
-            float minimumContribution = minimumContributionHeight(item, itemContent, marginAxisSums.height, isScrollContainer);
+            float minimumContribution = minimumContributionHeight(item, itemContent, marginAxisSums.height,
+                isScrollContainer, itemGridAreaSize);
             boolean crossesIntrinsic = false;
             for (int r = row; r < row + span && r < numRows; r++) {
                 if (trackMinIsIntrinsic(resolvedRowTracks.get(r))) {
@@ -4596,8 +4805,15 @@ public class GridComputer {
         float expansionAvailableHeight = Float.isNaN(nodeInnerSize.height)
                                          ? NaN
                                          : nodeInnerSize.height - gap.height * Math.max(0, numRows - 1);
+        // A min-content constraint in the block axis is treated as a max-content constraint when
+        // expanding flexible tracks: the min-content block size of a grid container is its
+        // max-content block size (GR-12 / upstream #1284). The inline axis keeps the min-content
+        // behaviour.
+        AvailableSpace rowExpansionSpace = gridHeightSpace.isMinContent()
+                                           ? AvailableSpace.maxContent()
+                                           : gridHeightSpace;
         expandFlexibleTracks(sizes, gap.height, frTrackIndices, frValues, flexItemContributions,
-            expansionAvailableHeight, gridHeightSpace);
+            expansionAvailableHeight, rowExpansionSpace);
 
         // 11.7 Expand Flexible Tracks: min/max correction (GR-03 / upstream #1023). See the column
         // path for the rationale; the inner min/max sizes are content-box values and the gaps are not
@@ -4645,7 +4861,8 @@ public class GridComputer {
         for (int i = 0; i < sizes.size(); i++) {
             if (Float.isNaN(sizes.getFloat(i))) {
                 // Calculate auto row height as fallback
-                float maxRowHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width, itemIndicesByRow[i]);
+                float maxRowHeight = calculateAutoRowHeight(items, columnSizes, nodeInnerSize, colCounts, gap.width,
+                    itemIndicesByRow[i], sizes, resolvedRowTracks);
                 sizes.set(i, maxRowHeight); // Use actual content height, can be 0 for empty rows
             }
         }
@@ -4653,7 +4870,9 @@ public class GridComputer {
         return sizes;
     }
 
-    private float calculateAutoRowHeight(List<GridItem> items, FloatList columnSizes, FloatSize nodeInnerSize, TrackCounts colCounts, float columnGap, IntList rowItemIndices) {
+    private float calculateAutoRowHeight(List<GridItem> items, FloatList columnSizes, FloatSize nodeInnerSize,
+                                         TrackCounts colCounts, float columnGap, IntList rowItemIndices,
+                                         FloatList rowTrackSizes, List<TrackSizingFunction> rowTracks) {
         float maxRowHeight = 0;
 
         // Only iterate over items that belong to this row (O(items_in_row) instead of O(all_items))
@@ -4662,16 +4881,8 @@ public class GridComputer {
             GridItem item = items.get(i);
             float height;
 
-                // Calculate minimum size from padding+border (size cannot be less than this)
-                float itemPaddingBorderHeight = (item.padding != null ? item.padding.top + item.padding.bottom : 0f)
-                                                + (item.border != null ? item.border.top + item.border.bottom : 0f);
-
-                // Get margin axis sums using the Rust logic:
-                // - Horizontal percentage margins resolve to 0 to avoid cyclic dependency
-                // - Vertical percentage margins resolve against inner_node_width
-                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(nodeInnerSize.width);
-
-                // Get grid area size for this item (track size, not including margins)
+                // Get grid area size for this item (the grid area is the containing block for its
+                // percentage sizes, margins and padding; upstream #960).
                 int col = getItemColumnWithCounts(item, i, columnSizes.size(), colCounts);
                 float gridAreaWidth = 0f;
                 int endCol = Math.min(col + item.columnSpan, columnSizes.size());
@@ -4682,10 +4893,21 @@ public class GridComputer {
                 int numGaps = Math.max(0, endCol - col - 1);
                 gridAreaWidth += numGaps * columnGap;
 
-                FloatSize gridAreaSize = new FloatSize(gridAreaWidth, NaN);
+                int row = getItemRowWithCounts(item, i, columnSizes.size(), colCounts);
+                float gridAreaHeight = definiteGridAreaExtent(rowTrackSizes, rowTracks, row, item.rowSpan,
+                    nodeInnerSize.height);
+                FloatSize gridAreaSize = new FloatSize(gridAreaWidth, gridAreaHeight);
+
+                // Calculate minimum size from padding+border (size cannot be less than this)
+                float itemPaddingBorderHeight = item.paddingBorderSize(gridAreaSize).height;
+
+                // Get margin axis sums using the Rust logic:
+                // - Horizontal percentage margins resolve to 0 to avoid cyclic dependency
+                // - Vertical percentage margins resolve against the grid area's inline size
+                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
                 // Compute known dimensions using the proper method that respects item's percentage sizes
-                FloatSize itemKnownDimensions = computeItemKnownDimensions(item, gridAreaSize, nodeInnerSize);
+                FloatSize itemKnownDimensions = item.computeKnownDimensions(gridAreaSize);
 
                 // If item has explicit height (from its size or computed from aspect ratio)
                 if (!Float.isNaN(itemKnownDimensions.height)) {
@@ -4713,8 +4935,7 @@ public class GridComputer {
 
                         // Use cached contribution - key optimization!
                         // Note: cached methods already include margin
-                        FloatSize availSpace = new FloatSize(gridAreaWidth, NaN);
-                        height = item.getMaxContentContributionHeightCached(layoutComputer, availSpace, nodeInnerSize);
+                        height = item.getMaxContentContributionHeightCached(layoutComputer, gridAreaSize);
                     }
                 }
 
@@ -4722,6 +4943,55 @@ public class GridComputer {
         }
 
         return maxRowHeight;
+    }
+
+    /**
+     * The aggregate minimum contribution of the items starting in one row (CSS Grid 6.6), used as
+     * the base size of an auto-min row whose container has a definite height (GR-12 / upstream
+     * #1257): a scroll container contributes no content size, a cyclic percentage min-size resolves
+     * against zero, and an explicit min-size or definite preferred size replaces the content-based
+     * automatic minimum.
+     */
+    private float calculateAutoRowMinimumContribution(List<GridItem> items, FloatList columnSizes,
+                                                      FloatSize nodeInnerSize, TrackCounts colCounts, float columnGap,
+                                                      IntList rowItemIndices, FloatList rowTrackSizes,
+                                                      List<TrackSizingFunction> rowTracks) {
+        float maxMinimum = 0f;
+        for (int idx = 0; idx < rowItemIndices.size(); idx++) {
+            int i = rowItemIndices.getInt(idx);
+            GridItem item = items.get(i);
+
+            int col = getItemColumnWithCounts(item, i, columnSizes.size(), colCounts);
+            float gridAreaWidth = 0f;
+            int endCol = Math.min(col + item.columnSpan, columnSizes.size());
+            for (int c = col; c < endCol; c++) {
+                gridAreaWidth += columnSizes.getFloat(c);
+            }
+            gridAreaWidth += Math.max(0, endCol - col - 1) * columnGap;
+
+            int row = getItemRowWithCounts(item, i, columnSizes.size(), colCounts);
+            float gridAreaHeight = definiteGridAreaExtent(rowTrackSizes, rowTracks, row, item.rowSpan,
+                nodeInnerSize.height);
+            FloatSize gridAreaSize = new FloatSize(gridAreaWidth, gridAreaHeight);
+
+            FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
+            boolean isScrollContainer = item.overflow != null
+                && (item.overflow.y == Overflow.HIDDEN || item.overflow.y == Overflow.SCROLL
+                    || item.overflow.y == Overflow.CLIP);
+
+            FloatSize preferredSize = item.resolvePreferredSize(gridAreaSize);
+            float contentContribution;
+            if (!Float.isNaN(preferredSize.height)) {
+                contentContribution = Math.max(preferredSize.height, item.paddingBorderSize(gridAreaSize).height)
+                                      + marginAxisSums.height;
+            } else {
+                contentContribution = item.getMaxContentContributionHeightCached(layoutComputer, gridAreaSize);
+            }
+
+            maxMinimum = Math.max(maxMinimum, minimumContributionHeight(item, contentContribution,
+                marginAxisSums.height, isScrollContainer, gridAreaSize));
+        }
+        return maxMinimum;
     }
 
     /**
@@ -4976,11 +5246,29 @@ public class GridComputer {
                 }
             }
 
-            // Re-resolve margin with track width (percentage margins are relative to grid area width)
+            // The grid area is the item's positioning rectangle and, for a grid item, also its
+            // containing block. They are carried as two separate values: the alignment/positioning
+            // code below uses the grid area, while percentage-dependent styles and the child's
+            // parent size use the containing block (GR-06 / upstream #1271).
             TaffyTree tree = layoutComputer.getTree();
             TaffyStyle childStyle = tree.getStyle(item.nodeId);
+            FloatSize gridAreaSize = new FloatSize(trackWidth, trackHeight);
+            FloatSize containingBlockSize = gridAreaSize;
+
+            // Re-resolve the item's percentage styles against the containing block (upstream #960):
+            // preferred/min/max size, padding, border and margins are no longer the container-relative
+            // values computed when the items were generated. For a grid item the containing block is
+            // the grid area, whether that area's size came from a definite container or from content.
             TaffyRect<LengthPercentageAuto> marginStyle = childStyle.getMargin();
-            FloatRect margin = Resolve.resolveRectLpaOrZero(marginStyle, trackWidth);
+            FloatRect margin = item.resolveMargin(containingBlockSize);
+            FloatRect itemPadding = item.resolvePadding(containingBlockSize);
+            FloatRect itemBorder = item.resolveBorder(containingBlockSize);
+            item.padding = itemPadding;
+            item.border = itemBorder;
+            FloatSize itemPaddingBorderSize = item.paddingBorderSize(containingBlockSize);
+            FloatSize preferredSize = item.resolvePreferredSize(containingBlockSize);
+            FloatSize resolvedMinSize = item.resolveMinSize(containingBlockSize);
+            FloatSize resolvedMaxSize = item.resolveMaxSize(containingBlockSize);
 
             // Check if margins are auto (affects stretch behavior)
             boolean hasHorizontalAutoMargin = marginStyle.left.isAuto() || marginStyle.right.isAuto();
@@ -5005,7 +5293,7 @@ public class GridComputer {
                 false,
                 itemDirection,
                 containerDirection,
-                !Float.isNaN(item.size.height),
+                !Float.isNaN(preferredSize.height),
                 item.aspectRatio != null && !Float.isNaN(item.aspectRatio));
             AlignItems alignX = resolveGridItemAlignment(
                 childStyle.justifySelf,
@@ -5013,7 +5301,7 @@ public class GridComputer {
                 true,
                 itemDirection,
                 containerDirection,
-                !Float.isNaN(item.size.width),
+                !Float.isNaN(preferredSize.width),
                 false);
 
             // Per CSS Grid spec: auto margins prevent stretch
@@ -5026,26 +5314,26 @@ public class GridComputer {
             float availableHeight = trackHeight - margin.top - margin.bottom;
 
             // Calculate minimum size from padding+border (size cannot be less than this)
-            float itemPaddingBorderWidth = (item.padding != null ? item.padding.left + item.padding.right : 0f)
-                                           + (item.border != null ? item.border.left + item.border.right : 0f);
-            float itemPaddingBorderHeight = (item.padding != null ? item.padding.top + item.padding.bottom : 0f)
-                                            + (item.border != null ? item.border.top + item.border.bottom : 0f);
+            float itemPaddingBorderWidth = itemPaddingBorderSize.width;
+            float itemPaddingBorderHeight = itemPaddingBorderSize.height;
 
             // Calculate size based on alignment
             float width, height;
 
-            if (!Float.isNaN(item.size.width)) {
-                // Explicit size (but must be at least padding+border)
-                width = Math.max(item.size.width, itemPaddingBorderWidth);
+            if (!Float.isNaN(preferredSize.width)) {
+                // Preferred size resolved against the grid area (but at least padding+border)
+                width = Math.max(preferredSize.width, itemPaddingBorderWidth);
             } else if (stretchWidth) {
                 // Stretch to fill
                 width = availableWidth;
             } else {
-                // Content-based size (START, CENTER, END, or has auto margin) - measure child
+                // Content-based size (START, CENTER, END, or has auto margin) - measure child. The
+                // containing block is passed as the child's parent size so that its own percentage
+                // styles resolve against the grid area rather than the grid container (#1271).
                 LayoutOutput output = layoutComputer.performChildLayout(
                     item.nodeId,
                     new FloatSize(NaN, NaN),
-                    nodeInnerSize,
+                    containingBlockSize,
                     new TaffySize<>(AvailableSpace.definite(availableWidth), AvailableSpace.definite(availableHeight)),
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(false, false)
@@ -5056,13 +5344,13 @@ public class GridComputer {
             // Reapply aspect ratio after width is determined
             // If aspect_ratio is set and height is not explicitly set, calculate height from width
             float heightFromAspectRatio = NaN;
-            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(item.size.height)) {
+            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(preferredSize.height)) {
                 heightFromAspectRatio = width / item.aspectRatio;
             }
 
-            if (!Float.isNaN(item.size.height)) {
-                // Explicit size (but must be at least padding+border)
-                height = Math.max(item.size.height, itemPaddingBorderHeight);
+            if (!Float.isNaN(preferredSize.height)) {
+                // Preferred size resolved against the grid area (but at least padding+border)
+                height = Math.max(preferredSize.height, itemPaddingBorderHeight);
             } else if (!Float.isNaN(heightFromAspectRatio)) {
                 // Height from aspect ratio
                 height = heightFromAspectRatio;
@@ -5074,7 +5362,7 @@ public class GridComputer {
                 LayoutOutput output = layoutComputer.performChildLayout(
                     item.nodeId,
                     new FloatSize(width, NaN),
-                    nodeInnerSize,
+                    containingBlockSize,
                     new TaffySize<>(AvailableSpace.definite(width), AvailableSpace.definite(availableHeight)),
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(false, false)
@@ -5083,13 +5371,13 @@ public class GridComputer {
             }
 
             // Reapply aspect ratio after height is determined (for cases where width is not set but height is)
-            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(item.size.width) && !Float.isNaN(item.size.height)) {
+            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(preferredSize.width) && !Float.isNaN(preferredSize.height)) {
                 width = height * item.aspectRatio;
             }
 
-            // Apply min/max constraints
-            width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
-            height = TaffyMath.clamp(height, item.minSize.height, item.maxSize.height);
+            // Apply min/max constraints (resolved against the grid area)
+            width = TaffyMath.clamp(width, resolvedMinSize.width, resolvedMaxSize.width);
+            height = TaffyMath.clamp(height, resolvedMinSize.height, resolvedMaxSize.height);
 
             // Calculate auto margin values - auto margins absorb free space
             float freeSpaceX = availableWidth - width;
@@ -5230,7 +5518,7 @@ public class GridComputer {
             LayoutOutput finalOutput = layoutComputer.performChildLayout(
                 item.nodeId,
                 new FloatSize(width, height),  // known dimensions
-                new FloatSize(trackWidth, trackHeight),  // parent inner size
+                containingBlockSize,  // the containing block for percentage styles (#1271)
                 new TaffySize<>(AvailableSpace.definite(width), AvailableSpace.definite(height)),
                 SizingMode.INHERENT_SIZE,
                 new TaffyLine<>(false, false)
@@ -6254,6 +6542,49 @@ public class GridComputer {
     }
 
     /**
+     * The definite value of a single track sizing function, mirroring upstream
+     * {@code TrackSizingFunction::definite_value}: only a fixed length — or a percentage that
+     * resolves against a definite parent size — has a definite value.
+     */
+    private static float trackDefiniteValue(TrackSizingFunction function, float parentSize) {
+        if (function == null || !function.isFixed() || function.getFixedValue() == null) return NaN;
+        return function.getFixedValue().maybeResolve(parentSize);
+    }
+
+    /**
+     * The extent of an item's grid area along one axis, mirroring upstream #960
+     * {@code GridItem::grid_area_size}: the area is definite only when every spanned track's min
+     * and max track sizing functions have the same definite value. Gutters are not included in
+     * this intrinsic-size estimate (upstream sums the spanned tracks' base sizes).
+     */
+    private static float definiteGridAreaExtent(FloatList trackSizes, List<TrackSizingFunction> tracks,
+                                                int start, int span, float parentSize) {
+        if (tracks == null || trackSizes == null || start < 0 || span < 1) return NaN;
+        float total = 0f;
+        for (int i = start; i < start + span; i++) {
+            if (i >= tracks.size() || i >= trackSizes.size()) return NaN;
+            TrackSizingFunction track = tracks.get(i);
+            float min = trackDefiniteValue(trackMinFunction(track), parentSize);
+            float max = trackDefiniteValue(trackMaxFunction(track), parentSize);
+            if (Float.isNaN(min) || Float.isNaN(max) || !floatEqualsExactly(min, max)) return NaN;
+            float base = trackSizes.getFloat(i);
+            total += Float.isNaN(base) ? min : base;
+        }
+        return total;
+    }
+
+    /**
+     * Build an item's grid area size: {@code inlineAxis} selects which dimension is the sized-axis
+     * extent, the other dimension comes from the opposite axis' size estimate (upstream #960's
+     * {@code get_track_size_estimate}). Either dimension may be {@code NaN} (indefinite).
+     */
+    private static FloatSize gridAreaSize(boolean inlineAxis, float sizedAxisExtent, float otherAxisExtent) {
+        return inlineAxis
+               ? new FloatSize(sizedAxisExtent, otherAxisExtent)
+               : new FloatSize(otherAxisExtent, sizedAxisExtent);
+    }
+
+    /**
      * Estimate the height available for an item based on the row tracks it spans.
      * If knownRowSizes is provided, uses the actual track sizes instead of template definitions.
      * This is used for re-running column sizing after row sizing is complete.
@@ -6371,113 +6702,6 @@ public class GridComputer {
         return totalHeight;
     }
 
-    /**
-     * Computes the known dimensions for an item based on its style, the grid area size, and aspect ratio.
-     * This mirrors Rust's GridItem::known_dimensions() method.
-     * <p>
-     * When measuring an item's intrinsic size contribution:
-     * 1. Resolve percentage sizes against the estimated grid area size
-     * 2. Apply aspect ratio to derive unknown dimensions from known ones
-     * 3. Apply stretch alignment if applicable
-     * <p>
-     * This is critical for items with percent heights and aspect-ratios, where the height
-     * might resolve to a definite value based on the grid area, and then the width can be
-     * derived from the aspect ratio.
-     */
-    private FloatSize computeItemKnownDimensions(
-        GridItem item,
-        FloatSize gridAreaSize,
-        FloatSize innerNodeSize) {
-        // Horizontal percentage margins resolve to 0 in track sizing to avoid cyclic dependency
-        FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(innerNodeSize.width);
-        float marginsWidth = marginAxisSums.width;
-        float marginsHeight = marginAxisSums.height;
-
-        // Resolve padding and border against grid area size
-        float paddingBorderWidth = (item.padding != null ? item.padding.left + item.padding.right : 0f)
-                                   + (item.border != null ? item.border.left + item.border.right : 0f);
-        float paddingBorderHeight = (item.padding != null ? item.padding.top + item.padding.bottom : 0f)
-                                    + (item.border != null ? item.border.top + item.border.bottom : 0f);
-        FloatSize paddingBorderSize = new FloatSize(paddingBorderWidth, paddingBorderHeight);
-
-        // Box sizing adjustment
-        FloatSize boxSizingAdj = (item.boxSizing == BoxSizing.CONTENT_BOX)
-                                 ? paddingBorderSize
-                                 : FloatSize.ZERO;
-
-        // Resolve inherent size against grid area (not the initial nodeInnerSize)
-        // This is critical: percent sizes like height: 100% must be resolved against the grid area,
-        // not the container size that was used during item creation.
-        FloatSize rawResolved = Resolve.maybeResolveSize(item.rawSize, gridAreaSize);
-        FloatSize inherentSize = maybeAdd(maybeApplyAspectRatio(rawResolved, item.aspectRatio), boxSizingAdj);
-
-        float width = inherentSize.width;
-        float height = inherentSize.height;
-
-        // If size is still null, check if we can derive from aspect ratio
-        Float aspectRatio = item.aspectRatio;
-
-        // Apply aspect ratio (already done in maybeApplyAspectRatio above, but do again in case stretch applies)
-        if (aspectRatio != null && !Float.isNaN(aspectRatio) && aspectRatio > 0) {
-            if (!Float.isNaN(width) && Float.isNaN(height)) {
-                // width is known, derive height
-                height = width / aspectRatio;
-            } else if (!Float.isNaN(height) && Float.isNaN(width)) {
-                // height is known, derive width
-                width = height * aspectRatio;
-            }
-        }
-
-        // Apply stretch alignment if size is still null
-        float gridAreaMinusMarginsWidth = (!Float.isNaN(gridAreaSize.width))
-                                          ? gridAreaSize.width - marginsWidth : NaN;
-        float gridAreaMinusMarginsHeight = (!Float.isNaN(gridAreaSize.height))
-                                           ? gridAreaSize.height - marginsHeight : NaN;
-
-        if (Float.isNaN(width) && item.justifySelf == AlignItems.STRETCH) {
-            // Check if margins are not auto (auto margins prevent stretch)
-            // In our implementation, margins are already resolved to 0 if they were auto
-            width = gridAreaMinusMarginsWidth;
-            // Reapply aspect ratio
-            if (aspectRatio != null && !Float.isNaN(aspectRatio) && aspectRatio > 0 && !Float.isNaN(width) && Float.isNaN(height)) {
-                height = width / aspectRatio;
-            }
-        }
-
-        // Per CSS Grid spec: If item has aspectRatio and no explicit height, 
-        // vertical alignment defaults to START (not STRETCH).
-        // This prevents the aspectRatio from incorrectly calculating width from stretched height.
-        // See: https://www.w3.org/TR/css-grid-1/#grid-item-sizing
-        boolean shouldStretchHeight = item.alignSelf == AlignItems.STRETCH;
-        if (aspectRatio != null && !Float.isNaN(aspectRatio) && Float.isNaN(inherentSize.height)) {
-            // When aspectRatio is set and height is not explicit, default is START not STRETCH
-            shouldStretchHeight = false;
-        }
-
-        if (Float.isNaN(height) && shouldStretchHeight) {
-            height = gridAreaMinusMarginsHeight;
-            // Reapply aspect ratio
-            if (aspectRatio != null && !Float.isNaN(aspectRatio) && aspectRatio > 0 && !Float.isNaN(height) && Float.isNaN(width)) {
-                width = height * aspectRatio;
-            }
-        }
-
-        // Clamp by min/max size
-        if (!Float.isNaN(width) && item.minSize != null && !Float.isNaN(item.minSize.width)) {
-            width = Math.max(width, item.minSize.width);
-        }
-        if (!Float.isNaN(width) && item.maxSize != null && !Float.isNaN(item.maxSize.width)) {
-            width = Math.min(width, item.maxSize.width);
-        }
-        if (!Float.isNaN(height) && item.minSize != null && !Float.isNaN(item.minSize.height)) {
-            height = Math.max(height, item.minSize.height);
-        }
-        if (!Float.isNaN(height) && item.maxSize != null && !Float.isNaN(item.maxSize.height)) {
-            height = Math.min(height, item.maxSize.height);
-        }
-
-        return new FloatSize(width, height);
-    }
 
     // ---------------------------------------------------------------------
     // Test-only hooks (package-private)
