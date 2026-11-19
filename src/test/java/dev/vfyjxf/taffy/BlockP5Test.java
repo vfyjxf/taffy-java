@@ -555,11 +555,11 @@ public class BlockP5Test {
         assertLocation(tree, table, 0f, 0f, "stretched table location");
     }
 
-    // === BK-16: out-of-flow children are untouched ===
+    // === BK-16 / OF-05: out-of-flow children take self-alignment ===
 
     @Test
-    @DisplayName("BK-16: absolutely positioned children are not affected by justify-self")
-    void absoluteChildrenIgnoreJustifySelf() {
+    @DisplayName("OF-05: justify-self aligns an absolutely positioned child in its static-position rectangle")
+    void absoluteChildrenRespectJustifySelf() {
         TaffyTree tree = new TaffyTree();
         TaffyStyle absStyle = sized(30f, 30f);
         absStyle.position = TaffyPosition.ABSOLUTE;
@@ -568,8 +568,11 @@ public class BlockP5Test {
         NodeId root = tree.newWithChildren(containerStyle(200f, 100f), absolute);
         tree.computeLayout(root, TaffySize.maxContent());
 
-        // The static position remains the content-box start; the OOF alignment is OF-05.
-        assertLocation(tree, absolute, 0f, 0f, "out-of-flow child keeps its legacy static position");
+        // OF-05 (upstream #1206) now applies the child's justify-self to an out-of-flow box: the
+        // static-position rectangle spans the content box, so an END-aligned 30px box sits at
+        // x = 200 - 30. This method previously asserted the pre-OF-05 placeholder value x = 0
+        // (legacy static-position start), which the OOF alignment model supersedes.
+        assertLocation(tree, absolute, 170f, 0f, "out-of-flow child aligned to the inline end");
     }
 
     // === BK-14: align-content through AlignmentHelper ===
