@@ -5269,73 +5269,54 @@ public class GridComputer {
                 minSz, maxSz
             );
 
-            // Resolve the item's explicit alignment keywords for the out-of-flow path (upstream
-            // #1077/#952). self-start/self-end resolve against the item's own direction, an explicit
-            // 'normal' follows the grid-item default, and a 'safe' keyword falls back to logical start
-            // when the box overflows its grid area. The container fallback (justify-items/align-items)
-            // for out-of-flow boxes belongs to the OOF positioning model (OF-05/P6), so it is not
-            // applied here; legacy keyword geometry below is unchanged.
+            // Resolve the item's self-alignment keywords for the out-of-flow path (upstream
+            // #1206). An unset (AUTO) self value takes the container's justify-items/align-items
+            // fallback, self-start/self-end resolve against the item's own direction, and an
+            // explicit 'normal' behaves as start for an out-of-flow box. This is the OF-05 part
+            // of the out-of-flow positioning model.
             TaffyDirection absposItemDirection = layoutComputer.resolveDirection(childId);
             TaffyDirection absposContainerDirection = isRtl ? TaffyDirection.RTL : TaffyDirection.LTR;
-            AlignItems justifySelf = AlignmentHelper.resolveNormal(
-                AlignmentHelper.resolveSelfRelative(
-                    childStyle.justifySelf, absposItemDirection, absposContainerDirection, true),
+            TaffyStyle containerStyle = tree.getStyle(node);
+            AlignItems justifySelf = childStyle.justifySelf;
+            if (justifySelf == null || justifySelf == AlignItems.AUTO) {
+                justifySelf = containerStyle.justifyItems;
+            }
+            if (justifySelf == AlignItems.AUTO) {
+                justifySelf = null;
+            }
+            justifySelf = AlignmentHelper.resolveNormal(
+                AlignmentHelper.resolveSelfRelative(justifySelf, absposItemDirection, absposContainerDirection, true),
                 AlignItems.START);
-            AlignItems alignSelf = AlignmentHelper.resolveNormal(
-                AlignmentHelper.resolveSelfRelative(
-                    childStyle.getAlignSelf(), absposItemDirection, absposContainerDirection, false),
+            AlignItems alignSelf = childStyle.getAlignSelf();
+            if (alignSelf == null || alignSelf == AlignItems.AUTO) {
+                alignSelf = containerStyle.getAlignItems();
+            }
+            if (alignSelf == AlignItems.AUTO) {
+                alignSelf = null;
+            }
+            alignSelf = AlignmentHelper.resolveNormal(
+                AlignmentHelper.resolveSelfRelative(alignSelf, absposItemDirection, absposContainerDirection, false),
                 AlignItems.START);
 
             // The grid area is already resolved to physical container coordinates (the logical start/end
             // lines were mirrored for RTL in resolveAbsoluteGridArea), so only the self-alignment keywords
             // need to be interpreted relative to the writing direction.
             float effectiveAreaWidth = gridArea.right - gridArea.left;
+            TaffyPoint<Overflow> containerOverflow = containerStyle.getOverflow();
 
-            // Compute offset in horizontal axis
-            float xInArea;
-            if (!Float.isNaN(left)) {
-                xInArea = left + margin.left;
-            } else if (!Float.isNaN(right)) {
-                xInArea = effectiveAreaWidth - right - finalSize.width - margin.right;
-            } else {
-                // Use alignment-based offset. In RTL the inline-start edge is the right edge of the area,
-                // so START/FLEX_START resolve to the right and END/FLEX_END to the left.
-                float freeSpaceX = effectiveAreaWidth - finalSize.width - margin.left - margin.right;
-                AlignItems effectiveJustifySelf = AlignmentHelper.resolveSelfSafety(justifySelf, freeSpaceX < 0f);
-                boolean alignsToStart = AlignmentHelper.isUnset(effectiveJustifySelf)
-                                        || effectiveJustifySelf == AlignItems.START
-                                        || effectiveJustifySelf == AlignItems.FLEX_START;
-                boolean alignsToEnd = effectiveJustifySelf == AlignItems.END
-                                      || effectiveJustifySelf == AlignItems.FLEX_END;
-                if (effectiveJustifySelf == AlignItems.CENTER) {
-                    xInArea = freeSpaceX / 2 + margin.left;
-                } else if (isRtl ? alignsToStart : alignsToEnd) {
-                    xInArea = freeSpaceX + margin.left;
-                } else {
-                    // START/FLEX_START (LTR), END/FLEX_END (RTL), STRETCH, BASELINE: start of the area
-                    xInArea = margin.left;
-                }
-            }
-
-            // Compute offset in vertical axis
-            float yInArea;
-            if (!Float.isNaN(top)) {
-                yInArea = top + margin.top;
-            } else if (!Float.isNaN(bottom)) {
-                yInArea = areaHeight - bottom - finalSize.height - margin.bottom;
-            } else {
-                // Use alignment-based offset
-                float freeSpaceY = areaHeight - finalSize.height - margin.top - margin.bottom;
-                AlignItems effectiveAlignSelf = AlignmentHelper.resolveSelfSafety(alignSelf, freeSpaceY < 0f);
-                if (effectiveAlignSelf == AlignItems.END || effectiveAlignSelf == AlignItems.FLEX_END) {
-                    yInArea = freeSpaceY + margin.top;
-                } else if (effectiveAlignSelf == AlignItems.CENTER) {
-                    yInArea = freeSpaceY / 2 + margin.top;
-                } else {
-                    // START, FLEX_START, STRETCH, BASELINE - all start at margin.top
-                    yInArea = margin.top;
-                }
-            }
+            // Resolve the item's position inside the grid area. The grid area is the containing
+            // block of an absolutely positioned grid child, so its IMCB (and, with both insets
+            // auto, its static-position rectangle) is the area itself. Upstream #1206 (a4dff69e).
+            float xInArea = absoluteAxisOffset(
+                effectiveAreaWidth, left, right, finalSize.width, margin.left, margin.right,
+                justifySelf, AlignmentHelper.isSafe(justifySelf), isRtl,
+                containerOverflow.x.isScrollContainer()
+            );
+            float yInArea = absoluteAxisOffset(
+                areaHeight, top, bottom, finalSize.height, margin.top, margin.bottom,
+                alignSelf, AlignmentHelper.isSafe(alignSelf), false,
+                containerOverflow.y.isScrollContainer()
+            );
 
             // Convert to container coordinates
             float x = gridArea.left + xInArea;
@@ -5694,6 +5675,143 @@ public class GridComputer {
         }
 
         return minContent;
+    }
+
+    // === Out-of-flow self-alignment (OF-05, upstream #1206) ===
+
+    /** The physical edge a resolved self-alignment selects in the absolutely positioned model. */
+    private enum OofEdge {
+        START, CENTER, END
+    }
+
+    /**
+     * The physical edge selected by a self-alignment value. {@code reversed} is true when the
+     * logical start edge of the containing block is the physical end edge (the inline axis of an
+     * RTL containing block). An unset value behaves as start (upstream
+     * {@code OofAlignment::from_style} derives normal from an absent alignment).
+     */
+    private static OofEdge alignmentEdge(AlignItems alignment, boolean reversed) {
+        AlignItems keyword = AlignmentHelper.keyword(alignment);
+        if (keyword == null) {
+            keyword = AlignItems.START;
+        }
+        return switch (keyword) {
+            case CENTER -> OofEdge.CENTER;
+            case END, FLEX_END -> reversed ? OofEdge.START : OofEdge.END;
+            // start / flex-start / baseline / stretch / normal
+            default -> reversed ? OofEdge.END : OofEdge.START;
+        };
+    }
+
+    /** The physical edge corresponding to the logical start edge of the containing block. */
+    private static OofEdge startEdge(boolean reversed) {
+        return reversed ? OofEdge.END : OofEdge.START;
+    }
+
+    /** Positions a box of {@code size} within {@code [start, end]} on the given physical edge. */
+    private static float alignInLine(float start, float end, float size, OofEdge edge) {
+        return switch (edge) {
+            case START -> start;
+            case CENTER -> (start + end - size) / 2f;
+            case END -> end - size;
+        };
+    }
+
+    /** Whether an unset self alignment (or an explicit {@code normal}) behaves as the default. */
+    private static boolean isNormalAlignment(AlignItems alignment) {
+        AlignItems keyword = AlignmentHelper.keyword(alignment);
+        return keyword == null || keyword == AlignItems.NORMAL;
+    }
+
+    /**
+     * Resolves the position of one axis of an absolutely positioned grid child within its grid
+     * area (upstream {@code oof.rs} {@code OofAxis}, reduced to the direct-parent model).
+     *
+     * <p>The grid area is the containing block of an absolutely positioned grid child, so the
+     * inset-modified containing block is resolved against the area and, when both insets are
+     * {@code auto}, the static-position rectangle is the whole area. The returned offset is
+     * relative to the area's start edge.</p>
+     *
+     * @param cbSize      the grid area's size in this axis
+     * @param insetStart  the resolved start inset ({@code NaN} = auto)
+     * @param insetEnd    the resolved end inset ({@code NaN} = auto)
+     * @param size        the box's border-box size in this axis
+     * @param marginStart the resolved start margin
+     * @param marginEnd   the resolved end margin
+     * @param alignment   the resolved self alignment of the axis ({@code null} = normal)
+     * @param safe        whether the alignment carries the {@code safe} modifier
+     * @param reversed    whether the logical start edge is the physical end edge (RTL inline)
+     * @param scrollAxis  whether the containing block scrolls in this axis
+     * @return the offset of the box's border-box start from the area's start edge
+     */
+    private static float absoluteAxisOffset(float cbSize, float insetStart, float insetEnd,
+                                            float size, float marginStart, float marginEnd,
+                                            AlignItems alignment, boolean safe, boolean reversed,
+                                            boolean scrollAxis) {
+        boolean hasStartInset = !Float.isNaN(insetStart);
+        boolean hasEndInset = !Float.isNaN(insetEnd);
+        float marginBox = size + marginStart + marginEnd;
+
+        if (!hasStartInset && !hasEndInset) {
+            // Both insets auto: static alignment within the grid area. Because the area is the
+            // whole static-position rectangle, its IMCB is the area as well. A `safe` value
+            // whose margin box overflows the area falls back to the logical start edge.
+            OofEdge keyword = alignmentEdge(alignment, reversed);
+            if (safe && marginBox > cbSize) {
+                keyword = startEdge(reversed);
+            }
+            return alignInLine(0f, cbSize, marginBox, keyword) + marginStart;
+        }
+
+        float imcbStart;
+        float imcbEnd;
+        if (hasStartInset && hasEndInset) {
+            imcbStart = insetStart;
+            // Over-constrained insets: the weaker (end) inset is reduced so that the IMCB is
+            // empty rather than negative (css-position-3 resolving-insets).
+            imcbEnd = Math.max(insetStart, cbSize - insetEnd);
+        } else if (hasStartInset) {
+            imcbStart = insetStart;
+            imcbEnd = cbSize;
+        } else {
+            imcbStart = 0f;
+            imcbEnd = cbSize - insetEnd;
+        }
+
+        if (!hasStartInset || !hasEndInset) {
+            // A single inset anchors the margin box to the stronger inset's edge.
+            return hasStartInset
+                   ? imcbStart + marginStart
+                   : imcbEnd - size - marginEnd;
+        }
+
+        float imcbSize = imcbEnd - imcbStart;
+        OofEdge edge = alignmentEdge(alignment, reversed);
+        if (safe) {
+            OofEdge effective = marginBox > imcbSize ? startEdge(reversed) : edge;
+            return alignInLine(imcbStart, imcbEnd, marginBox, effective) + marginStart;
+        }
+        if (marginBox <= imcbSize || isNormalAlignment(alignment)) {
+            // 'normal' is start-aligned (as specified) even when the box overflows.
+            return alignInLine(imcbStart, imcbEnd, marginBox, edge) + marginStart;
+        }
+        // Default overflow alignment for absolutely positioned boxes: keep the box as close to the
+        // requested alignment as possible without overflowing the overflow-limit rectangle.
+        // https://www.w3.org/TR/css-align-3/#auto-safety-position
+        float limitStart = Math.min(imcbStart, 0f);
+        float limitEnd = Math.max(imcbEnd, cbSize);
+        if (scrollAxis) {
+            if (reversed) {
+                limitStart = Float.NEGATIVE_INFINITY;
+            } else {
+                limitEnd = Float.POSITIVE_INFINITY;
+            }
+        }
+        if (marginBox <= limitEnd - limitStart) {
+            float start = alignInLine(imcbStart, imcbEnd, marginBox, edge);
+            return Math.max(Math.min(start, limitEnd - marginBox), limitStart) + marginStart;
+        }
+        return alignInLine(limitStart, limitEnd, marginBox, startEdge(reversed)) + marginStart;
     }
 
     // Helper methods

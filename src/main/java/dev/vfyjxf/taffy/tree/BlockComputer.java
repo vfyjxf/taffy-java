@@ -92,6 +92,26 @@ public class BlockComputer {
          */
         AlignItems justifySelf;
         /**
+         * The item's raw {@code align-self} value; {@link AlignItems#AUTO} is the legacy
+         * "not specified" sentinel. Block layout has no {@code align-items} fallback for an
+         * out-of-flow child, so an unset value behaves as {@code normal}. Upstream #1206.
+         */
+        AlignItems alignSelf;
+        /**
+         * Resolved inline-axis self alignment of an out-of-flow child ({@code null} = normal),
+         * captured when the child's static position is generated. Upstream #1206.
+         */
+        AlignItems staticAlignX;
+        /** Resolved block-axis self alignment of an out-of-flow child ({@code null} = normal). */
+        AlignItems staticAlignY;
+        /**
+         * The inline-axis static-position rectangle of an out-of-flow child, in this container's
+         * border-box frame: it spans the container's content box
+         * (css-position-3 static-position rectangle).
+         */
+        float staticAreaStartX;
+        float staticAreaEndX;
+        /**
          * The item's resolved direction ({@code INHERIT} already resolved through the parent
          * chain), used to resolve {@code self-start}/{@code self-end} in the inline axis.
          * Upstream #1077.
@@ -518,6 +538,7 @@ public class BlockComputer {
             items,
             finalOuterSize,
             absolutePositionInset,
+            overflow,
             new ScrollableOverflowUtil.Container(scrollContainer, clientSize, rtl, false, FloatRect.zero())
         );
 
@@ -766,6 +787,7 @@ public class BlockComputer {
             item.isTable = childStyle.getItemIsTable();
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
             item.justifySelf = childStyle.justifySelf;
+            item.alignSelf = childStyle.getAlignSelf();
             item.direction = layoutComputer.resolveDirection(childId);
             item.widthIsAuto = childStyle.getSize().width.isAuto();
             // For compressible replaced items a percentage width/max-width resolves against a
@@ -884,11 +906,32 @@ public class BlockComputer {
 
         for (BlockItem item : items) {
             if (item.position.isOutOfFlow()) {
-                // In RTL, static position starts from right
-                float staticX = isRtl
-                    ? (containerOuterWidth - contentBoxInset.right)
-                    : contentBoxInset.left;
-                item.staticPosition = new FloatPoint(staticX, yOffsetForAbsolute);
+                // The static-position rectangle of an out-of-flow child spans the container's
+                // content box in the inline axis, and is a zero-height line at the child's
+                // hypothetical position in the block axis (css-position-3 staticpos-rect). The
+                // child's own self-alignment properties decide which edge of the inline rectangle
+                // it uses; 'justify-self: auto' takes the container's 'justify-items', while block
+                // layout has no block-axis container fallback for 'align-self'.
+                // Upstream #1206 (a4dff69e).
+                float areaStart = contentBoxInset.left;
+                float areaEnd = containerOuterWidth - contentBoxInset.right;
+                AlignItems justifySelf = item.justifySelf != null && item.justifySelf != AlignItems.AUTO
+                                         ? item.justifySelf
+                                         : justifyItems;
+                if (justifySelf == AlignItems.AUTO) {
+                    justifySelf = null;
+                }
+                item.staticAlignX = AlignmentHelper.resolveSelfRelative(justifySelf, item.direction, direction, true);
+                AlignItems alignSelf = item.alignSelf != null && item.alignSelf != AlignItems.AUTO
+                                       ? item.alignSelf
+                                       : null;
+                item.staticAlignY = AlignmentHelper.resolveSelfRelative(alignSelf, item.direction, direction, false);
+                item.staticAreaStartX = areaStart;
+                item.staticAreaEndX = areaEnd;
+                item.staticPosition = new FloatPoint(
+                    staticAlignmentEdge(areaStart, areaEnd, item.staticAlignX, isRtl),
+                    yOffsetForAbsolute
+                );
                 continue;
             }
 
@@ -1253,6 +1296,7 @@ public class BlockComputer {
         List<BlockItem> items,
         FloatSize areaSize,
         FloatRect areaInset,
+        TaffyPoint<Overflow> containerOverflow,
         ScrollableOverflowUtil.Container overflowContainer) {
 
         TaffyTree tree = layoutComputer.getTree();
@@ -1316,16 +1360,20 @@ public class BlockComputer {
             float nonAutoMarginTop = Float.isNaN(marginOpt.top) ? 0f : marginOpt.top;
             float nonAutoMarginBottom = Float.isNaN(marginOpt.bottom) ? 0f : marginOpt.bottom;
 
-            // Fill in width from left/right if not set. A replaced element is not stretched:
-            // its auto width resolves to its intrinsic size instead (upstream #1203).
-            if (!isReplaced && Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
+            // An auto size is the stretch-fit size only when both insets are set and the
+            // self-alignment in that axis stretches: explicit 'stretch', or 'normal' for a
+            // non-replaced box (https://www.w3.org/TR/css-position-3/#abspos-auto-size). A
+            // replaced element's auto size stays its intrinsic size (upstream #1203).
+            // Upstream #1206 (a4dff69e).
+            if (isStretchSized(item.staticAlignX, left, right, isReplaced)
+                && Float.isNaN(knownDimensions.width)) {
                 float newWidth = areaWidth - nonAutoMarginLeft - nonAutoMarginRight - left - right;
                 knownDimensions = new FloatSize(Math.max(newWidth, 0f), knownDimensions.height);
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
 
-            // Fill in height from top/bottom if not set (not for replaced elements, upstream #1203).
-            if (!isReplaced && Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
+            if (isStretchSized(item.staticAlignY, top, bottom, isReplaced)
+                && Float.isNaN(knownDimensions.height)) {
                 float newHeight = areaHeight - nonAutoMarginTop - nonAutoMarginBottom - top - bottom;
                 knownDimensions = new FloatSize(knownDimensions.width, Math.max(newHeight, 0f));
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
@@ -1416,24 +1464,37 @@ public class BlockComputer {
                 Float.isNaN(marginOpt.bottom) ? autoMargin.bottom : marginOpt.bottom
             );
 
-            // Position the item using resolved margins
-            float x;
-            if (!Float.isNaN(left)) {
-                x = areaInset.left + left + resolvedMargin.left;
-            } else if (!Float.isNaN(right)) {
-                x = areaInset.left + areaWidth - finalSize.width - right - resolvedMargin.right;
-            } else {
-                x = item.staticPosition.x + resolvedMargin.left;
-            }
-
-            float y;
-            if (!Float.isNaN(top)) {
-                y = areaInset.top + top + resolvedMargin.top;
-            } else if (!Float.isNaN(bottom)) {
-                y = areaInset.top + areaHeight - finalSize.height - bottom - resolvedMargin.bottom;
-            } else {
-                y = item.staticPosition.y + resolvedMargin.top;
-            }
+            // Position the margin box within the inset-modified containing block
+            // (https://www.w3.org/TR/css-position-3/#abspos-alignment). With both insets auto the
+            // box is aligned within its static-position rectangle, and the 'safe' overflow-position
+            // keyword can fall back to the IMCB start edge (OF-06 / upstream #1267).
+            boolean rtl = overflowContainer.reversedX();
+            float staticY = item.staticPosition.y - areaInset.top;
+            float x = areaInset.left + absoluteAxisOffset(new AbsoluteAxis(
+                areaWidth,
+                left, right,
+                finalSize.width,
+                resolvedMargin.left, resolvedMargin.right,
+                Float.isNaN(marginOpt.left), Float.isNaN(marginOpt.right),
+                item.staticAlignX,
+                AlignmentHelper.isSafe(item.staticAlignX),
+                item.staticAreaStartX - areaInset.left,
+                item.staticAreaEndX - areaInset.left,
+                rtl,
+                containerOverflow.x.isScrollContainer()
+            ));
+            float y = areaInset.top + absoluteAxisOffset(new AbsoluteAxis(
+                areaHeight,
+                top, bottom,
+                finalSize.height,
+                resolvedMargin.top, resolvedMargin.bottom,
+                Float.isNaN(marginOpt.top), Float.isNaN(marginOpt.bottom),
+                item.staticAlignY,
+                AlignmentHelper.isSafe(item.staticAlignY),
+                staticY, staticY,
+                false,
+                containerOverflow.y.isScrollContainer()
+            ));
 
             FloatSize scrollbarSize = new FloatSize(
                 item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
@@ -1582,6 +1643,212 @@ public class BlockComputer {
         if (!marginsTreatedAsZero.start) height -= itemMargin.top;
         if (!marginsTreatedAsZero.end) height -= itemMargin.bottom;
         return height;
+    }
+
+    // === Out-of-flow self-alignment (OF-05 / OF-06, upstream #1206 and #1267) ===
+
+    /** The physical edge a resolved self-alignment selects in the absolutely positioned model. */
+    private enum OofEdge {
+        START, CENTER, END
+    }
+
+    /** An inset-modified containing block (or static-position rectangle) in one axis. */
+    private record OofInterval(float start, float end) {
+    }
+
+    /**
+     * One axis of the absolute positioning model (upstream {@code oof.rs} {@code OofAxis}),
+     * reduced to what the direct-parent port needs.
+     *
+     * <p>All coordinates are physical (left-to-right / top-to-bottom) and relative to the start
+     * of the containing block's inset-resolution area. A {@link Float#NaN} inset or margin is
+     * {@code auto}.</p>
+     *
+     * @param cbSize         the size of the containing block in this axis
+     * @param insetStart     the resolved start inset ({@code NaN} = auto)
+     * @param insetEnd       the resolved end inset ({@code NaN} = auto)
+     * @param size           the box's border-box size in this axis
+     * @param marginStart    the resolved start margin (auto margins already absorbed)
+     * @param marginEnd      the resolved end margin
+     * @param autoStartMargin whether the style margin on the start side was auto
+     * @param autoEndMargin  whether the style margin on the end side was auto
+     * @param alignment      the resolved self alignment of the axis ({@code null} = normal)
+     * @param safe           whether the alignment carries the {@code safe} modifier
+     * @param staticStart    the static-position rectangle start, in the area frame
+     * @param staticEnd      the static-position rectangle end, in the area frame
+     * @param reversed       whether the logical start edge is the physical end edge (RTL inline)
+     * @param scrollAxis     whether the containing block scrolls in this axis
+     */
+    private record AbsoluteAxis(
+        float cbSize,
+        float insetStart,
+        float insetEnd,
+        float size,
+        float marginStart,
+        float marginEnd,
+        boolean autoStartMargin,
+        boolean autoEndMargin,
+        AlignItems alignment,
+        boolean safe,
+        float staticStart,
+        float staticEnd,
+        boolean reversed,
+        boolean scrollAxis
+    ) {
+        boolean hasStartInset() {
+            return !Float.isNaN(insetStart);
+        }
+
+        boolean hasEndInset() {
+            return !Float.isNaN(insetEnd);
+        }
+
+        boolean bothInsets() {
+            return hasStartInset() && hasEndInset();
+        }
+    }
+
+    /**
+     * The static-position anchor of a zero-sized box aligned within an inline static-position
+     * rectangle, mirroring upstream {@code AxisStaticPosition::from_alignment}: {@code stretch},
+     * {@code baseline} and {@code normal} behave as start for static positioning purposes, and
+     * start/end swap physical edges when the logical start edge is the physical end edge.
+     */
+    private static float staticAlignmentEdge(float areaStart, float areaEnd, AlignItems alignment, boolean axisIsRtl) {
+        return switch (alignmentEdge(alignment, axisIsRtl)) {
+            case START -> areaStart;
+            case CENTER -> (areaStart + areaEnd) / 2f;
+            case END -> areaEnd;
+        };
+    }
+
+    /**
+     * The physical edge selected by a self-alignment value. {@code reversed} is true when the
+     * logical start edge of the containing block is the physical end edge (the inline axis of an
+     * RTL containing block). An unset value behaves as start, which is what upstream
+     * {@code OofAlignment::from_style} derives from an absent alignment.
+     */
+    private static OofEdge alignmentEdge(AlignItems alignment, boolean reversed) {
+        AlignItems keyword = AlignmentHelper.keyword(alignment);
+        if (keyword == null) {
+            keyword = AlignItems.START;
+        }
+        return switch (keyword) {
+            case CENTER -> OofEdge.CENTER;
+            case END, FLEX_END -> reversed ? OofEdge.START : OofEdge.END;
+            // start / flex-start / baseline / stretch / normal
+            default -> reversed ? OofEdge.END : OofEdge.START;
+        };
+    }
+
+    /** The physical edge corresponding to the logical start edge of the containing block. */
+    private static OofEdge startEdge(boolean reversed) {
+        return reversed ? OofEdge.END : OofEdge.START;
+    }
+
+    /** Positions a box of {@code size} within {@code area} on the given physical edge. */
+    private static float alignInLine(OofInterval area, float size, OofEdge edge) {
+        return switch (edge) {
+            case START -> area.start();
+            case CENTER -> (area.start() + area.end() - size) / 2f;
+            case END -> area.end() - size;
+        };
+    }
+
+    /**
+     * Whether an auto size in this axis is the stretch-fit size rather than the fit-content size
+     * (upstream {@code OofAxis::is_stretch_sized}): only a box inset-constrained in the axis can
+     * stretch, and only when it asks to ({@code stretch}) or is a non-replaced box whose alignment
+     * is {@code normal}. Table boxes are not distinguished in this port.
+     */
+    private static boolean isStretchSized(AlignItems alignment, float insetStart, float insetEnd, boolean isReplaced) {
+        if (Float.isNaN(insetStart) || Float.isNaN(insetEnd)) {
+            return false;
+        }
+        AlignItems keyword = AlignmentHelper.keyword(alignment);
+        if (keyword == AlignItems.STRETCH) {
+            return true;
+        }
+        return (keyword == null || keyword == AlignItems.NORMAL) && !isReplaced;
+    }
+
+    /** Whether an unset self alignment (or an explicit {@code normal}) behaves as the default. */
+    private static boolean isNormalAlignment(AlignItems alignment) {
+        AlignItems keyword = AlignmentHelper.keyword(alignment);
+        return keyword == null || keyword == AlignItems.NORMAL;
+    }
+
+    /**
+     * Computes the border-box start of one axis of an absolutely positioned box
+     * (<a href="https://www.w3.org/TR/css-position-3/#abspos-alignment">css-position-3 abspos</a>),
+     * including auto-margin absorption and the {@code safe} / default overflow-position rules.
+     *
+     * @param axis the resolved inputs of the axis
+     * @return the offset of the box's border-box start from the start of the inset-resolution area
+     */
+    private static float absoluteAxisOffset(AbsoluteAxis axis) {
+        float marginBox = axis.size() + axis.marginStart() + axis.marginEnd();
+        if (!axis.hasStartInset() && !axis.hasEndInset()) {
+            // Both insets auto: static alignment within the static-position rectangle.
+            // Upstream #1206 (a4dff69e).
+            OofEdge keyword = alignmentEdge(axis.alignment(), axis.reversed());
+            OofInterval staticArea = new OofInterval(axis.staticStart(), axis.staticEnd());
+            return alignInLine(staticArea, marginBox, keyword) + axis.marginStart();
+        }
+
+        OofInterval imcb;
+        if (axis.bothInsets()) {
+            float start = axis.insetStart();
+            float end = axis.cbSize() - axis.insetEnd();
+            // Over-constrained insets: the weaker (end) inset is reduced so that the IMCB is
+            // empty rather than negative (css-position-3 resolving-insets).
+            imcb = new OofInterval(start, Math.max(start, end));
+        } else if (axis.hasStartInset()) {
+            imcb = new OofInterval(axis.insetStart(), axis.cbSize());
+        } else {
+            imcb = new OofInterval(0f, axis.cbSize() - axis.insetEnd());
+        }
+
+        if (!axis.bothInsets()) {
+            // A single inset anchors the margin box to the stronger inset's edge.
+            return axis.hasStartInset()
+                   ? imcb.start() + axis.marginStart()
+                   : imcb.end() - axis.size() - axis.marginEnd();
+        }
+        if (axis.autoStartMargin() || axis.autoEndMargin()) {
+            // Auto margins have already absorbed the free space (only with both insets set).
+            return imcb.start() + axis.marginStart();
+        }
+
+        float imcbSize = imcb.end() - imcb.start();
+        OofEdge edge = alignmentEdge(axis.alignment(), axis.reversed());
+        if (axis.safe()) {
+            OofEdge effective = marginBox > imcbSize ? startEdge(axis.reversed()) : edge;
+            return alignInLine(imcb, marginBox, effective) + axis.marginStart();
+        }
+        if (marginBox <= imcbSize || isNormalAlignment(axis.alignment())) {
+            // 'normal' is start-aligned (as specified) even when the box overflows.
+            return alignInLine(imcb, marginBox, edge) + axis.marginStart();
+        }
+        // Default overflow alignment for absolutely positioned boxes: keep the box as close to the
+        // requested alignment as possible without overflowing the overflow-limit rectangle (the
+        // union of the IMCB and the containing block, unbounded on the scrollable side of a scroll
+        // container). https://www.w3.org/TR/css-align-3/#auto-safety-position
+        float limitStart = Math.min(imcb.start(), 0f);
+        float limitEnd = Math.max(imcb.end(), axis.cbSize());
+        if (axis.scrollAxis()) {
+            if (axis.reversed()) {
+                limitStart = Float.NEGATIVE_INFINITY;
+            } else {
+                limitEnd = Float.POSITIVE_INFINITY;
+            }
+        }
+        if (marginBox <= limitEnd - limitStart) {
+            float start = alignInLine(imcb, marginBox, edge);
+            return Math.max(Math.min(start, limitEnd - marginBox), limitStart) + axis.marginStart();
+        }
+        return alignInLine(new OofInterval(limitStart, limitEnd), marginBox, startEdge(axis.reversed()))
+               + axis.marginStart();
     }
 
     // Helper methods
