@@ -15,6 +15,7 @@ import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.DetailedGridInfo;
+import dev.vfyjxf.taffy.tree.GridItemArea;
 import dev.vfyjxf.taffy.tree.GridTrackInfo;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.tree.NodeId;
@@ -576,6 +577,110 @@ class DetailedGrid2P7Test {
         assertTrue(text.contains("items=[GridItemArea["), text);
         assertTrue(text.contains(" -> ItemRectangle["), text);
         assertTrue(text.contains("areas={hero=GridArea["), text);
+    }
+
+    // ------------------------------------------------------------------
+    // Empty-axis residual and first-slice compatibility
+    // ------------------------------------------------------------------
+
+    @Test
+    void emptyAxisStatesRemainDistinguishable() {
+        // 1. The port's plain empty axis materialises one implicit track (maxSpan = 1 floor):
+        //    it is not a single-line axis, and it is not a true zero-track axis.
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle plainStyle = sizedGrid(100f, 50f);
+        TaffyStyle hiddenStyle = leaf();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        NodeId plainRoot = tree.newWithChildren(plainStyle, List.of(tree.newLeaf(hiddenStyle)));
+        tree.computeLayout(plainRoot, TaffySize.maxContent());
+        DetailedGridInfo plain = infoOf(tree, plainRoot);
+
+        assertFalse(plain.columns().isEmpty(), "materialised empty axis is not zero-track");
+        assertEquals(1, plain.columns().trackCount());
+        assertFalse(plain.columns().hasSingleLine());
+        assertNull(plain.columns().emptyAxisLine());
+        assertEquals(0f, plain.columns().track(0).size(), EPSILON);
+        assertEquals(1, plain.rows().trackCount());
+        assertEquals(50f, plain.rows().track(0).size(), EPSILON);
+        assertFalse(plain.rows().hasSingleLine());
+        assertEquals("0px", plain.gridTemplateColumns(), "materialised axis is not serialized as none");
+        assertEquals("50px", plain.gridTemplateRows());
+
+        // 2. An axis collapsed entirely by auto-fit keeps its expanded tracks, has a single
+        //    content-aligned line, and serializes its (zero-sized) tracks rather than "none".
+        TaffyTree collapsedTree = new TaffyTree();
+        TaffyStyle collapsedStyle = sizedGrid(200f, 100f);
+        collapsedStyle.justifyContent = AlignContent.CENTER;
+        collapsedStyle.alignContent = AlignContent.END;
+        collapsedStyle.gridTemplateColumnsWithRepeat = List.of(GridTemplateComponent.autoFit(px(40f)));
+        collapsedStyle.gridTemplateRowsWithRepeat = List.of(GridTemplateComponent.autoFit(px(30f)));
+        NodeId collapsedRoot = collapsedTree.newWithChildren(collapsedStyle, List.of(collapsedTree.newLeaf(hiddenStyle)));
+        collapsedTree.computeLayout(collapsedRoot, TaffySize.maxContent());
+        DetailedGridInfo collapsed = infoOf(collapsedTree, collapsedRoot);
+
+        assertFalse(collapsed.columns().isEmpty());
+        assertTrue(collapsed.columns().hasSingleLine());
+        assertTrue(collapsed.rows().hasSingleLine());
+        assertTrue(collapsed.columns().trackCount() > 0);
+        for (int i = 0; i < collapsed.columns().trackCount(); i++) {
+            assertEquals(0f, collapsed.columns().track(i).size(), EPSILON, "collapsed column " + i);
+        }
+        assertEquals(100f, collapsed.columns().emptyAxisLine(), EPSILON);
+        assertEquals(100f, collapsed.rows().emptyAxisLine(), EPSILON);
+        assertTrue(collapsed.gridTemplateColumns().matches("0px( 0px)*"),
+            collapsed.gridTemplateColumns());
+        assertTrue(collapsed.gridTemplateRows().matches("0px( 0px)*"),
+            collapsed.gridTemplateRows());
+
+        // 3. The value object can still represent upstream's true zero-track axis: empty, with
+        //    the single line position, serializing as "none". The layout floor (residual) is what
+        //    keeps case 1 from reporting this state.
+        DetailedGridInfo.Tracks zero = new DetailedGridInfo.Tracks(0, 0, 0, List.of(), 100f, Map.of());
+        assertTrue(zero.isEmpty());
+        assertTrue(zero.hasSingleLine());
+        assertEquals(100f, zero.emptyAxisLine(), EPSILON);
+        assertEquals("none", zero.toTrackListString());
+        assertEquals("none", zero.toTrackListString(2f));
+        assertEquals(List.of(), zero.iterLineNames());
+    }
+
+    @Test
+    void firstSliceAccessorsAndConstructorsRemainCompatible() {
+        DetailedGridInfo.Tracks rows = new DetailedGridInfo.Tracks(
+            0, 1, 0, List.of(track(0f, 50f)), null, Map.of());
+        DetailedGridInfo.Tracks columns = new DetailedGridInfo.Tracks(
+            0, 2, 0, List.of(track(0f, 40f), track(40f, 60f)), null, Map.of("a", List.of(1)));
+        GridItemArea area = new GridItemArea(1, 2, 1, 2);
+
+        // The original 3-component record constructor still works and defaults the area table to
+        // empty; every first-slice accessor keeps its meaning.
+        DetailedGridInfo info = new DetailedGridInfo(rows, columns, List.of(area));
+        assertEquals(rows, info.rows());
+        assertEquals(columns, info.columns());
+        assertEquals(List.of(area), info.items());
+        assertEquals(1, info.itemCount());
+        assertEquals(area, info.itemArea(0));
+        assertNull(info.itemArea(1));
+        assertEquals(1, area.rowSpan());
+        assertEquals(1, area.columnSpan());
+        assertEquals(List.of(1), info.columns().linesNamed("a"));
+        assertEquals(List.of(1), info.columns().lineNames().get("a"));
+        assertEquals(3, info.columns().lineNameTable().lineCount(), "explicit tracks + 1");
+        assertTrue(info.areas().isEmpty());
+        assertEquals("[a] 40px 60px", info.gridTemplateColumns());
+        assertEquals("50px", info.gridTemplateRows());
+        assertRectangle(info.itemRectangle(0), 0f, 0f, 40f, 50f, "synthetic area");
+
+        // Value semantics are those of a record, with the CSR map comparing as a Map.
+        DetailedGridInfo same = new DetailedGridInfo(rows, columns, List.of(new GridItemArea(1, 2, 1, 2)));
+        assertEquals(info, same);
+        assertEquals(info.hashCode(), same.hashCode());
+
+        // Immutable views survive the new representation.
+        assertThrows(UnsupportedOperationException.class, () -> info.items().add(area));
+        assertThrows(UnsupportedOperationException.class, () -> info.columns().lineNames().put("x", List.of(1)));
+        assertThrows(UnsupportedOperationException.class, () -> info.columns().lineNameTable().line(0).add("x"));
+        assertThrows(UnsupportedOperationException.class, () -> info.columns().tracks().add(track(0f, 1f)));
     }
 
     // ------------------------------------------------------------------

@@ -657,7 +657,12 @@ public class TaffyTree {
      * <p>The returned value is an immutable snapshot: it describes the tracks and in-flow item
      * areas the grid algorithm resolved for this node, in the grid container's border-box
      * coordinate space, using unrounded values. Reading it never changes layout and it is never
-     * mutated by later layout passes (a later pass replaces the stored value instead).</p>
+     * mutated by later layout passes (a later pass replaces the stored value instead). It also
+     * exposes the CSR per-line names ({@link DetailedGridInfo.Tracks#lineNameTable()}), the
+     * separate {@code grid-template-areas} edge table ({@link DetailedGridInfo#areas()}), the
+     * physical item rectangles ({@link DetailedGridInfo#itemRectangle(int)}) and the resolved
+     * {@code grid-template-rows}/{@code grid-template-columns} serialization with its CSS
+     * {@code zoom} argument ({@link DetailedGridInfo#gridTemplateRows(float)}).</p>
      *
      * <p>Returns {@code null} when the node does not exist, when its current display is not
      * {@link TaffyDisplay#GRID}, and when a grid node has not gone through the grid layout path

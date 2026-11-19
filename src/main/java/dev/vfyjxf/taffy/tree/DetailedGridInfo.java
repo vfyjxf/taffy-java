@@ -76,6 +76,21 @@ import java.util.TreeMap;
  * preserve the exact interleaving of line-name sets and {@code repeat()} components that the
  * upstream {@code Vec<Vec<String>>} iterator encodes.</p>
  *
+ * <h2>Known residual: empty-axis track count</h2>
+ * <p>Upstream's grid-span estimate starts at zero, so a grid with no items and no template has a
+ * truly empty axis: {@code DetailedGridTracksInfo.positions} is empty and
+ * {@code empty_axis_line} records the position of the axis' single line. This port's estimate
+ * materialises at least one implicit track per axis (the {@code maxSpan = 1} floor), so a plain
+ * empty axis reports one track (zero-sized for columns, stretched for rows) and
+ * {@link Tracks#emptyAxisLine()} is {@code null}. The value object still distinguishes the
+ * states: a true zero-track axis built directly reports {@link Tracks#isEmpty()} == {@code true}
+ * and {@link Tracks#hasSingleLine()} == {@code true}, serializes as {@code none}, and is
+ * representable; the port's materialised axis reports {@code trackCount() == 1} and
+ * {@code hasSingleLine() == false}; and an axis collapsed entirely by {@code auto-fit} keeps its
+ * expanded zero-sized tracks with {@code hasSingleLine() == true}. Changing the estimate floor is
+ * a layout change and is deliberately out of scope for this additive slice; the residual stays
+ * with the grid span-estimate alignment work.</p>
+ *
  * <h2>Lifecycle and validity</h2>
  * <p>The information belongs to the node and is replaced by the next completed grid layout pass.
  * Style or child changes do not clear it eagerly (matching upstream, where the detailed layout
@@ -371,7 +386,15 @@ public record DetailedGridInfo(Tracks rows, Tracks columns, List<GridItemArea> i
             return negativeImplicitTracks + explicitTracks + positiveImplicitTracks;
         }
 
-        /** Whether the axis has no tracks at all (and therefore one grid line). */
+        /**
+         * Whether the axis has no tracks at all (and therefore one grid line).
+         *
+         * <p>A true zero-track axis is upstream's empty-axis state. This port's grid algorithm
+         * materialises one implicit track for an otherwise empty axis (the {@code maxSpan = 1}
+         * floor), so layouts normally report {@code false} here even when the axis has no usable
+         * track; use {@link #hasSingleLine()} for the all-collapsed case. See the class Javadoc's
+         * "Known residual" section.</p>
+         */
         public boolean isEmpty() {
             return trackCount() == 0;
         }
