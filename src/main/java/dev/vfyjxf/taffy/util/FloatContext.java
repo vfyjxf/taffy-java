@@ -496,7 +496,40 @@ public final class FloatContext {
      * @return the content slot
      */
     public ContentSlot contentSlot(float minY, float leftInset, float rightInset, Clear clear) {
+        // Compatibility form: a zero-height content slot. The height-aware overload below
+        // implements upstream #1386.
+        return contentSlot(minY, 0.0f, leftInset, rightInset, clear, NO_REGION);
+    }
+
+    /**
+     * Searches for a content slot that avoids the floats beside the content's full height.
+     *
+     * <p>This is the height-aware form added by upstream #1386: the slot's insets are the union
+     * of the insets of every segment the content's vertical extent touches, and
+     * {@link ContentSlot#height()} is how far down from the slot's top its width stays valid
+     * (content taller than that may be beside further floats). The search can be resumed after
+     * a segment with {@code afterSegment}.</p>
+     *
+     * @param minY         the minimum y position, in BFC-root coordinates
+     * @param height       the content height to keep clear of floats (0 for the legacy form)
+     * @param leftInset    the caller's left inset from the BFC edge
+     * @param rightInset   the caller's right inset from the BFC edge
+     * @param clear        the box's {@code clear} value
+     * @param afterSegment the segment after which the search starts, or {@link #NO_REGION}
+     * @return the content slot
+     */
+    public ContentSlot contentSlot(
+        float minY,
+        float height,
+        float leftInset,
+        float rightInset,
+        Clear clear,
+        int afterSegment
+    ) {
         Objects.requireNonNull(clear, "clear");
+        if (afterSegment < NO_REGION) {
+            throw new IllegalArgumentException("afterSegment must be >= " + NO_REGION + ": " + afterSegment);
+        }
 
         if (!hasActiveFloats(minY)) {
             return new ContentSlot(
@@ -510,19 +543,37 @@ public final class FloatContext {
             startY = Math.max(startY, clearThreshold);
         }
 
-        int index = firstSegmentEndingAfter(startY);
-        if (index == NO_REGION) {
+        int atLeast = afterSegment == NO_REGION ? 0 : afterSegment + 1;
+        int cleared = clearedSegment(clear);
+        int hwm = Math.max(atLeast, cleared == NO_REGION ? 0 : cleared + 1);
+
+        int index = firstSegmentEndingAfter(hwm, startY);
+        if (index >= segments.size()) {
             return new ContentSlot(
                 NO_REGION, leftInset, startY,
                 availableWidth - leftInset - rightInset, Float.POSITIVE_INFINITY);
         }
 
         Segment segment = segments.get(index);
-        float x = Math.max(segment.leftInset, leftInset);
-        float right = Math.max(segment.rightInset, rightInset);
+        float y = Math.max(segment.startY, startY);
+        float endY = y + height;
+        float insetLeft = Math.max(segment.leftInset, leftInset);
+        float insetRight = Math.max(segment.rightInset, rightInset);
+        float slotHeight = Float.POSITIVE_INFINITY;
+        for (int i = index + 1; i < segments.size(); i++) {
+            Segment lower = segments.get(i);
+            if (lower.startY < endY) {
+                insetLeft = Math.max(insetLeft, lower.leftInset);
+                insetRight = Math.max(insetRight, lower.rightInset);
+            } else if (lower.leftInset > insetLeft || lower.rightInset > insetRight) {
+                slotHeight = lower.startY - y;
+                break;
+            }
+        }
+
         return new ContentSlot(
-            index, x, Math.max(segment.startY, startY),
-            availableWidth - x - right, Float.POSITIVE_INFINITY);
+            index, insetLeft, y,
+            availableWidth - insetLeft - insetRight, slotHeight);
     }
 
     /**
@@ -711,7 +762,7 @@ public final class FloatContext {
         int hwm = switch (clear) {
             case LEFT -> Math.max(floatStart, lastPlacedFloats[0][1] + 1);
             case RIGHT -> Math.max(floatStart, lastPlacedFloats[1][1] + 1);
-            case BOTH -> Math.max(floatStart, Math.max(lastPlacedFloats[0][1], lastPlacedFloats[1][1]) + 1);
+            case BOTH -> Math.max(lastPlacedFloats[0][1], lastPlacedFloats[1][1]) + 1;
             case NONE -> floatStart;
         };
 

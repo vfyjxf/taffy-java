@@ -1118,12 +1118,8 @@ public class BlockComputer {
                 float x = placement.x() + itemNonAutoMargin.left;
                 float y = placement.y() + itemNonAutoMargin.top;
                 if (item.position == TaffyPosition.RELATIVE) {
-                    float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
-                    float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
-                    float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
-                    float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
-                    x += !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
-                    y += !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
+                    x += relativeInsetX(item.inset, containerInnerWidth, isRtl);
+                    y += relativeInsetY(item.inset, childPercentageResolutionHeight);
                 }
 
                 FloatSize scrollbarSize = new FloatSize(
@@ -1157,7 +1153,13 @@ public class BlockComputer {
             boolean pushedBelowFloat = false;
             float minYForSlot = committedYOffset + activeCollapsibleMarginSet.resolve();
             if (blockContext.hasActiveFloats(minYForSlot)) {
-                float minHeight = !Float.isNaN(item.size.height) ? item.size.height : 0.0f;
+                // Only the styled (minimum) height is known before the box is laid out. Clamp it
+                // by min/max and fall back to min-height, matching upstream #1385; otherwise a
+                // style height larger than max-height would check the box against floats it can
+                // never reach.
+                float clampedStyleHeight = maybeClamp(
+                    item.size, item.minSize, item.maxSize).height;
+                float minHeight = !Float.isNaN(clampedStyleHeight) ? clampedStyleHeight : 0.0f;
                 if (!Float.isNaN(item.minSize.height)) {
                     minHeight = Math.max(minHeight, item.minSize.height);
                 }
@@ -1365,12 +1367,8 @@ public class BlockComputer {
             float insetOffsetX = 0f;
             float insetOffsetY = 0f;
             if (item.position == TaffyPosition.RELATIVE) {
-                float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
-                float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
-                float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
-                float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
-                insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
-                insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
+                insetOffsetX = relativeInsetX(item.inset, containerInnerWidth, isRtl);
+                insetOffsetY = relativeInsetY(item.inset, childPercentageResolutionHeight);
             }
 
             // Compute y margin offset with margin collapse.
@@ -1589,6 +1587,33 @@ public class BlockComputer {
             firstBaseline,
             blockContext.floatedContentHeightContribution()
         );
+    }
+
+    /**
+     * Resolves the inline-axis offset of a relatively positioned box (CSS 2.2 9.4.3).
+     *
+     * <p>Percentages that cannot be resolved behave as auto. When both insets are non-auto,
+     * {@code left} wins in LTR and {@code right} wins in RTL (upstream #1305's shared resolver).</p>
+     */
+    private static float relativeInsetX(
+        TaffyRect<LengthPercentageAuto> inset, float basis, boolean rtl) {
+        float left = inset.left.maybeResolve(basis);
+        float right = inset.right.maybeResolve(basis);
+        if (rtl) {
+            return !Float.isNaN(right) ? -right : (!Float.isNaN(left) ? left : 0f);
+        }
+        return !Float.isNaN(left) ? left : (!Float.isNaN(right) ? -right : 0f);
+    }
+
+    /**
+     * Resolves the block-axis offset of a relatively positioned box: {@code top} wins over
+     * {@code bottom} when both are non-auto.
+     */
+    private static float relativeInsetY(
+        TaffyRect<LengthPercentageAuto> inset, float basis) {
+        float top = inset.top.maybeResolve(basis);
+        float bottom = inset.bottom.maybeResolve(basis);
+        return !Float.isNaN(top) ? top : (!Float.isNaN(bottom) ? -bottom : 0f);
     }
 
     /**
