@@ -801,8 +801,10 @@ public class GridComputer {
         List<GridItem> items = generateGridItems(node, style, nodeInnerSize, namedLineResolver);
 
         // Determine grid dimensions based on template or content
-        TrackCounts colCounts = computeColumnCounts(items, expandedColumns);
-        TrackCounts rowCounts = computeRowCounts(items, expandedRows);
+        TrackCounts colCounts = computeColumnCounts(items, expandedColumns,
+            style.getGridTemplateAreaColumnCount());
+        TrackCounts rowCounts = computeRowCounts(items, expandedRows,
+            style.getGridTemplateAreaRowCount());
 
         // Auto-place items that don't have explicit positions
         // Note: This may expand colCounts and rowCounts as needed
@@ -1626,7 +1628,9 @@ public class GridComputer {
      * <p>
      * The explicit track counts are derived from the <em>expanded</em> templates (so that a
      * {@code repeat()} contributes its expanded track count, GR-17 / #1035) combined with the
-     * extents of {@code grid-template-areas}, and clamped into the limited grid. The same resolver
+     * {@code grid-template-areas} template size (which defaults to the extents of the named areas
+     * but may be larger because of unnamed "." cells, GR-16 / upstream #1024), and clamped into the
+     * limited grid. The same resolver
      * instance is used by the in-flow placement pass and by the absolutely positioned children, so
      * that named-line lookup and fallback numbering are identical on both paths and named lines are
      * resolved exactly once before the grid size estimate (GR-15 / #1259).
@@ -1644,14 +1648,19 @@ public class GridComputer {
                                                       int rowAutoRepetitions) {
         NamedLineResolver namedLineResolver =
             new NamedLineResolver(containerStyle, columnAutoRepetitions, rowAutoRepetitions);
-        namedLineResolver.setExplicitColumnCount(explicitTrackCount(expandedColumns, namedLineResolver.getAreaColumnCount()));
-        namedLineResolver.setExplicitRowCount(explicitTrackCount(expandedRows, namedLineResolver.getAreaRowCount()));
+        // The area template size is taken from the style rather than derived from the named areas:
+        // unnamed (".") cells can make the template larger than the extents of the named areas and
+        // they still contribute explicit tracks (GR-16 / upstream #1024).
+        namedLineResolver.setExplicitColumnCount(
+            explicitTrackCount(expandedColumns, containerStyle.getGridTemplateAreaColumnCount()));
+        namedLineResolver.setExplicitRowCount(
+            explicitTrackCount(expandedRows, containerStyle.getGridTemplateAreaRowCount()));
         return namedLineResolver;
     }
 
     /**
      * The number of explicit tracks in one axis: the expanded template track count, extended to the
-     * extents of {@code grid-template-areas} and clamped into the limited grid (upstream
+     * {@code grid-template-areas} template size and clamped into the limited grid (upstream
      * {@code explicit_col_count = max(template_count, area_count).min(MAX_GRID_TRACKS)}).
      */
     private static int explicitTrackCount(List<TrackSizingFunction> expandedTemplate, int areaTrackCount) {
@@ -2474,11 +2483,18 @@ public class GridComputer {
      * Compute the number of columns (and negative implicit columns) in the grid.
      * Returns TrackCounts with negativeImplicit, explicit, and positiveImplicit track counts.
      */
-    private TrackCounts computeColumnCounts(List<GridItem> items, List<TrackSizingFunction> expandedCols) {
-        // Check explicit columns from expanded template (after auto-fill/auto-fit expansion)
+    private TrackCounts computeColumnCounts(List<GridItem> items, List<TrackSizingFunction> expandedCols,
+                                           int areaColumnCount) {
+        // Check explicit columns from the expanded template (after auto-fill/auto-fit expansion) and
+        // from the grid-template-areas template size: the area template can be larger than the
+        // extents of the named areas because of unnamed (".") cells, and those cells still
+        // contribute explicit tracks (GR-16 / upstream #1024, which computes
+        // explicit_col_count = max(template_count, area_column_count)).
         // Clamped into the limited grid (GR-05 / #986).
-        int explicitCols = (expandedCols != null && !expandedCols.isEmpty())
+        int templateCols = (expandedCols != null && !expandedCols.isEmpty())
                            ? Math.min(expandedCols.size(), MAX_GRID_TRACKS) : 0;
+        int explicitCols = Math.max(templateCols,
+            Math.min(Math.max(0, areaColumnCount), MAX_GRID_TRACKS));
 
         // Scan items for min (negative implicit) and max (positive implicit) positions
         int minCol = 0;  // Minimum OriginZero position (can be negative)
@@ -2537,11 +2553,15 @@ public class GridComputer {
      * Auto-placed items will cause dynamic expansion during the auto-placement algorithm.
      * This matches Rust's compute_grid_size_estimate behavior.
      */
-    private TrackCounts computeRowCounts(List<GridItem> items, List<TrackSizingFunction> expandedRows) {
-        // Check explicit rows from expanded template (after auto-fill/auto-fit expansion)
+    private TrackCounts computeRowCounts(List<GridItem> items, List<TrackSizingFunction> expandedRows,
+                                         int areaRowCount) {
+        // Check explicit rows from the expanded template (after auto-fill/auto-fit expansion) and
+        // from the grid-template-areas template size (GR-16 / upstream #1024).
         // Clamped into the limited grid (GR-05 / #986).
-        int explicitRows = (expandedRows != null && !expandedRows.isEmpty())
+        int templateRows = (expandedRows != null && !expandedRows.isEmpty())
                            ? Math.min(expandedRows.size(), MAX_GRID_TRACKS) : 0;
+        int explicitRows = Math.max(templateRows,
+            Math.min(Math.max(0, areaRowCount), MAX_GRID_TRACKS));
 
         // Scan items for min (negative implicit) and max (positive implicit) positions
         int minRow = 0;
@@ -4246,21 +4266,26 @@ public class GridComputer {
         int numTracks) {
         int autoCount = autoTracks != null ? autoTracks.size() : 0;
         int explicitStart = counts.negativeImplicit;
-        int explicitEnd = explicitStart + counts.explicit;
+        int templateSize = template != null ? template.size() : 0;
+        // The track template ends before the explicit grid does when grid-template-areas creates
+        // explicit tracks beyond it (unnamed "." cells or areas extending past the template). Those
+        // tracks are sized by grid-auto-* cycling from index 0, forming one contiguous run with the
+        // positive implicit grid (upstream initialize_grid_tracks' grid_area_tracks).
+        int templateEnd = explicitStart + templateSize;
         List<TrackSizingFunction> tracks = new ArrayList<>(Math.max(1, numTracks));
         for (int i = 0; i < numTracks; i++) {
             TrackSizingFunction track;
-            if (i >= explicitStart && i < explicitEnd && template != null) {
-                int templateIndex = i - explicitStart;
-                track = templateIndex < template.size() ? template.get(templateIndex) : null;
+            if (i >= explicitStart && i < templateEnd) {
+                // Explicit track from the track template
+                track = template.get(i - explicitStart);
             } else if (autoCount > 0) {
                 int implicitIndex;
                 if (i < explicitStart) {
                     int distanceFromExplicit = explicitStart - i;
                     implicitIndex = (autoCount - (distanceFromExplicit % autoCount)) % autoCount;
                 } else {
-                    int distanceFromExplicit = i - explicitEnd;
-                    implicitIndex = distanceFromExplicit % autoCount;
+                    int distanceFromTemplate = i - templateEnd;
+                    implicitIndex = distanceFromTemplate % autoCount;
                 }
                 track = autoTracks.get(implicitIndex);
             } else {
@@ -4745,6 +4770,12 @@ public class GridComputer {
             int templateIndex = trackIndex - explicitStart;
             if (template != null && templateIndex < template.size()) {
                 return template.get(templateIndex);
+            }
+            // An explicit track created by grid-template-areas beyond the track template is sized
+            // by grid-auto-*, cycling from index 0 (GR-16 / upstream #1024).
+            if (auto != null && !auto.isEmpty()) {
+                int templateSize = template != null ? template.size() : 0;
+                return auto.get(Math.max(0, templateIndex - templateSize) % auto.size());
             }
         }
 
@@ -6977,8 +7008,8 @@ public class GridComputer {
             expandedRows.add(TrackSizingFunction.auto());
         }
 
-        TrackCounts colCounts = gc.computeColumnCounts(items, expandedCols);
-        TrackCounts rowCounts = gc.computeRowCounts(items, expandedRows);
+        TrackCounts colCounts = gc.computeColumnCounts(items, expandedCols, explicitColumnCount);
+        TrackCounts rowCounts = gc.computeRowCounts(items, expandedRows, explicitRowCount);
 
         gc.autoPlaceItems(items, containerStyle.gridAutoFlow, colCounts, rowCounts);
 
