@@ -12,6 +12,7 @@ import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
+import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
@@ -63,6 +64,13 @@ public class BlockComputer {
          * CSS Sizing 3: replaced percentage min contribution</a>; upstream #1401 (4aca4f49).
          */
         float minContentWidthCap = NaN;
+        /**
+         * The item's raw style height, kept so that {@code height: stretch} can be resolved
+         * against the containing block's content box at layout time. Upstream #1242 (6a36efbe)
+         * resolves only {@code stretch} explicitly in the block axis; the other intrinsic sizing
+         * keywords are equal to the content size and therefore behave like {@code auto}.
+         */
+        TaffyDimension heightStyle;
         FloatSize size;
         FloatSize minSize;
         FloatSize maxSize;
@@ -165,8 +173,18 @@ public class BlockComputer {
         boolean establishesNewBlockFormattingContext =
             style.getDisplay() == TaffyDisplay.FLOW_ROOT;
 
-        // Determine margin collapsing behaviour
-        boolean ownMarginsCollapseWithChildrenStart =
+        // Determine margin collapsing behaviour.
+        //
+        // `childrenMarginsAdjoinOwnEdges` answers "could a child's margin collapse through this
+        // box's block-axis edge?": the box does not establish a new BFC and has neither border
+        // nor padding on that side. `ownMarginsCollapseWithChildren` adds the CSS2 §8.3.1 height
+        // condition on the end edge (a box with a non-auto height does not collapse its bottom
+        // margin with its last child's).
+        //
+        // The split matters for `height: stretch`: a child margin that adjoins the containing
+        // block's edge is treated as zero when resolving the stretch size, while a margin that
+        // cannot collapse through that edge is subtracted from it. Upstream #1242 (6a36efbe).
+        boolean childrenMarginsAdjoinOwnEdgesStart =
             verticalMarginsAreCollapsible.start &&
             !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
@@ -175,18 +193,22 @@ public class BlockComputer {
             padding.top == 0 &&
             border.top == 0;
 
-        boolean ownMarginsCollapseWithChildrenEnd =
+        boolean childrenMarginsAdjoinOwnEdgesEnd =
             verticalMarginsAreCollapsible.end &&
             !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
             style.getPosition() == TaffyPosition.RELATIVE &&
             padding.bottom == 0 &&
-            border.bottom == 0 &&
-            Float.isNaN(sizeStyle.height);
+            border.bottom == 0;
 
-        TaffyLine<Boolean> ownMarginsCollapseWithChildren =
-            new TaffyLine<>(ownMarginsCollapseWithChildrenStart, ownMarginsCollapseWithChildrenEnd);
+        TaffyLine<Boolean> childrenMarginsAdjoinOwnEdges =
+            new TaffyLine<>(childrenMarginsAdjoinOwnEdgesStart, childrenMarginsAdjoinOwnEdgesEnd);
+
+        TaffyLine<Boolean> ownMarginsCollapseWithChildren = new TaffyLine<>(
+            childrenMarginsAdjoinOwnEdgesStart,
+            childrenMarginsAdjoinOwnEdgesEnd && Float.isNaN(sizeStyle.height)
+        );
 
         // `!style.isBlock()` is the "does this box participate in its parent's block formatting
         // context?" test, not "is this block layout?": flow-root is laid out by this class but is
@@ -333,7 +355,8 @@ public class BlockComputer {
             style.getTextAlign(),
             style.justifyItems,
             direction,
-            ownMarginsCollapseWithChildren
+            ownMarginsCollapseWithChildren,
+            childrenMarginsAdjoinOwnEdges
         );
 
         float containerOuterHeight = styledBasedKnownDimensions.height;
@@ -736,6 +759,7 @@ public class BlockComputer {
             item.position = childStyle.getPosition();
             item.inset = childStyle.getInset();
             item.margin = childStyle.getMargin();
+            item.heightStyle = childStyle.getSize().height;
             item.computedSize = new FloatSize(0f, 0f);
             item.staticPosition = new FloatPoint(0f, 0f);
             item.canBeCollapsedThrough = false;
@@ -821,7 +845,8 @@ public class BlockComputer {
         TextAlign textAlign,
         AlignItems justifyItems,
         TaffyDirection direction,
-        TaffyLine<Boolean> ownMarginsCollapseWithChildren) {
+        TaffyLine<Boolean> ownMarginsCollapseWithChildren,
+        TaffyLine<Boolean> childrenMarginsAdjoinOwnEdges) {
 
         TaffyTree tree = layoutComputer.getTree();
         // The containing block of an in-flow child is this container's *content box*: its
@@ -935,8 +960,23 @@ public class BlockComputer {
                     width = containerInnerWidth - itemNonAutoXMarginSum;
                 }
                 width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
+                // A `height: stretch` item fills this container's content box, minus the block
+                // margins that cannot collapse through the corresponding edge of the containing
+                // block. A resolved style height (including one derived through `aspect-ratio`)
+                // wins, as upstream resolves `height.or(keyword_height)`. The remaining intrinsic
+                // sizing keywords are equal to the content size in the block axis, i.e. they
+                // behave like `auto`, so only `stretch` is handled here.
+                // Upstream #1242 (6a36efbe).
+                float keywordHeight = resolveStretchHeight(
+                    item.heightStyle,
+                    childPercentageResolutionHeight,
+                    itemNonAutoMargin,
+                    childrenMarginsAdjoinOwnEdges
+                );
+                float resolvedHeight =
+                    !Float.isNaN(item.size.height) ? item.size.height : keywordHeight;
                 knownDimensions = maybeClamp(
-                    new FloatSize(width, item.size.height),
+                    new FloatSize(width, resolvedHeight),
                     item.minSize,
                     item.maxSize
                 );
@@ -1483,6 +1523,43 @@ public class BlockComputer {
         AlignContent resolved = AlignmentHelper.resolveNormal(alignContent, AlignContent.START);
         AlignContent keyword = AlignmentHelper.applyAlignmentFallback(resolved, freeSpace, 1);
         return AlignmentHelper.computeAlignmentOffset(freeSpace, 1, 0f, keyword, false, true);
+    }
+
+    /**
+     * Resolves the block-axis {@code stretch} sizing keyword for an item's height.
+     *
+     * <p>The stretch size is the containing block's content-box height (the percentage
+     * resolution height already adjusted for the container's content-box inset, BK-08), minus
+     * the item's block-axis margins. A margin is treated as zero when it could collapse through
+     * the corresponding edge of the containing block, i.e. when that edge is flagged in
+     * {@code marginsTreatedAsZero}: the containing block has no border or padding on that side,
+     * does not establish a new BFC and its margins may collapse with its children's.</p>
+     *
+     * <p>Every other sizing keyword ({@code min-content}, {@code max-content}, {@code fit-content})
+     * is equal to the content size in the block axis, which is what an {@code auto} height already
+     * resolves to, so this returns {@code NaN} for them (the caller then leaves the height
+     * indefinite). The same applies when the containing block's content-box height is not known.
+     * Upstream #1242 (6a36efbe), CSS Align / w3c/csswg-drafts#11044.</p>
+     *
+     * @param heightStyle the item's raw style height
+     * @param containerPercentageResolutionHeight the containing block's content-box height, or
+     *        {@link Float#NaN} when it is indefinite
+     * @param itemMargin the item's resolved non-auto margins
+     * @param marginsTreatedAsZero which block-axis margins adjoin the containing block's edges
+     * @return the stretch height, or {@link Float#NaN} when the height is not a resolvable
+     *         {@code stretch} keyword in this context
+     */
+    private static float resolveStretchHeight(
+        TaffyDimension heightStyle,
+        float containerPercentageResolutionHeight,
+        FloatRect itemMargin,
+        TaffyLine<Boolean> marginsTreatedAsZero) {
+        if (heightStyle == null || !heightStyle.isStretch()) return NaN;
+        if (Float.isNaN(containerPercentageResolutionHeight)) return NaN;
+        float height = containerPercentageResolutionHeight;
+        if (!marginsTreatedAsZero.start) height -= itemMargin.top;
+        if (!marginsTreatedAsZero.end) height -= itemMargin.bottom;
+        return height;
     }
 
     // Helper methods
