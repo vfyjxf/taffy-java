@@ -3,6 +3,7 @@ package dev.vfyjxf.taffy;
 import dev.vfyjxf.taffy.style.Clear;
 import dev.vfyjxf.taffy.style.TaffyFloat;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.util.BlockContext;
 import dev.vfyjxf.taffy.util.FloatContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -330,5 +332,129 @@ public class FloatStyleP7Test {
         FloatContext.ContentSlot callerInsets = context.contentSlot(0.0f, 60.0f, 50.0f, Clear.NONE);
         assertEquals(60.0f, callerInsets.x(), EPSILON);
         assertEquals(90.0f, callerInsets.width(), EPSILON);
+    }
+
+    // === BlockContext: offsets, insets and coordinate translation ===
+
+    @Test
+    @DisplayName("BlockContext.root() is the zero-offset BFC root")
+    void rootContextDefaults() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext root = BlockContext.root(floatContext);
+
+        assertTrue(root.isBfcRoot());
+        assertEquals(0.0f, root.yOffset(), EPSILON);
+        assertEquals(0.0f, root.leftInset(), EPSILON);
+        assertEquals(0.0f, root.rightInset(), EPSILON);
+        assertEquals(0.0f, root.contentBoxLeftInset(), EPSILON);
+        assertEquals(0.0f, root.contentBoxRightInset(), EPSILON);
+        assertFalse(root.hasFloats());
+
+        root.setWidth(200.0f);
+        assertEquals(200.0f, floatContext.availableWidth(), EPSILON);
+
+        BlockContext freshRoot = BlockContext.root();
+        freshRoot.setWidth(120.0f);
+        assertEquals(120.0f, freshRoot.findContentSlot(0.0f, Clear.NONE).width(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("subContext accumulates the y-offset and border/content insets")
+    void subContextAccumulatesGeometry() {
+        BlockContext root = BlockContext.root();
+        BlockContext child = root.subContext(30.0f, 10.0f, 20.0f);
+
+        assertFalse(child.isBfcRoot());
+        assertEquals(30.0f, child.yOffset(), EPSILON);
+        assertEquals(10.0f, child.leftInset(), EPSILON);
+        assertEquals(20.0f, child.rightInset(), EPSILON);
+        assertEquals(10.0f, child.contentBoxLeftInset(), EPSILON);
+        assertEquals(20.0f, child.contentBoxRightInset(), EPSILON);
+
+        child.applyContentBoxInset(5.0f, 7.0f);
+        assertEquals(15.0f, child.contentBoxLeftInset(), EPSILON);
+        assertEquals(27.0f, child.contentBoxRightInset(), EPSILON);
+
+        BlockContext grandchild = child.subContext(10.0f, 5.0f, 5.0f);
+        assertEquals(40.0f, grandchild.yOffset(), EPSILON);
+        assertEquals(15.0f, grandchild.leftInset(), EPSILON);
+        assertEquals(25.0f, grandchild.rightInset(), EPSILON);
+        assertEquals(15.0f, grandchild.contentBoxLeftInset(), EPSILON);
+        assertEquals(25.0f, grandchild.contentBoxRightInset(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("BlockContext.addRegion/regionAt translate between local and BFC coordinates")
+    void blockContextRegionRoundTrip() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext root = BlockContext.root(floatContext);
+        BlockContext child = root.subContext(30.0f, 10.0f, 20.0f);
+
+        child.addRegion(0.0f, 20.0f, 15.0f, 5.0f);
+
+        FloatContext.BfcRegion local = child.regionAt(5.0f);
+        assertNotNull(local);
+        assertEquals(0.0f, local.startY(), EPSILON);
+        assertEquals(20.0f, local.endY(), EPSILON);
+        assertEquals(15.0f, local.leftInset(), EPSILON);
+        assertEquals(5.0f, local.rightInset(), EPSILON);
+        assertNull(child.regionAt(20.0f));
+
+        FloatContext.BfcRegion absolute = floatContext.regionAt(35.0f);
+        assertNotNull(absolute);
+        assertEquals(30.0f, absolute.startY(), EPSILON);
+        assertEquals(50.0f, absolute.endY(), EPSILON);
+        assertEquals(25.0f, absolute.leftInset(), EPSILON);
+        assertEquals(25.0f, absolute.rightInset(), EPSILON);
+        assertEquals(absolute, root.regionAt(35.0f));
+    }
+
+    @Test
+    @DisplayName("regionAt clamps local insets when the BFC region is less inset than the block")
+    void blockContextRegionInsetsClampAtZero() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext root = BlockContext.root(floatContext);
+        BlockContext child = root.subContext(10.0f, 30.0f, 40.0f);
+
+        root.addRegion(0.0f, 100.0f, 0.0f, 0.0f);
+
+        FloatContext.BfcRegion local = child.regionAt(15.0f); // BFC y = 25
+        assertNotNull(local);
+        assertEquals(0.0f, local.leftInset(), EPSILON);
+        assertEquals(0.0f, local.rightInset(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("BlockContext queries use local coordinates for floats, clear and content slots")
+    void blockContextQueriesUseLocalCoordinates() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext root = BlockContext.root(floatContext);
+        BlockContext child = root.subContext(30.0f, 10.0f, 20.0f);
+        child.applyContentBoxInset(5.0f, 5.0f);
+        child.setWidth(200.0f);
+        child.addRegion(0.0f, 20.0f, 15.0f, 5.0f);
+
+        assertFalse(child.hasFloats());
+        assertFalse(child.hasActiveFloats(0.0f));
+
+        floatContext.recordFloat(new FloatContext.PlacedFloatedBox(50.0f, 40.0f, 0.0f, 30.0f),
+                                 FloatContext.Direction.LEFT, Clear.NONE);
+
+        assertTrue(child.hasFloats());
+        assertTrue(child.hasActiveFloats(0.0f));
+        assertFalse(child.hasActiveFloats(40.0f));
+        assertEquals(40.0f, child.clearedThreshold(Clear.LEFT), EPSILON);
+
+        FloatContext.ContentSlot slot = child.findContentSlot(0.0f, Clear.NONE);
+        assertEquals(0, slot.segmentId());
+        assertEquals(15.0f, slot.x(), EPSILON);
+        assertEquals(0.0f, slot.y(), EPSILON);
+        assertEquals(150.0f, slot.width(), EPSILON);
+
+        FloatContext.ContentSlot cleared = child.findContentSlot(0.0f, Clear.LEFT);
+        assertEquals(FloatContext.NO_REGION, cleared.segmentId());
+        assertEquals(5.0f, cleared.x(), EPSILON);
+        assertEquals(40.0f, cleared.y(), EPSILON);
+        assertEquals(160.0f, cleared.width(), EPSILON);
     }
 }
