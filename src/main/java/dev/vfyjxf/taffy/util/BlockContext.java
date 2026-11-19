@@ -38,6 +38,12 @@ public final class BlockContext {
     private float contentBoxRightInset;
     private final boolean bfcRoot;
     /**
+     * Whether this context was created for a box that is laid out as a float. A float always
+     * establishes its own block formatting context, so its own floats are contained by its
+     * height rather than escaping into the parent BFC.
+     */
+    private final boolean floatBfcRoot;
+    /**
      * The height that floats in this block's subtree consume, relative to the block's
      * border-top. {@link Float#NEGATIVE_INFINITY} means "no floats placed yet".
      */
@@ -48,7 +54,8 @@ public final class BlockContext {
         float yOffset,
         float leftInset,
         float rightInset,
-        boolean bfcRoot
+        boolean bfcRoot,
+        boolean floatBfcRoot
     ) {
         this.floatContext = floatContext;
         this.yOffset = yOffset;
@@ -57,6 +64,7 @@ public final class BlockContext {
         this.contentBoxLeftInset = leftInset;
         this.contentBoxRightInset = rightInset;
         this.bfcRoot = bfcRoot;
+        this.floatBfcRoot = floatBfcRoot;
     }
 
     /**
@@ -66,7 +74,7 @@ public final class BlockContext {
      */
     public static BlockContext root(FloatContext floatContext) {
         return new BlockContext(Objects.requireNonNull(floatContext, "floatContext"),
-                                0.0f, 0.0f, 0.0f, true);
+                                0.0f, 0.0f, 0.0f, true, false);
     }
 
     /**
@@ -74,6 +82,32 @@ public final class BlockContext {
      */
     public static BlockContext root() {
         return root(new FloatContext());
+    }
+
+    /**
+     * Creates the root context for a box that is being laid out as a float.
+     *
+     * <p>A float always establishes its own block formatting context. The flag is consumed by
+     * {@code BlockComputer} on the immediate child layout and is not inherited by sub-contexts,
+     * so only the float's own height contains its floats.</p>
+     */
+    public static BlockContext rootAsFloat(FloatContext floatContext) {
+        return new BlockContext(Objects.requireNonNull(floatContext, "floatContext"),
+                                0.0f, 0.0f, 0.0f, true, true);
+    }
+
+    /**
+     * Creates the root context for a float with a fresh {@link FloatContext}.
+     */
+    public static BlockContext rootAsFloat() {
+        return rootAsFloat(new FloatContext());
+    }
+
+    /**
+     * Returns whether this context was created for a box laid out as a float.
+     */
+    public boolean isFloatBfcRoot() {
+        return floatBfcRoot;
     }
 
     /**
@@ -94,6 +128,7 @@ public final class BlockContext {
             yOffset + additionalYOffset,
             this.leftInset + leftInset,
             this.rightInset + rightInset,
+            false,
             false
         );
     }
@@ -359,6 +394,19 @@ public final class BlockContext {
             slot.stretchWidth(),
             slot.height()
         );
+    }
+
+    /**
+     * Returns whether any float has been placed in this block's own subtree (or contributed by
+     * a same-BFC child at a known position).
+     *
+     * <p>Use this before merging
+     * {@link #floatedContentHeightContribution()} into an ancestor: the contribution is relative
+     * to this block's border-top, so a child with no floats must not contribute its y position
+     * as if it were float height.</p>
+     */
+    public boolean hasFloatedContentContribution() {
+        return floatContentContribution != Float.NEGATIVE_INFINITY;
     }
 
     /**
