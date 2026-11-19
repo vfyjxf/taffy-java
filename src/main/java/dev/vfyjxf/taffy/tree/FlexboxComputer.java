@@ -23,6 +23,7 @@ import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.util.AlignmentHelper;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
@@ -239,7 +240,7 @@ public class FlexboxComputer {
         TaffySize<AvailableSpace> innerAvailableSpace = determineAvailableSpace(styledBasedKnownDimensions, availableSpace, contentBoxInset);
 
         // Generate flex items
-        List<FlexItem> items = generateFlexItems(node, style, nodeInnerSize, flexDirection);
+        List<FlexItem> items = generateFlexItems(node, style, nodeInnerSize, flexDirection, direction);
 
         // If no flow items, we still need to layout absolute children
         if (items.isEmpty()) {
@@ -526,10 +527,13 @@ public class FlexboxComputer {
         return contentSize;
     }
 
-    private List<FlexItem> generateFlexItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize, FlexDirection flexDirection) {
+    private List<FlexItem> generateFlexItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
+                                             FlexDirection flexDirection, TaffyDirection containerDirection) {
         TaffyTree tree = layoutComputer.getTree();
         List<FlexItem> items = new ArrayList<>();
-        AlignItems defaultAlign = containerStyle.getAlignItems();
+        // ST-04 (#1254): explicit `normal` behaves as `stretch` for flex items. The legacy AUTO
+        // sentinel stays untouched: it means "not specified" and defers to the caller default.
+        AlignItems defaultAlign = AlignmentHelper.resolveNormal(containerStyle.getAlignItems(), AlignItems.STRETCH);
 
         boolean isRow = flexDirection.isRow();
 
@@ -584,11 +588,19 @@ public class FlexboxComputer {
             item.flexGrow = mainIsStretch && childStyle.getFlexGrow() == 0f ? 1f : childStyle.getFlexGrow();
             item.flexShrink = childStyle.getFlexShrink();
 
+            // ST-04 (#1254): an explicit `align-self: normal` overrides the container's
+            // align-items (unlike AUTO, which defers to it), then resolves to STRETCH for flex.
+            // ST-03 (#1077): self-start/self-end resolve against the item's own direction; the
+            // cross axis is the inline axis only for column containers.
             AlignItems selfAlignItems = childStyle.getAlignSelf();
             AlignItems effectiveAlignItems = (selfAlignItems != null && selfAlignItems != AlignItems.AUTO)
                                              ? selfAlignItems
                                              : defaultAlign;
-            item.alignSelf = AlignSelf.fromAlignItems(effectiveAlignItems);
+            effectiveAlignItems = AlignmentHelper.resolveNormal(effectiveAlignItems, AlignItems.STRETCH);
+            AlignSelf alignSelf = AlignSelf.fromAlignItems(effectiveAlignItems);
+            alignSelf = AlignmentHelper.resolveSelfRelative(
+                alignSelf, layoutComputer.resolveDirection(childId), containerDirection, !isRow);
+            item.alignSelf = alignSelf;
 
             // If cross size is auto in style and the item is stretched on the cross axis, do not let aspect-ratio
             // resolve the cross size here. Stretch should be able to set it.
@@ -2000,7 +2012,10 @@ public class FlexboxComputer {
         // This keeps offsetMain as "distance from the logical start" which we then
         // convert to screen coordinates in performFinalLayout.
 
-        JustifyContent justify = containerStyle.getJustifyContent();
+        // ST-04 (#1255): explicit justify-content: normal behaves as flex-start in flex
+        // layout. The legacy AUTO sentinel already resolves to flex-start in the getter.
+        JustifyContent justify = AlignmentHelper.resolveNormal(
+            containerStyle.getJustifyContent(), JustifyContent.FLEX_START);
 
         for (FlexLine line : lines) {
             float usedSpace = 0;
@@ -2050,86 +2065,31 @@ public class FlexboxComputer {
                     }
                 }
             } else {
-                // Apply justify-content
-                // Use compute_alignment_offset logic from Rust - works for both positive and negative space
+                // Apply justify-content through the shared ST-02 helper
+                // (AlignmentHelper.applyAlignmentFallback / computeAlignmentOffset), which mirrors
+                // upstream's apply_alignment_fallback and compute_alignment_offset:
+                // https://www.w3.org/TR/css-align-3/ and https://github.com/w3c/csswg-drafts/issues/10154
                 float initialOffset = 0;
                 float betweenOffset = 0;
                 int itemCount = line.items.size();
 
-                // Apply alignment fallback following CSS spec and Rust implementation
-                // https://www.w3.org/TR/css-align-3/ and https://github.com/w3c/csswg-drafts/issues/10154
-                JustifyContent effectiveJustify = justify;
-                boolean isSafe = false;
+                // FL-08: the distribution fallbacks differ: stretch falls back to plain
+                // flex-start (no implicit safe), while space-* gain implicit safe semantics and
+                // then fall back to logical start on overflow. A safe modifier falls back to
+                // START when the items overflow. Both steps live in the helper.
+                JustifyContent effectiveJustify = AlignmentHelper.applyAlignmentFallback(
+                    justify, freeSpace, itemCount);
 
-                // 1. If there is only a single item or negative free space, fallback distributed alignments
-                if (itemCount <= 1 || freeSpace <= 0) {
-                    switch (justify) {
-                        case STRETCH:
-                            // FL-08: stretch falls back to plain flex-start (no implicit safe), so it
-                            // packs to the flex-start edge even when the items overflow (row-reverse).
-                            effectiveJustify = JustifyContent.FLEX_START;
-                            break;
-                        case SPACE_BETWEEN:
-                            effectiveJustify = JustifyContent.FLEX_START;
-                            isSafe = true;
-                            break;
-                        case SPACE_AROUND:
-                        case SPACE_EVENLY:
-                            effectiveJustify = JustifyContent.CENTER;
-                            isSafe = true;
-                            break;
-                        default:
-                            break;
-                    }
-                }
+                // Calculate initial offset (for first item). For RTL, we DON'T adjust START/END
+                // here; the RTL coordinate transformation happens in performFinalLayout.
+                initialOffset = AlignmentHelper.computeAlignmentOffset(
+                    freeSpace, itemCount, 0f, effectiveJustify, isReverse, true);
 
-                // 2. If free space is negative and "safe" alignment, fallback to Start
-                if (freeSpace <= 0 && isSafe) {
-                    effectiveJustify = JustifyContent.START;
-                }
-
-                // Calculate initial offset (for first item)
-                // Note: For RTL, we DON'T adjust START/END here.
-                // RTL coordinate transformation happens in performFinalLayout.
-                switch (effectiveJustify) {
-                    case START -> initialOffset = 0;
-                    case STRETCH -> initialOffset = 0; // remains stretch only when it does not overflow
-                    case SPACE_BETWEEN -> initialOffset = 0;
-                    case FLEX_START -> initialOffset = isReverse ? freeSpace : 0;
-                    case END -> initialOffset = freeSpace;
-                    case FLEX_END -> initialOffset = isReverse ? 0 : freeSpace;
-                    case CENTER -> initialOffset = freeSpace / 2;
-                    case SPACE_AROUND -> {
-                        if (freeSpace >= 0) {
-                            initialOffset = (freeSpace / itemCount) / 2;
-                        } else {
-                            initialOffset = freeSpace / 2;
-                        }
-                    }
-                    case SPACE_EVENLY -> {
-                        if (freeSpace >= 0) {
-                            initialOffset = freeSpace / (itemCount + 1);
-                        } else {
-                            initialOffset = freeSpace / 2;
-                        }
-                    }
-                }
-
-                // Calculate between offset (for subsequent items) - only for positive space
-                float effectiveFreeSpace = Math.max(freeSpace, 0);
-                switch (effectiveJustify) {
-                    case SPACE_BETWEEN -> {
-                        if (itemCount > 1) {
-                            betweenOffset = effectiveFreeSpace / (itemCount - 1);
-                        }
-                    }
-                    case SPACE_AROUND -> {
-                        if (itemCount > 0) {
-                            betweenOffset = effectiveFreeSpace / itemCount;
-                        }
-                    }
-                    case SPACE_EVENLY -> betweenOffset = effectiveFreeSpace / (itemCount + 1);
-                }
+                // Calculate between offset (for subsequent items) - only for positive space.
+                // The fixed main-axis gap is added by performFinalLayout, so pass gap = 0: the
+                // helper's non-first branch then returns just the distributed extra space.
+                betweenOffset = AlignmentHelper.computeAlignmentOffset(
+                    freeSpace, itemCount, 0f, effectiveJustify, isReverse, false);
 
                 // Set offsetMain for each item
                 // First item gets initialOffset, subsequent items get accumulated betweenOffset
@@ -2220,7 +2180,13 @@ public class FlexboxComputer {
      * {@code START}/{@code END} are physical (they never flip with wrap-reverse), while
      * {@code FLEX_START}/{@code FLEX_END} are flex-relative (they flip). See PA-02.
      * Column containers use the same wrap-reverse flip for the flex-relative values here;
-     * any column/writing-mode refinements are tracked separately (P6).
+     * their RTL cross-axis mirroring is applied by {@link #performFinalLayout}, which stores the
+     * logical cross offset and computes the physical x from the right edge.
+     * <p>
+     * ST-03 (#1077): {@code SELF_START}/{@code SELF_END} have already been resolved to
+     * {@code START}/{@code END} against the item's own direction in {@link #generateFlexItems}.
+     * ST-02 (#952): a {@code SAFE_*} value whose item overflows the line falls back to logical
+     * {@code START}; a value that fits keeps its requested position with the modifier dropped.
      * <p>
      * {@code maxBaselineToBottomDistance} is the largest distance between a baseline-participating
      * item's baseline and its outer cross-end edge; it anchors the baseline group to the cross-start
@@ -2233,7 +2199,9 @@ public class FlexboxComputer {
         float maxBaselineToBottomDistance,
         boolean isRow,
         boolean isWrapReverse) {
-        AlignSelf alignSelf = item.alignSelf;
+        // ST-02 (#952): resolve the safe overflow-position modifier once; the switch below then
+        // only sees bare keywords (safe start/end/flex-*/center collapse to START on overflow).
+        AlignSelf alignSelf = AlignmentHelper.resolveSelfSafety(item.alignSelf, freeSpace < 0f);
 
         switch (alignSelf) {
             case START:
@@ -2294,8 +2262,11 @@ public class FlexboxComputer {
                 line.offsetCross = 0;
             }
 
-            // For STRETCH with single line no-wrap, still distribute extra space to line
-            AlignContent alignContent = style.getAlignContent();
+            // For STRETCH with single line no-wrap, still distribute extra space to line.
+            // ST-04 (#1255): explicit normal behaves as stretch for flex containers; AUTO keeps
+            // its legacy "not specified" default of stretch as well.
+            AlignContent alignContent = AlignmentHelper.resolveNormal(
+                style.getAlignContent(), AlignContent.STRETCH);
             if (alignContent == null || alignContent == AlignContent.AUTO) {
                 alignContent = AlignContent.STRETCH;
             }
@@ -2325,7 +2296,9 @@ public class FlexboxComputer {
         // The raw align-content value controls whether we stretch line cross sizes.
         // This matches Rust where line stretching is handled by `handle_align_content_stretch`
         // and line offsets are computed later using a potentially-fallback alignment mode.
-        AlignContent rawAlignContent = style.getAlignContent();
+        // ST-04 (#1255): explicit normal behaves as stretch for flex containers.
+        AlignContent rawAlignContent = AlignmentHelper.resolveNormal(
+            style.getAlignContent(), AlignContent.STRETCH);
         if (rawAlignContent == null || rawAlignContent == AlignContent.AUTO) {
             rawAlignContent = AlignContent.STRETCH;
         }
@@ -2342,74 +2315,22 @@ public class FlexboxComputer {
 
         // Apply alignment fallback per Rust `apply_alignment_fallback`
         // https://www.w3.org/TR/css-align-3/ and https://github.com/w3c/csswg-drafts/issues/10154
-        AlignContent alignContent = rawAlignContent;
-        boolean isSafe = false;
-
-        if (numLines <= 1 || freeSpace <= 0) {
-            switch (alignContent) {
-                case STRETCH -> {
-                    // FL-08 (#1363): stretch falls back to plain flex-start (the safety modifier is
-                    // preserved, but no implicit safe is added), so an overflowing line packs to the
-                    // flex-start edge -- the bottom edge in a wrap-reverse container.
-                    alignContent = AlignContent.FLEX_START;
-                }
-                case SPACE_BETWEEN -> {
-                    alignContent = AlignContent.FLEX_START;
-                    isSafe = true;
-                }
-                case SPACE_AROUND, SPACE_EVENLY -> {
-                    alignContent = AlignContent.CENTER;
-                    isSafe = true;
-                }
-                default -> {
-                    // no-op
-                }
-            }
-        }
-
-        if (freeSpace <= 0 && isSafe) {
-            alignContent = AlignContent.START;
-        }
+        // FL-08 (#1363): stretch falls back to plain flex-start (no implicit safe), while the
+        // space-* keywords gain implicit safe semantics; ST-02 (#952) then falls a safe value back
+        // to logical start on overflow. All three steps live in the shared helper.
+        AlignContent alignContent = AlignmentHelper.applyAlignmentFallback(
+            rawAlignContent, freeSpace, numLines);
 
         // Compute line offsets following Rust `compute_alignment_offset` semantics.
         // Rust stores offsets as *deltas* between lines and accumulates them during the final layout pass.
         // Java stores `line.offsetCross` as an *absolute* offset from the content-box cross start,
         // so we accumulate into a cursor here.
-        float initialOffset;
-        switch (alignContent) {
-            case START, SPACE_BETWEEN -> initialOffset = 0;
-            case FLEX_START -> initialOffset = isWrapReverse ? freeSpace : 0;
-            case END -> initialOffset = freeSpace;
-            case FLEX_END -> initialOffset = isWrapReverse ? 0 : freeSpace;
-            case CENTER -> initialOffset = freeSpace / 2;
-            case STRETCH -> initialOffset = 0;
-            case SPACE_AROUND -> {
-                if (freeSpace >= 0) {
-                    initialOffset = (freeSpace / numLines) / 2;
-                } else {
-                    initialOffset = freeSpace / 2;
-                }
-            }
-            case SPACE_EVENLY -> {
-                if (freeSpace >= 0) {
-                    initialOffset = freeSpace / (numLines + 1);
-                } else {
-                    initialOffset = freeSpace / 2;
-                }
-            }
-            default -> initialOffset = 0;
-        }
-
-        float effectiveFreeSpace = Math.max(freeSpace, 0);
-        float betweenExtra = 0;
-        switch (alignContent) {
-            case SPACE_BETWEEN -> betweenExtra = effectiveFreeSpace / (numLines - 1);
-            case SPACE_AROUND -> betweenExtra = effectiveFreeSpace / numLines;
-            case SPACE_EVENLY -> betweenExtra = effectiveFreeSpace / (numLines + 1);
-            default -> {
-                // no-op
-            }
-        }
+        // The cross-axis equivalent of justify-content: layoutIsFlexReversed is wrap-reverse.
+        // The fixed cross gap is added separately below, so pass gap = 0.
+        float initialOffset = AlignmentHelper.computeAlignmentOffset(
+            freeSpace, numLines, 0f, alignContent, isWrapReverse, true);
+        float betweenExtra = AlignmentHelper.computeAlignmentOffset(
+            freeSpace, numLines, 0f, alignContent, isWrapReverse, false);
 
         // Apply offsets to lines in the same order that `performFinalLayout` will consume them.
         // When wrap-reverse is enabled, lines are laid out in reverse order.
@@ -2442,11 +2363,13 @@ public class FlexboxComputer {
             float lineCrossSize = line.crossSize;
 
             for (FlexItem item : line.items) {
-                // Check if item should stretch
+                // Check if item should stretch. Items are generated with their align-self already
+                // resolved (AUTO inherited, NORMAL/SELF_* resolved), so this fallback only guards
+                // callers that construct items differently.
                 AlignSelf alignSelf = item.alignSelf;
-                // AlignSelf.AUTO (and legacy null) means: use parent's align-items
                 if (alignSelf == null || alignSelf == AlignSelf.AUTO) {
-                    AlignItems alignItems = containerStyle.getAlignItems();
+                    AlignItems alignItems = AlignmentHelper.resolveNormal(
+                        containerStyle.getAlignItems(), AlignItems.STRETCH);
                     alignSelf = (alignItems != null) ? AlignSelf.fromAlignItems(alignItems) : AlignSelf.STRETCH;
                 }
 
