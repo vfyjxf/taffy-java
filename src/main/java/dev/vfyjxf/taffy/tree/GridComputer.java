@@ -28,6 +28,7 @@ import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.tree.grid.NamedLineResolver;
+import dev.vfyjxf.taffy.util.AlignmentHelper;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
@@ -1440,31 +1441,22 @@ public class GridComputer {
     /**
      * The offset of the (single) grid line of an axis without any non-collapsed track. The distribution
      * keywords fall back to their single-item fallbacks (space-* behave like center, stretch and
-     * space-between behave like start), matching upstream's {@code apply_alignment_fallback}
-     * (GR-14 / #1078).
+     * space-between behave like start) and a {@code safe} keyword falls back to start on overflow,
+     * matching upstream's {@code apply_alignment_fallback} + {@code compute_alignment_offset} for an
+     * empty grid (GR-14 / #1078, ST-02 / #952).
      */
     private static float calculateEmptyAxisAlignmentOffset(AlignContent alignment, float freeSpace) {
         if (alignment == null) return 0;
-        return switch (alignment) {
-            // SAFE_* map to their non-safe keyword; the overflow fallback is applied by
-            // AlignmentHelper at the call site before this helper is wired in.
-            case CENTER, SAFE_CENTER -> freeSpace / 2;
-            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
-            case SPACE_AROUND, SPACE_EVENLY -> freeSpace / 2;
-            case AUTO, NORMAL, START, FLEX_START, STRETCH, SPACE_BETWEEN,
-                 SAFE_START, SAFE_FLEX_START -> 0;
-        };
+        AlignContent effective = AlignmentHelper.applyAlignmentFallback(
+            resolveGridContentAlignment(alignment), freeSpace, 0);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, 0, 0f, effective, false, true);
     }
 
     private static float calculateEmptyAxisAlignmentOffset(JustifyContent alignment, float freeSpace) {
         if (alignment == null) return 0;
-        return switch (alignment) {
-            case CENTER, SAFE_CENTER -> freeSpace / 2;
-            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
-            case SPACE_AROUND, SPACE_EVENLY -> freeSpace / 2;
-            case NORMAL, START, FLEX_START, STRETCH, SPACE_BETWEEN,
-                 SAFE_START, SAFE_FLEX_START -> 0;
-        };
+        JustifyContent effective = AlignmentHelper.applyAlignmentFallback(
+            resolveGridContentAlignment(alignment), freeSpace, 0);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, 0, 0f, effective, false, true);
     }
 
     /**
@@ -1644,22 +1636,24 @@ public class GridComputer {
             // have yet.
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
 
-            // Alignment for track sizing: use child's preference, or parent's default, or STRETCH
-            // This merged value is used during track sizing (computeItemKnownDimensions).
-            // Final placement (placeItems) re-reads raw values to apply aspectRatio rules.
+            // Alignment for track sizing: use child's preference, or parent's default, or STRETCH.
+            // This merged value is used during track sizing (computeItemKnownDimensions), where
+            // upstream's GridItem::is_stretch_aligned treats both 'stretch' and (non-replaced)
+            // 'normal' as stretching (#1254). Final placement (placeItems) re-reads the raw values to
+            // apply the grid item 'normal' rules and self-relative resolution.
             AlignItems parentAlignItems = containerStyle.getAlignItems();
             AlignItems parentJustifyItems = containerStyle.justifyItems;
-            AlignItems resolvedAlignItems = (parentAlignItems != null && parentAlignItems != AlignItems.AUTO)
-                                            ? parentAlignItems
-                                            : AlignItems.STRETCH;
-            AlignItems resolvedJustifyItems = (parentJustifyItems != null && parentJustifyItems != AlignItems.AUTO)
-                                              ? parentJustifyItems
-                                              : AlignItems.STRETCH;
+            AlignItems resolvedAlignItems = resolveTrackSizingAlignment(parentAlignItems);
+            AlignItems resolvedJustifyItems = resolveTrackSizingAlignment(parentJustifyItems);
 
             AlignItems rawAlignSelf = childStyle.getAlignSelf();
             AlignItems rawJustifySelf = childStyle.justifySelf;
-            item.alignSelf = (rawAlignSelf != null && rawAlignSelf != AlignItems.AUTO) ? rawAlignSelf : resolvedAlignItems;
-            item.justifySelf = (rawJustifySelf != null && rawJustifySelf != AlignItems.AUTO) ? rawJustifySelf : resolvedJustifyItems;
+            item.alignSelf = (rawAlignSelf != null && rawAlignSelf != AlignItems.AUTO)
+                             ? resolveTrackSizingAlignment(rawAlignSelf)
+                             : resolvedAlignItems;
+            item.justifySelf = (rawJustifySelf != null && rawJustifySelf != AlignItems.AUTO)
+                               ? resolveTrackSizingAlignment(rawJustifySelf)
+                               : resolvedJustifyItems;
 
             // Grid placement - properly handle LINE, SPAN, NAMED_LINE, NAMED_SPAN, and AUTO
             GridPlacement colStart = childStyle.getGridColumnStart();
@@ -1694,6 +1688,25 @@ public class GridComputer {
         }
 
         return items;
+    }
+
+    /**
+     * Resolve the alignment used for <em>track sizing</em> (upstream {@code GridItem::new} plus
+     * {@code is_stretch_aligned}, #1254).
+     *
+     * <p>An unset ({@link AlignItems#AUTO}) or explicit {@link AlignItems#NORMAL} alignment stretches
+     * during track sizing, matching upstream (which treats {@code normal} as {@code stretch} here
+     * regardless of the item's preferred size). Other keywords are preserved, in particular
+     * {@code baseline} and {@code self-start}/{@code self-end}.</p>
+     *
+     * @param alignment the item-level alignment, or the container's align-items/justify-items
+     * @return the alignment to use during track sizing
+     */
+    private static AlignItems resolveTrackSizingAlignment(AlignItems alignment) {
+        if (alignment == null || alignment == AlignItems.AUTO || alignment == AlignItems.NORMAL) {
+            return AlignItems.STRETCH;
+        }
+        return alignment;
     }
 
     /**
@@ -3742,8 +3755,12 @@ public class GridComputer {
                     // Key difference from PHASE 1: stretch_auto_tracks recalculates free space from scratch
                     // using axis_available_space_for_expansion (which is inner_node_size when definite).
                     // This is NOT the remaining space from PHASE 1 - it's a fresh calculation.
-                    AlignContent justifyContent = style.justifyContent;  // AUTO/null means default = STRETCH for Grid
-                    boolean shouldStretch = (justifyContent == null || justifyContent == AlignContent.AUTO || justifyContent == AlignContent.STRETCH);
+                    // AUTO/null means the legacy grid default = STRETCH; an explicit NORMAL behaves
+                    // as STRETCH for grid containers too (upstream #1255 / grid_align_content).
+                    AlignContent justifyContent = style.justifyContent;
+                    boolean shouldStretch = (justifyContent == null || justifyContent == AlignContent.AUTO
+                                             || justifyContent == AlignContent.NORMAL
+                                             || justifyContent == AlignContent.STRETCH);
                     if (!Float.isNaN(nodeInnerSize.width) && shouldStretch) {
                         // Recalculate free space for stretch (not using remainingSpace from PHASE 1)
                         float stretchUsedSpace = 0;
@@ -4518,6 +4535,45 @@ public class GridComputer {
     }
 
     /**
+     * Merges and resolves the self-alignment of one grid item (upstream
+     * {@code align_and_position_item}, #1077/#1254).
+     *
+     * <p>An unset ({@link AlignItems#AUTO}) item-level value inherits the container's
+     * align-items/justify-items; an explicit item value overrides it. The merged value is then
+     * resolved against the item's own direction ({@code self-start}/{@code self-end}, #1077), and a
+     * {@code normal} keyword (explicit or inherited) uses the layout-mode default: a grid item with a
+     * definite size in the axis (or a preferred aspect ratio in the block axis) is start-aligned,
+     * everything else stretches (#1254). The legacy unset sentinel keeps the same contextual default
+     * as before this batch, so legacy values are unaffected.</p>
+     *
+     * @param itemAlignment      the item's align-self/justify-self
+     * @param containerAlignment the container's align-items/justify-items
+     * @param axisIsInline       true for the inline (column) axis, false for the block (row) axis
+     * @param itemDirection      the item's resolved direction
+     * @param containerDirection the container's resolved direction
+     * @param hasDefiniteSize    whether the item has a definite size in this axis
+     * @param hasAspectRatio     whether the item has a preferred aspect ratio (block axis only)
+     * @return the resolved alignment, never null
+     */
+    private static AlignItems resolveGridItemAlignment(
+        AlignItems itemAlignment,
+        AlignItems containerAlignment,
+        boolean axisIsInline,
+        TaffyDirection itemDirection,
+        TaffyDirection containerDirection,
+        boolean hasDefiniteSize,
+        boolean hasAspectRatio) {
+
+        AlignItems merged = AlignmentHelper.isUnset(itemAlignment) ? containerAlignment : itemAlignment;
+        merged = AlignmentHelper.resolveSelfRelative(merged, itemDirection, containerDirection, axisIsInline);
+        if (AlignmentHelper.isUnset(merged) || AlignmentHelper.isNormal(merged)) {
+            boolean startAligned = axisIsInline ? hasDefiniteSize : hasDefiniteSize || hasAspectRatio;
+            return startAligned ? AlignItems.START : AlignItems.STRETCH;
+        }
+        return merged;
+    }
+
+    /**
      * Sizes, aligns and positions the in-flow items, performing their final layout.
      *
      * <p>Every item's scrollable overflow is turned into a contribution in the container's
@@ -4740,31 +4796,35 @@ public class GridComputer {
             boolean hasHorizontalAutoMargin = marginStyle.left.isAuto() || marginStyle.right.isAuto();
             boolean hasVerticalAutoMargin = marginStyle.top.isAuto() || marginStyle.bottom.isAuto();
 
-            // Determine alignment following CSS Grid spec (alignment.rs):
-            // Re-read raw alignment from style (not the merged value from item)
-            // 1. Child's explicit alignment (alignSelf/justifySelf)
-            // 2. Container's alignment (alignItems/justifyItems) - passed as defaultAlignItems/defaultJustifyItems
-            // 3. If both are null, apply special rules based on aspectRatio/explicit size
-            AlignItems childAlignSelf = childStyle.getAlignSelf();
-            AlignItems childJustifySelf = childStyle.justifySelf;
+            // Determine alignment following CSS Grid spec (alignment.rs) and the upstream
+            // #1077/#1254/#952 model:
+            // 1. The item's explicit align-self/justify-self wins; unset (AUTO) inherits the
+            //    container's align-items/justify-items (defaultAlignItems/defaultJustifyItems).
+            // 2. self-start/self-end resolve against the item's own direction: the inline axis flips
+            //    when the item's direction differs from the container's, the block axis never flips
+            //    in horizontal-tb.
+            // 3. An explicit (or inherited) 'normal' is layout-mode dependent: START when the item has
+            //    a definite size in the axis (or a preferred aspect ratio in the block axis), STRETCH
+            //    otherwise. The legacy unset sentinel keeps exactly the same contextual default.
+            TaffyDirection containerDirection = isRtl ? TaffyDirection.RTL : TaffyDirection.LTR;
+            TaffyDirection itemDirection = layoutComputer.resolveDirection(item.nodeId);
 
-            AlignItems alignY = childAlignSelf;
-            if (alignY == null || alignY == AlignItems.AUTO) {
-                alignY = defaultAlignItems;
-            }
-            if (alignY == null || alignY == AlignItems.AUTO) {
-                // Per CSS Grid spec: If height is set OR aspect-ratio is set, default is START, otherwise STRETCH
-                alignY = (!Float.isNaN(item.size.height) || (item.aspectRatio != null && !Float.isNaN(item.aspectRatio))) ? AlignItems.START : AlignItems.STRETCH;
-            }
-
-            AlignItems alignX = childJustifySelf;
-            if (alignX == null || alignX == AlignItems.AUTO) {
-                alignX = defaultJustifyItems;
-            }
-            if (alignX == null || alignX == AlignItems.AUTO) {
-                // Per CSS Grid spec: If width is set, default is START, otherwise STRETCH
-                alignX = (!Float.isNaN(item.size.width)) ? AlignItems.START : AlignItems.STRETCH;
-            }
+            AlignItems alignY = resolveGridItemAlignment(
+                childStyle.getAlignSelf(),
+                defaultAlignItems,
+                false,
+                itemDirection,
+                containerDirection,
+                !Float.isNaN(item.size.height),
+                item.aspectRatio != null && !Float.isNaN(item.aspectRatio));
+            AlignItems alignX = resolveGridItemAlignment(
+                childStyle.justifySelf,
+                defaultJustifyItems,
+                true,
+                itemDirection,
+                containerDirection,
+                !Float.isNaN(item.size.width),
+                false);
 
             // Per CSS Grid spec: auto margins prevent stretch
             // When margin is auto, the item should use its content size and auto margins absorb free space
@@ -4854,6 +4914,19 @@ public class GridComputer {
             float marginRight = marginStyle.right.isAuto() ? horizontalAutoMarginSize : margin.right;
             float marginTop = marginStyle.top.isAuto() ? verticalAutoMarginSize : margin.top;
             float marginBottom = marginStyle.bottom.isAuto() ? verticalAutoMarginSize : margin.bottom;
+
+            // A 'safe' overflow-position keyword falls back to logical start when the item's margin box
+            // overflows its grid area (upstream #952, CSS Box Alignment 4.3). Auto margins absorb the
+            // free space and therefore do not count; the baseline shim acts like an extra top margin.
+            // Non-safe keywords are only stripped of the safety modifier, so legacy geometry is
+            // unchanged.
+            float nonAutoMarginX = (marginStyle.left.isAuto() ? 0f : marginLeft)
+                                   + (marginStyle.right.isAuto() ? 0f : marginRight);
+            float nonAutoMarginY = (marginStyle.top.isAuto() ? 0f : marginTop)
+                                   + (marginStyle.bottom.isAuto() ? 0f : marginBottom)
+                                   + item.baselineShim;
+            alignX = AlignmentHelper.resolveSelfSafety(alignX, width + nonAutoMarginX > trackWidth);
+            alignY = AlignmentHelper.resolveSelfSafety(alignY, height + nonAutoMarginY > trackHeight);
 
             // Calculate position based on alignment
             float x = trackX + marginLeft;
@@ -5190,9 +5263,22 @@ public class GridComputer {
                 minSz, maxSz
             );
 
-            // Get alignment styles
-            AlignItems justifySelf = childStyle.justifySelf;
-            AlignItems alignSelf = childStyle.getAlignSelf();
+            // Resolve the item's explicit alignment keywords for the out-of-flow path (upstream
+            // #1077/#952). self-start/self-end resolve against the item's own direction, an explicit
+            // 'normal' follows the grid-item default, and a 'safe' keyword falls back to logical start
+            // when the box overflows its grid area. The container fallback (justify-items/align-items)
+            // for out-of-flow boxes belongs to the OOF positioning model (OF-05/P6), so it is not
+            // applied here; legacy keyword geometry below is unchanged.
+            TaffyDirection absposItemDirection = layoutComputer.resolveDirection(childId);
+            TaffyDirection absposContainerDirection = isRtl ? TaffyDirection.RTL : TaffyDirection.LTR;
+            AlignItems justifySelf = AlignmentHelper.resolveNormal(
+                AlignmentHelper.resolveSelfRelative(
+                    childStyle.justifySelf, absposItemDirection, absposContainerDirection, true),
+                AlignItems.START);
+            AlignItems alignSelf = AlignmentHelper.resolveNormal(
+                AlignmentHelper.resolveSelfRelative(
+                    childStyle.getAlignSelf(), absposItemDirection, absposContainerDirection, false),
+                AlignItems.START);
 
             // The grid area is already resolved to physical container coordinates (the logical start/end
             // lines were mirrored for RTL in resolveAbsoluteGridArea), so only the self-alignment keywords
@@ -5209,10 +5295,13 @@ public class GridComputer {
                 // Use alignment-based offset. In RTL the inline-start edge is the right edge of the area,
                 // so START/FLEX_START resolve to the right and END/FLEX_END to the left.
                 float freeSpaceX = effectiveAreaWidth - finalSize.width - margin.left - margin.right;
-                boolean alignsToStart = justifySelf == null || justifySelf == AlignItems.START
-                                        || justifySelf == AlignItems.FLEX_START || justifySelf == AlignItems.AUTO;
-                boolean alignsToEnd = justifySelf == AlignItems.END || justifySelf == AlignItems.FLEX_END;
-                if (justifySelf == AlignItems.CENTER) {
+                AlignItems effectiveJustifySelf = AlignmentHelper.resolveSelfSafety(justifySelf, freeSpaceX < 0f);
+                boolean alignsToStart = AlignmentHelper.isUnset(effectiveJustifySelf)
+                                        || effectiveJustifySelf == AlignItems.START
+                                        || effectiveJustifySelf == AlignItems.FLEX_START;
+                boolean alignsToEnd = effectiveJustifySelf == AlignItems.END
+                                      || effectiveJustifySelf == AlignItems.FLEX_END;
+                if (effectiveJustifySelf == AlignItems.CENTER) {
                     xInArea = freeSpaceX / 2 + margin.left;
                 } else if (isRtl ? alignsToStart : alignsToEnd) {
                     xInArea = freeSpaceX + margin.left;
@@ -5231,9 +5320,10 @@ public class GridComputer {
             } else {
                 // Use alignment-based offset
                 float freeSpaceY = areaHeight - finalSize.height - margin.top - margin.bottom;
-                if (alignSelf == AlignItems.END || alignSelf == AlignItems.FLEX_END) {
+                AlignItems effectiveAlignSelf = AlignmentHelper.resolveSelfSafety(alignSelf, freeSpaceY < 0f);
+                if (effectiveAlignSelf == AlignItems.END || effectiveAlignSelf == AlignItems.FLEX_END) {
                     yInArea = freeSpaceY + margin.top;
-                } else if (alignSelf == AlignItems.CENTER) {
+                } else if (effectiveAlignSelf == AlignItems.CENTER) {
                     yInArea = freeSpaceY / 2 + margin.top;
                 } else {
                     // START, FLEX_START, STRETCH, BASELINE - all start at margin.top
@@ -5754,104 +5844,83 @@ public class GridComputer {
     }
 
     /**
-     * Calculate the initial offset for content alignment (align-content/justify-content)
+     * Resolve an explicit {@code normal} for grid content alignment to the grid default
+     * ({@code stretch}, upstream {@code grid_align_content} / #1255). The legacy
+     * {@link AlignContent#AUTO} sentinel is left untouched: it means "not specified" and keeps the
+     * pre-P5 grid default (auto tracks stretch, zero alignment offset).
      */
-    private float calculateContentAlignmentOffset(AlignContent alignment, float freeSpace, int numTracks) {
-        if (alignment == null || numTracks <= 0) {
-            return 0;
-        }
+    private static AlignContent resolveGridContentAlignment(AlignContent alignment) {
+        return AlignmentHelper.resolveNormal(alignment, AlignContent.STRETCH);
+    }
 
-        // For negative space, only CENTER and END can have non-zero offset
-        return switch (alignment) {
-            case CENTER -> freeSpace / 2;  // Works for both positive and negative space
-            case END, FLEX_END -> freeSpace;  // Works for both positive and negative space
-            case SPACE_AROUND -> {
-                // Only apply when positive space
-                if (freeSpace > 0) {
-                    yield freeSpace / (numTracks * 2);
-                }
-                yield 0;
-            }
-            case SPACE_EVENLY -> {
-                if (freeSpace > 0) {
-                    yield freeSpace / (numTracks + 1);
-                }
-                yield 0;
-            }
-            default -> 0;
-        };
+    /** Resolves an explicit {@code normal} for grid content alignment to {@code stretch}. */
+    private static JustifyContent resolveGridContentAlignment(JustifyContent alignment) {
+        return AlignmentHelper.resolveNormal(alignment, JustifyContent.STRETCH);
     }
 
     /**
-     * Calculate the initial offset for justify-content
+     * Calculate the initial offset for content alignment (align-content/justify-content).
+     *
+     * <p>The keyword and its safety modifier are resolved by the shared {@link AlignmentHelper}
+     * (upstream {@code apply_alignment_fallback} + {@code compute_alignment_offset}): explicit
+     * {@code normal} behaves as {@code stretch} for grid containers, the distribution keywords use
+     * their single-subject fallbacks, and a {@code safe} keyword falls back to logical start when
+     * the tracks overflow (ST-02 / #952, ST-04 / #1255). Legacy keyword geometry is unchanged.</p>
+     */
+    private float calculateContentAlignmentOffset(AlignContent alignment, float freeSpace, int numTracks) {
+        if (alignment == null || numTracks <= 0) {
+            // An axis without non-collapsed tracks has a single grid line; see
+            // calculateEmptyAxisAlignmentOffset, which the absolute-positioning path uses.
+            return 0;
+        }
+        AlignContent effective = AlignmentHelper.applyAlignmentFallback(
+            resolveGridContentAlignment(alignment), freeSpace, numTracks);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, numTracks, 0f, effective, false, true);
+    }
+
+    /**
+     * Calculate the initial offset for justify-content. See
+     * {@link #calculateContentAlignmentOffset(AlignContent, float, int)} for the resolution rules.
      */
     private float calculateContentAlignmentOffset(JustifyContent alignment, float freeSpace, int numTracks) {
         if (alignment == null || numTracks <= 0) {
             return 0;
         }
-
-        return switch (alignment) {
-            case CENTER, SAFE_CENTER -> freeSpace / 2;
-            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
-            case SPACE_AROUND -> {
-                if (freeSpace > 0) {
-                    yield freeSpace / (numTracks * 2);
-                }
-                yield 0;
-            }
-            case SPACE_EVENLY -> {
-                if (freeSpace > 0) {
-                    yield freeSpace / (numTracks + 1);
-                }
-                yield 0;
-            }
-            // STRETCH, START, FLEX_START, SPACE_BETWEEN: offset is 0 (content starts at the beginning)
-            // Per CSS Grid spec: stretch distributes space to tracks, not to gutters
-            // SPACE_BETWEEN also has offset 0 (first item at start, last at end)
-            case NORMAL, STRETCH, START, FLEX_START, SPACE_BETWEEN,
-                 SAFE_START, SAFE_FLEX_START -> 0;
-        };
+        JustifyContent effective = AlignmentHelper.applyAlignmentFallback(
+            resolveGridContentAlignment(alignment), freeSpace, numTracks);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, numTracks, 0f, effective, false, true);
     }
 
     /**
-     * Calculate adjusted gap for space-between, space-around, space-evenly
+     * Calculate adjusted gap for space-between, space-around, space-evenly.
+     *
+     * <p>The inter-subject delta is computed by the shared
+     * {@link AlignmentHelper#computeAlignmentOffset(float, int, float, AlignContent, boolean, boolean)},
+     * after the keyword/safety fallbacks (explicit {@code normal} is {@code stretch}, and an
+     * overflowing {@code safe} distribution keyword has already fallen back to its positional
+     * keyword). The guard preserves the historical behaviour: only positive free space between two
+     * or more tracks is distributed.</p>
      */
     private float calculateAdjustedGap(AlignContent alignment, float freeSpace, int numTracks, float originalGap) {
         if (alignment == null || freeSpace <= 0 || numTracks <= 1) {
             return originalGap;
         }
-
-        return switch (alignment) {
-            case SPACE_BETWEEN ->
-                // All free space goes between tracks
-                originalGap + freeSpace / (numTracks - 1);
-            case SPACE_AROUND ->
-                // Each track gets freeSpace/(numTracks*2) on each side
-                // Gap between = original + 2 * (freeSpace / (numTracks*2)) = original + freeSpace/numTracks
-                originalGap + freeSpace / numTracks;
-            case SPACE_EVENLY ->
-                // Equal space between all
-                originalGap + freeSpace / (numTracks + 1);
-            default -> originalGap;
-        };
+        AlignContent effective = AlignmentHelper.applyAlignmentFallback(
+            resolveGridContentAlignment(alignment), freeSpace, numTracks);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, numTracks, originalGap, effective, false, false);
     }
 
     /**
-     * Calculate adjusted gap for justify-content
+     * Calculate adjusted gap for justify-content. See
+     * {@link #calculateAdjustedGap(AlignContent, float, int, float)}.
      */
     private float calculateAdjustedGap(JustifyContent alignment, float freeSpace, int numTracks, float originalGap) {
         if (alignment == null || freeSpace <= 0 || numTracks <= 1) {
             return originalGap;
         }
-
-        return switch (alignment) {
-            case SPACE_BETWEEN -> originalGap + freeSpace / (numTracks - 1);
-            case SPACE_AROUND -> originalGap + freeSpace / numTracks;
-            case SPACE_EVENLY -> originalGap + freeSpace / (numTracks + 1);
-            // STRETCH, START, END, etc: no gap adjustment (space is distributed to tracks, not gutters)
-            case NORMAL, STRETCH, START, END, FLEX_START, FLEX_END, CENTER,
-                 SAFE_START, SAFE_END, SAFE_FLEX_START, SAFE_FLEX_END, SAFE_CENTER -> originalGap;
-        };
+        JustifyContent effective = AlignmentHelper.applyAlignmentFallback(
+            resolveGridContentAlignment(alignment), freeSpace, numTracks);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, numTracks, originalGap, effective, false, false);
     }
 
     /**
