@@ -3,9 +3,12 @@ package dev.vfyjxf.taffy;
 import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.geometry.TaffyPoint;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
+import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.GridPlacement;
+import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
@@ -223,6 +226,200 @@ class GridSizing2P7Test {
             assertEquals(0f, tree.getLayout(first).location().y, EPSILON, "first item y");
             assertEquals(40f, tree.getLayout(second).location().y, EPSILON, "second item y");
             assertEquals(60f, tree.getLayout(third).location().y, EPSILON, "third item y");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // GR-12: cyclic percentage minima, indefinite percentage min tracks, fr under
+    // a block-axis min-content constraint
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("GR-12: percentage minima and block-axis min-content fr expansion")
+    class PercentageMinimaAndFr {
+
+        @Test
+        @DisplayName("grid_minimum_contribution_cyclic_percent_min_size")
+        void cyclicPercentMinSize() {
+            assertCyclicPercentMinimum(null);
+        }
+
+        @Test
+        @DisplayName("grid_minimum_contribution_cyclic_percent_min_and_preferred_size")
+        void cyclicPercentMinAndPreferredSize() {
+            assertCyclicPercentMinimum(new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.percent(1f)));
+        }
+
+        /**
+         * The item's cyclic {@code min-width/min-height: 100%} resolve against zero for its minimum
+         * contribution (upstream #1257), so the auto tracks keep their 0 minimum and the content
+         * (a 100x100 grid item) overflows the 50x50 container instead of stretching it.
+         */
+        private void assertCyclicPercentMinimum(TaffySize<TaffyDimension> preferredSize) {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.size = new TaffySize<>(TaffyDimension.length(50f), TaffyDimension.length(50f));
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.auto());
+            grid.gridTemplateRows = List.of(TrackSizingFunction.auto());
+
+            TaffyStyle itemStyle = grid();
+            if (preferredSize != null) itemStyle.size = preferredSize;
+            itemStyle.minSize = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.percent(1f));
+            NodeId inner = tree.newLeaf(sized(100f, 100f));
+            NodeId item = tree.newWithChildren(itemStyle, inner);
+            NodeId root = tree.newWithChildren(grid, item);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 50f, 50f, "container");
+            assertSize(tree.getLayout(item), 50f, 50f, "item");
+            assertSize(tree.getLayout(inner), 100f, 100f, "inner");
+            assertLocation(tree.getLayout(inner), 0f, 0f, "inner");
+        }
+
+        @Test
+        @DisplayName("grid_percent_min_track_indefinite_fixed_max_column")
+        void percentMinTrackIndefiniteFixedMaxColumn() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.gridTemplateColumns = List.of(
+                TrackSizingFunction.minmax(TrackSizingFunction.percent(0.2f), TrackSizingFunction.fixed(20f)));
+            NodeId item = tree.newLeafWithMeasure(new TaffyStyle(), ahemTextMeasure("HHH"));
+            NodeId root = tree.newWithChildren(grid, item);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 20f, 10f, "container");
+            assertSize(tree.getLayout(item), 20f, 10f, "item");
+        }
+
+        @Test
+        @DisplayName("grid_percent_min_track_indefinite_fixed_max_row")
+        void percentMinTrackIndefiniteFixedMaxRow() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.fixed(20f));
+            grid.gridTemplateRows = List.of(
+                TrackSizingFunction.minmax(TrackSizingFunction.percent(1f), TrackSizingFunction.fixed(15f)));
+            NodeId item = tree.newLeafWithMeasure(new TaffyStyle(), ahemTextMeasure("HH\u200BHH"));
+            NodeId root = tree.newWithChildren(grid, item);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 20f, 15f, "container");
+            assertSize(tree.getLayout(item), 20f, 15f, "item");
+        }
+
+        @Test
+        @DisplayName("indefinite percentage min track behaves as auto for an explicit min size (column)")
+        void percentMinTrackExplicitMinColumn() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.gridTemplateColumns = List.of(
+                TrackSizingFunction.minmax(TrackSizingFunction.percent(0.2f), TrackSizingFunction.fixed(20f)));
+            TaffyStyle itemStyle = new TaffyStyle();
+            itemStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(10f));
+            itemStyle.minSize = new TaffySize<>(TaffyDimension.length(30f), TaffyDimension.AUTO);
+            NodeId item = tree.newLeaf(itemStyle);
+            NodeId root = tree.newWithChildren(grid, item);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            // The percentage min track behaves as auto, so the explicit 30px min-width raises the
+            // track above the fixed 20px max (the automatic content-based minimum would be clamped).
+            assertSize(tree.getLayout(root), 30f, 10f, "container");
+            assertSize(tree.getLayout(item), 30f, 10f, "item");
+        }
+
+        @Test
+        @DisplayName("indefinite percentage min track behaves as auto for an explicit min size (row)")
+        void percentMinTrackExplicitMinRow() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.fixed(20f));
+            grid.gridTemplateRows = List.of(
+                TrackSizingFunction.minmax(TrackSizingFunction.percent(1f), TrackSizingFunction.fixed(15f)));
+            TaffyStyle itemStyle = new TaffyStyle();
+            itemStyle.size = new TaffySize<>(TaffyDimension.length(20f), TaffyDimension.AUTO);
+            itemStyle.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(30f));
+            NodeId item = tree.newLeaf(itemStyle);
+            NodeId root = tree.newWithChildren(grid, item);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 20f, 30f, "container");
+            assertSize(tree.getLayout(item), 20f, 30f, "item");
+        }
+
+        @Test
+        @DisplayName("grid_fr_rows_nested_min_content_block_size")
+        void frRowsNestedMinContentBlockSize() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = grid();
+            rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(200f));
+            NodeId innerGrid = frRowsGridWithHiddenOverflow(tree);
+            NodeId root = tree.newWithChildren(rootStyle, innerGrid);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 100f, 200f, "container");
+            // The nested grid's min-content block size is its max-content block size (upstream #1284),
+            // so the auto row and the nested grid grow to 50 + 400 despite the 200px parent.
+            assertSize(tree.getLayout(innerGrid), 100f, 450f, "nested grid");
+            NodeId second = tree.getChildren(innerGrid).get(1);
+            assertLocation(tree.getLayout(second), 0f, 50f, "second item");
+            assertSize(tree.getLayout(second), 100f, 400f, "second item");
+        }
+
+        @Test
+        @DisplayName("grid_fr_rows_flex_item_min_content_block_size")
+        void frRowsFlexItemMinContentBlockSize() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle flexStyle = new TaffyStyle();
+            flexStyle.display = TaffyDisplay.FLEX;
+            flexStyle.flexDirection = FlexDirection.COLUMN;
+            flexStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(200f));
+            NodeId gridNode = frRowsGridWithHiddenOverflow(tree);
+            NodeId root = tree.newWithChildren(flexStyle, gridNode);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 100f, 200f, "flex container");
+            assertSize(tree.getLayout(gridNode), 100f, 450f, "grid");
+            NodeId second = tree.getChildren(gridNode).get(1);
+            assertLocation(tree.getLayout(second), 0f, 50f, "second item");
+            assertSize(tree.getLayout(second), 100f, 400f, "second item");
+        }
+
+        @Test
+        @DisplayName("fr rows expand under a block-axis min-content constraint")
+        void frRowsUnderMinContentBlockConstraint() {
+            TaffyTree tree = new TaffyTree();
+            NodeId gridNode = frRowsGridWithHiddenOverflow(tree);
+
+            tree.computeLayout(gridNode, new TaffySize<>(AvailableSpace.definite(100f), AvailableSpace.minContent()));
+
+            // A min-content constraint in the block axis behaves as max-content for flexible-track
+            // expansion (upstream #1284), so the 1fr row takes the 400px content height.
+            assertEquals(450f, tree.getLayout(gridNode).size().height, EPSILON, "grid height");
+            NodeId second = tree.getChildren(gridNode).get(1);
+            assertLocation(tree.getLayout(second), 0f, 50f, "second item");
+            assertSize(tree.getLayout(second), 0f, 400f, "second item");
+        }
+
+        /**
+         * The upstream #1284 fixture: a grid with {@code grid-template-rows: 50px 1fr} whose second
+         * item is a hidden-overflow box containing a 400px-tall child.
+         */
+        private NodeId frRowsGridWithHiddenOverflow(TaffyTree tree) {
+            TaffyStyle gridStyle = grid();
+            gridStyle.gridTemplateRows = List.of(TrackSizingFunction.fixed(50f), TrackSizingFunction.fr(1f));
+            NodeId empty = tree.newLeaf(new TaffyStyle());
+            TaffyStyle scrollerStyle = new TaffyStyle();
+            scrollerStyle.overflow = new TaffyPoint<>(Overflow.HIDDEN, Overflow.HIDDEN);
+            NodeId tall = tree.newLeaf(sized(0f, 400f));
+            NodeId scroller = tree.newWithChildren(scrollerStyle, tall);
+            return tree.newWithChildren(gridStyle, empty, scroller);
         }
     }
 
