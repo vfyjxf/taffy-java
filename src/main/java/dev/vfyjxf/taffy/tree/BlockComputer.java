@@ -18,6 +18,7 @@ import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TextAlign;
+import dev.vfyjxf.taffy.util.AlignmentHelper;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
@@ -359,7 +360,9 @@ public class BlockComputer {
         // baseline shift from #996 (b9bfa1d1).
         float firstBaseline = layoutResult.firstBaseline;
         AlignContent alignContent = style.getAlignContent();
-        if (alignContent != AlignContent.AUTO) {
+        // AUTO is the legacy "not specified" sentinel and keeps the historical no-op; an explicit
+        // NORMAL is a first-class value and resolves to START in block layout (upstream #1255).
+        if (!AlignmentHelper.isUnset(alignContent)) {
             float resolvedContentBoxInsetHeight = contentBoxInset.top + contentBoxInset.bottom;
             float containerInnerHeight = containerOuterHeight - resolvedContentBoxInsetHeight;
             float inflowContentHeight = layoutResult.contentHeight - resolvedContentBoxInsetHeight;
@@ -1360,43 +1363,35 @@ public class BlockComputer {
     }
 
     /**
-     * Resolves the block-axis offset that `align-content` applies to a block container's in-flow
+     * Resolves the block-axis offset that align-content applies to a block container's in-flow
      * content.
      *
-     * <p>The whole in-flow stack is a single alignment subject, so the distribution keywords
-     * use their single-subject fallbacks before the offset is computed (css-align-3 §5.3):
-     * {@code stretch} and {@code space-between} behave as {@code flex-start} (offset 0), while
-     * {@code space-around} and {@code space-evenly} behave as {@code center} when there is free
-     * space; on overflow they carry implicit {@code safe} semantics and pack at the start. The
-     * block axis has no flex direction, so {@code flex-start}/{@code flex-end} coincide with
-     * start/end. Centering and end alignment are unsafe by default, so overflowing content can
-     * receive a negative offset. This mirrors upstream `apply_alignment_fallback` +
-     * `compute_alignment_offset` with `num_items = 1` and zero gap (upstream #959 / #952).</p>
+     * <p>The whole in-flow stack is a single alignment subject, so the distribution keywords use
+     * their single-subject fallbacks before the offset is computed (css-align-3 §5.3), and the
+     * keyword/offset math is exactly the shared model in {@link AlignmentHelper} (upstream
+     * #959 / #952):</p>
      *
-     * <p>Wiring note (ST-02): the {@code safe}/{@code unsafe} keyword model and the first-class
-     * {@code normal} keyword now exist on {@link AlignContent} and are centralised in
-     * {@link dev.vfyjxf.taffy.util.AlignmentHelper}, but block layout is not connected to the
-     * helper in this batch. The {@code SAFE_*} cases below therefore keep the geometry of their
-     * non-safe keyword (the overflow fallback belongs to the helper), and {@code NORMAL} keeps
-     * the legacy unset behaviour until BK-18 wires block {@code align-content} fully.</p>
+     * <ul>
+     *   <li>an explicit {@code NORMAL} resolves to {@code START} in block layout (it is the
+     *       layout-mode default for a block container), while the legacy
+     *       {@link AlignContent#AUTO} sentinel is filtered out by the caller and never reaches
+     *       this method;</li>
+     *   <li>{@code stretch} and {@code space-between} fall back to {@code flex-start} (offset 0)
+     *       for the single subject, and {@code space-around}/{@code space-evenly} fall back to
+     *       {@code center} when there is free space;</li>
+     *   <li>a {@code SAFE_*} value that overflows (non-positive free space) falls back to
+     *       {@code START}, so it packs at the start edge instead of receiving a negative offset,
+     *       whereas the unsafe positional keywords stay unsafe and may overflow;</li>
+     *   <li>the block axis has no flex direction, so {@code flex-start}/{@code flex-end} coincide
+     *       with start/end (layoutIsFlexReversed is false).</li>
+     * </ul>
      */
     private static float blockAlignContentOffset(AlignContent alignContent, float freeSpace) {
-        return switch (alignContent) {
-            // AUTO (legacy unset) and NORMAL (layout-mode default) both keep a zero offset until
-            // block align-content is wired to AlignmentHelper (BK-18). SAFE_* map to their
-            // non-safe keyword because the overflow fallback belongs to the helper.
-            case AUTO, NORMAL, START, FLEX_START, SAFE_START, SAFE_FLEX_START -> 0f;
-            // End aligns the content's bottom edge with the content box's bottom edge.
-            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
-            // Unsafe centering: overflowing content is centred off both edges.
-            case CENTER, SAFE_CENTER -> freeSpace / 2f;
-            // Single-subject distribution fallbacks: stretch and space-between pack at the
-            // start (the whole stack is one subject, so there is no gap to distribute).
-            case STRETCH, SPACE_BETWEEN -> 0f;
-            // Single-subject fallback to center when there is free space; on overflow the
-            // implicit safe semantics of the space-* keywords flip them to start.
-            case SPACE_AROUND, SPACE_EVENLY -> freeSpace > 0f ? freeSpace / 2f : 0f;
-        };
+        // normal is layout-mode dependent: a block container aligns its content to start (unlike
+        // flex/grid, where it behaves as stretch).
+        AlignContent resolved = AlignmentHelper.resolveNormal(alignContent, AlignContent.START);
+        AlignContent keyword = AlignmentHelper.applyAlignmentFallback(resolved, freeSpace, 1);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, 1, 0f, keyword, false, true);
     }
 
     // Helper methods
