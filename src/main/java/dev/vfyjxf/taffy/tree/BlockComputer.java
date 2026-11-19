@@ -7,6 +7,7 @@ import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffyPoint;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
@@ -341,6 +342,44 @@ public class BlockComputer {
         boolean ownBottomMarginCollapsesWithChildren =
             ownMarginsCollapseWithChildren.end && !heightConstrainedByMinHeight;
 
+        // CSS Box Alignment: `align-content` distributes the block-axis in-flow content of a
+        // block container within its content box. The whole in-flow stack is a *single*
+        // alignment subject, so the distribution keywords (`space-*`, `stretch`) use their
+        // single-subject fallbacks and the group is translated by one offset — there is no
+        // inter-child gap. Child layouts were deferred into `item.finalLayout` (BK-01) so this
+        // shift can happen before they are committed to the tree; out-of-flow children's static
+        // positions move with the in-flow content (they are only consumed when that axis has no
+        // inset), and the container's first baseline is offset with the content it was measured
+        // from (upstream #996).
+        //
+        // BK-14 / upstream #959 (dcdb0ede); static-position shift from #1206 (a4dff69e) and
+        // baseline shift from #996 (b9bfa1d1).
+        float firstBaseline = layoutResult.firstBaseline;
+        AlignContent alignContent = style.getAlignContent();
+        if (alignContent != AlignContent.AUTO) {
+            float resolvedContentBoxInsetHeight = contentBoxInset.top + contentBoxInset.bottom;
+            float containerInnerHeight = containerOuterHeight - resolvedContentBoxInsetHeight;
+            float inflowContentHeight = layoutResult.contentHeight - resolvedContentBoxInsetHeight;
+            float freeSpace = containerInnerHeight - inflowContentHeight;
+            float groupOffset = blockAlignContentOffset(alignContent, freeSpace);
+
+            if (groupOffset != 0f) {
+                for (BlockItem item : items) {
+                    if (item.finalLayout != null) {
+                        Layout shifted = item.finalLayout.copy();
+                        shifted.location().y += groupOffset;
+                        item.finalLayout = shifted;
+                    }
+                    if (item.position == TaffyPosition.ABSOLUTE) {
+                        item.staticPosition.y += groupOffset;
+                    }
+                }
+                if (!Float.isNaN(firstBaseline)) {
+                    firstBaseline += groupOffset;
+                }
+            }
+        }
+
         // Determine whether this node can be collapsed through.
         //
         // CSS2 §8.3.1: a box's top and bottom margins collapse through it only if its *used*
@@ -443,7 +482,7 @@ public class BlockComputer {
         return new LayoutOutput(
             finalOuterSize,
             contentSize,
-            new FloatPoint(NaN, layoutResult.firstBaseline),
+            new FloatPoint(NaN, firstBaseline),
             topMargin,
             bottomMargin,
             canBeCollapsedThrough
@@ -1101,6 +1140,45 @@ public class BlockComputer {
             }
         }
         return autoMarginSizeX;
+    }
+
+    /**
+     * Resolves the block-axis offset that `align-content` applies to a block container's in-flow
+     * content.
+     *
+     * <p>The whole in-flow stack is a single alignment subject, so the distribution keywords
+     * use their single-subject fallbacks before the offset is computed (css-align-3 §5.3):
+     * {@code stretch} and {@code space-between} behave as {@code flex-start} (offset 0), while
+     * {@code space-around} and {@code space-evenly} behave as {@code center} when there is free
+     * space; on overflow they carry implicit {@code safe} semantics and pack at the start. The
+     * block axis has no flex direction, so {@code flex-start}/{@code flex-end} coincide with
+     * start/end. Centering and end alignment are unsafe by default, so overflowing content can
+     * receive a negative offset. This mirrors upstream `apply_alignment_fallback` +
+     * `compute_alignment_offset` with `num_items = 1` and zero gap (upstream #959 / #952).</p>
+     *
+     * <p>TODO(ST-02): Java's {@link AlignContent} has no {@code safe}/{@code unsafe} overflow
+     * position and no first-class {@code normal}, so an explicit `safe end`/`safe center`
+     * cannot be expressed and the safety step of the shared helper is not modelled here. When
+     * the safety model lands this method should delegate to it (and {@code AUTO}, the current
+     * "unset" sentinel, should resolve to upstream's {@code normal}, which is a no-op once
+     * resolved).</p>
+     */
+    private static float blockAlignContentOffset(AlignContent alignContent, float freeSpace) {
+        return switch (alignContent) {
+            // AUTO is the "unset" sentinel and is filtered out by the caller; keep the switch
+            // exhaustive without introducing a "normal" behaviour here (BK-18).
+            case AUTO, START, FLEX_START -> 0f;
+            // End aligns the content's bottom edge with the content box's bottom edge.
+            case END, FLEX_END -> freeSpace;
+            // Unsafe centering: overflowing content is centred off both edges.
+            case CENTER -> freeSpace / 2f;
+            // Single-subject distribution fallbacks: stretch and space-between pack at the
+            // start (the whole stack is one subject, so there is no gap to distribute).
+            case STRETCH, SPACE_BETWEEN -> 0f;
+            // Single-subject fallback to center when there is free space; on overflow the
+            // implicit safe semantics of the space-* keywords flip them to start.
+            case SPACE_AROUND, SPACE_EVENLY -> freeSpace > 0f ? freeSpace / 2f : 0f;
+        };
     }
 
     // Helper methods
