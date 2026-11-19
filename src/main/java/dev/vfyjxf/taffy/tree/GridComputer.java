@@ -3821,17 +3821,12 @@ public class GridComputer {
                 // For auto tracks with infinite growth_limit, cap it to current base_size
                 // This prevents maximise_tracks from over-allocating space that should go to stretch_auto_tracks
                 if (currentLimit == Float.MAX_VALUE) {
-                    // Check if this is an auto track
-                    TrackSizingFunction track = null;
-                    int expStart = colCounts.negativeImplicit;
-                    int expEnd = expStart + colCounts.explicit;
-                    if (i >= expStart && i < expEnd && templateCols != null) {
-                        int templateIndex = i - expStart;
-                        if (templateIndex < templateCols.size()) {
-                            track = templateCols.get(templateIndex);
-                        }
-                    }
-                    // Auto track (explicit auto or implicit) should have growth_limit = base_size
+                    // Resolve the track's sizing function the same way as the initial sizing pass:
+                    // explicit tracks come from the (grid-template-areas-expanded) template and
+                    // implicit tracks cycle through grid-auto-columns (GR-20).
+                    TrackSizingFunction track = resolvedColumnTracks.get(i);
+                    // Auto track (explicit auto or an implicit track whose grid-auto-columns entry is
+                    // auto) should have growth_limit = base_size.
                     if (track == null || track.isAuto()) {
                         growthLimits.set(i, currentSize);
                     }
@@ -3951,32 +3946,24 @@ public class GridComputer {
             if (freeSpace > 0) {
                 // Find tracks that can grow (auto, minmax with room to grow)
                 IntList growableTrackIndices = new IntArrayList();
-                int growExplicitStart = colCounts.negativeImplicit;
-                int growExplicitEnd = growExplicitStart + colCounts.explicit;
 
                 for (int i = 0; i < sizes.size(); i++) {
-                    // Determine track type using colCounts
-                    TrackSizingFunction track;
-                    if (i >= growExplicitStart && i < growExplicitEnd) {
-                        // Explicit track
-                        int templateIndex = i - growExplicitStart;
-                        track = (templateCols != null && templateIndex < templateCols.size())
-                                ? templateCols.get(templateIndex) : null;
-                    } else {
-                        // Implicit track (negative or positive)
-                        track = null;
-                    }
+                    // Resolve the track's sizing function the same way as the initial sizing pass
+                    // (explicit from the template, implicit from grid-auto-columns). A fixed implicit
+                    // track is not growable; only a null function (no grid-auto-* entry) defaults to
+                    // auto (GR-20).
+                    TrackSizingFunction track = resolvedColumnTracks.get(i);
                     float currentSize = sizes.getFloat(i);
                     float limit = growthLimits.getFloat(i);
 
                     // Track can grow if:
-                    // 1. It's an auto track (explicit or implicit)
+                    // 1. It's an auto track (explicit auto or implicit auto)
                     // 2. It's a minmax track with room to grow
                     boolean canGrow = false;
                     if (track != null && track.isAuto()) {
                         canGrow = true;
                     } else if (track == null) {
-                        canGrow = true;  // Implicit auto track
+                        canGrow = true;  // Implicit auto track (no grid-auto-columns entry)
                     } else if (track != null && track.isMinmax()) {
                         // minmax track - check if it has a growth limit set and room to grow
                         if (!Float.isNaN(currentSize) && !Float.isNaN(limit) && currentSize < limit) {
@@ -4113,21 +4100,12 @@ public class GridComputer {
             }
             float stretchFreeSpace = stretchAvailableSpace - stretchUsedSpace;
             if (stretchFreeSpace > 0.001f) {
-                int stretchExplicitStart = colCounts.negativeImplicit;
-                int stretchExplicitEnd = stretchExplicitStart + colCounts.explicit;
-                // Only tracks with an auto max track sizing function are stretched (not minmax tracks
-                // and not flexible tracks).
+                // Only tracks whose max track sizing function is auto are stretched (not fixed
+                // implicit tracks, minmax tracks, or flexible tracks). Implicit tracks are resolved
+                // through grid-auto-columns instead of being assumed auto (GR-20).
                 List<Integer> autoTracks = new ArrayList<>();
                 for (int i = 0; i < sizes.size(); i++) {
-                    TrackSizingFunction track;
-                    if (i >= stretchExplicitStart && i < stretchExplicitEnd) {
-                        int templateIndex = i - stretchExplicitStart;
-                        track = (templateCols != null && templateIndex < templateCols.size())
-                                ? templateCols.get(templateIndex) : null;
-                    } else {
-                        track = null;
-                    }
-                    if (track == null || track.isAuto()) {
+                    if (trackMaxIsAuto(resolvedColumnTracks.get(i))) {
                         autoTracks.add(i);
                     }
                 }
