@@ -1,5 +1,6 @@
 package dev.vfyjxf.taffy.tree;
 
+import java.math.BigDecimal;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
@@ -40,7 +41,8 @@ import java.util.TreeMap;
  *       separate from the line-name table.</li>
  *   <li>The resolved {@code grid-template-rows}/{@code grid-template-columns} value (track
  *       sizes and per-line names) with the CSS {@code zoom} divisor, see
- *       {@code Tracks#toTrackListString(float)}.</li>
+ *       {@link #gridTemplateRows()} / {@link #gridTemplateColumns()} and
+ *       {@link Tracks#toTrackListString(float)}.</li>
  * </ul>
  *
  * <p>All values are unrounded. The grid algorithm records this information before the final
@@ -177,6 +179,125 @@ public record DetailedGridInfo(Tracks rows, Tracks columns, List<GridItemArea> i
         float top = firstRow.start();
         float bottom = lastRow.end();
         return new ItemRectangle(left, top, right - left, bottom - top);
+    }
+
+    /**
+     * Serializes the used row tracks and their line names in the resolved value format of the
+     * {@code grid-template-rows} property, without zoom correction ({@code zoom == 1}).
+     *
+     * @see #gridTemplateRows(float)
+     */
+    public String gridTemplateRows() {
+        return gridTemplateRows(1f);
+    }
+
+    /**
+     * Serializes the used row tracks and their line names in the resolved value format of the
+     * {@code grid-template-rows} property (CSS Grid §7.3 resolved track list), dividing track
+     * sizes by {@code zoom} to report unzoomed CSS pixels (upstream #1280).
+     *
+     * <p>The format is the upstream one: each track is written as its used size in
+     * {@code px}, preceded by its {@code [line-name ...]} group when the line has names; the
+     * explicit grid's trailing line names are appended after the last track. Implicit tracks are
+     * included and their lines are unnamed. An axis without any track serializes as
+     * {@code none}. Names generated implicitly by {@code grid-template-areas} are omitted
+     * (#1185).</p>
+     *
+     * @param zoom the container's effective CSS {@code zoom}; track sizes are divided by it
+     *             (the CSS value is positive; no range validation is performed, matching
+     *             upstream's arithmetic)
+     */
+    public String gridTemplateRows(float zoom) {
+        return rows.toTrackListString(zoom);
+    }
+
+    /**
+     * Serializes the used column tracks and their line names in the resolved value format of the
+     * {@code grid-template-columns} property, without zoom correction.
+     *
+     * @see #gridTemplateColumns(float)
+     */
+    public String gridTemplateColumns() {
+        return gridTemplateColumns(1f);
+    }
+
+    /**
+     * Serializes the used column tracks and their line names in the resolved value format of the
+     * {@code grid-template-columns} property, dividing track sizes by {@code zoom}.
+     *
+     * @param zoom the container's effective CSS {@code zoom}
+     * @see #gridTemplateRows(float)
+     */
+    public String gridTemplateColumns(float zoom) {
+        return columns.toTrackListString(zoom);
+    }
+
+    /**
+     * Writes the resolved {@code grid-template-rows} value to {@code out}, without zoom
+     * correction.
+     *
+     * @see #writeGridTemplateRows(StringBuilder, float)
+     */
+    public void writeGridTemplateRows(StringBuilder out) {
+        writeGridTemplateRows(out, 1f);
+    }
+
+    /**
+     * Writes the resolved {@code grid-template-rows} value to {@code out} (upstream
+     * {@code write_grid_template_rows}).
+     *
+     * @param out  the destination builder
+     * @param zoom the container's effective CSS {@code zoom}
+     * @see #gridTemplateRows(float)
+     */
+    public void writeGridTemplateRows(StringBuilder out, float zoom) {
+        rows.writeTrackList(out, zoom);
+    }
+
+    /**
+     * Writes the resolved {@code grid-template-columns} value to {@code out}, without zoom
+     * correction.
+     *
+     * @see #writeGridTemplateColumns(StringBuilder, float)
+     */
+    public void writeGridTemplateColumns(StringBuilder out) {
+        writeGridTemplateColumns(out, 1f);
+    }
+
+    /**
+     * Writes the resolved {@code grid-template-columns} value to {@code out} (upstream
+     * {@code write_grid_template_columns}).
+     *
+     * @param out  the destination builder
+     * @param zoom the container's effective CSS {@code zoom}
+     * @see #gridTemplateColumns(float)
+     */
+    public void writeGridTemplateColumns(StringBuilder out, float zoom) {
+        columns.writeTrackList(out, zoom);
+    }
+
+    /**
+     * A readable snapshot of the detailed information: the resolved track lists (zoom 1), the
+     * in-flow item areas with their physical rectangles, and the named-area edge table.
+     *
+     * <p>This is a diagnostic string, not a stable interchange format; use
+     * {@link #gridTemplateRows(float)} / {@link #gridTemplateColumns(float)} for the CSS
+     * serialization and the record accessors for structured access.</p>
+     */
+    @Override
+    public String toString() {
+        StringBuilder out = new StringBuilder("DetailedGridInfo{");
+        out.append("columns=").append(gridTemplateColumns());
+        out.append(", rows=").append(gridTemplateRows());
+        out.append(", items=[");
+        for (int i = 0; i < items.size(); i++) {
+            if (i != 0) {
+                out.append(", ");
+            }
+            out.append(items.get(i)).append(" -> ").append(itemRectangle(i));
+        }
+        out.append("], areas=").append(areas).append('}');
+        return out.toString();
     }
 
     /**
@@ -319,6 +440,124 @@ public record DetailedGridInfo(Tracks rows, Tracks columns, List<GridItemArea> i
                 lines.add(namesForLine(i));
             }
             return List.copyOf(lines);
+        }
+
+        /**
+         * Serializes this axis' used tracks and line names in the resolved value format of
+         * {@code grid-template-rows}/{@code grid-template-columns} without zoom correction
+         * ({@code zoom == 1}).
+         *
+         * @see #toTrackListString(float)
+         */
+        public String toTrackListString() {
+            return toTrackListString(1f);
+        }
+
+        /**
+         * Serializes this axis' used tracks and line names in the resolved value format of
+         * {@code grid-template-rows}/{@code grid-template-columns} (CSS Grid §7.3), dividing
+         * track sizes by {@code zoom} (upstream {@code to_track_list_string}, #1136 / #1280).
+         *
+         * <p>Every track of the full grid (including implicit and collapsed tracks) is written
+         * as its used size in {@code px}; a track whose start line carries explicit names is
+         * preceded by a bracketed space-separated name group. The explicit grid's trailing line
+         * names follow the last track. An axis with no tracks at all serializes as
+         * {@code none}. The implicit {@code <area>-start}/{@code <area>-end} names generated by
+         * {@code grid-template-areas} are not part of the line-name table, so they are never
+         * printed (#1185).</p>
+         *
+         * <p>Numbers use the same shortest round-trip decimal form as Rust's {@code f32}
+         * {@code Display} (integral values have no {@code .0}, scientific notation is expanded to
+         * a plain decimal), followed by {@code px}.</p>
+         *
+         * @param zoom the container's effective CSS {@code zoom}; sizes are divided by it
+         */
+        public String toTrackListString(float zoom) {
+            StringBuilder out = new StringBuilder();
+            writeTrackList(out, zoom);
+            return out.toString();
+        }
+
+        /**
+         * Writes this axis' resolved track list to {@code out} without zoom correction.
+         *
+         * @see #writeTrackList(StringBuilder, float)
+         */
+        public void writeTrackList(StringBuilder out) {
+            writeTrackList(out, 1f);
+        }
+
+        /**
+         * Writes this axis' resolved track list to {@code out} (upstream
+         * {@code write_track_list}).
+         *
+         * @param out  the destination builder
+         * @param zoom the container's effective CSS {@code zoom}
+         * @see #toTrackListString(float)
+         */
+        public void writeTrackList(StringBuilder out, float zoom) {
+            Objects.requireNonNull(out, "out");
+            if (tracks.isEmpty()) {
+                out.append("none");
+                return;
+            }
+            boolean needsSpace = false;
+            for (int i = 0; i < tracks.size(); i++) {
+                List<String> names = namesForLine(i);
+                if (!names.isEmpty()) {
+                    if (needsSpace) {
+                        out.append(' ');
+                    }
+                    appendLineNames(out, names);
+                    needsSpace = true;
+                }
+                if (needsSpace) {
+                    out.append(' ');
+                }
+                out.append(formatPixels(tracks.get(i).size() / zoom));
+                needsSpace = true;
+            }
+            List<String> trailingNames = namesForLine(tracks.size());
+            if (!trailingNames.isEmpty()) {
+                out.append(' ');
+                appendLineNames(out, trailingNames);
+            }
+        }
+
+        private static void appendLineNames(StringBuilder out, List<String> names) {
+            out.append('[');
+            for (int i = 0; i < names.size(); i++) {
+                if (i != 0) {
+                    out.append(' ');
+                }
+                out.append(names.get(i));
+            }
+            out.append(']');
+        }
+
+        /**
+         * Formats a CSS pixel value the way Rust's {@code f32} {@code Display} prints it: the
+         * shortest decimal that round-trips, without a trailing {@code .0}, and with scientific
+         * notation expanded to a plain decimal. Non-finite values use Rust's {@code NaN}/
+         * {@code inf}/{@code -inf} spellings.
+         */
+        private static String formatPixels(float value) {
+            if (Float.isNaN(value)) {
+                return "NaNpx";
+            }
+            if (value == Float.POSITIVE_INFINITY) {
+                return "infpx";
+            }
+            if (value == Float.NEGATIVE_INFINITY) {
+                return "-infpx";
+            }
+            String text = Float.toString(value);
+            if (text.indexOf('E') >= 0) {
+                text = new BigDecimal(text).stripTrailingZeros().toPlainString();
+            } else if (text.endsWith(".0")) {
+                text = text.substring(0, text.length() - 2);
+            }
+            return text + "px";
         }
     }
 

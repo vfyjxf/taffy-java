@@ -39,8 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code <area>-start}/{@code <area>-end} names of {@code grid-template-areas} live in the
  * separate {@link DetailedGridInfo#areas()} table, and the first-slice
  * {@link DetailedGridInfo.Tracks#lineNames()} accessor keeps returning the same immutable,
- * sorted map. Item rectangles (#1134), the resolved track-list serialization (#1136/#1280) and
- * the empty-axis distinction (#1167) are covered by the later slices in this file.</p>
+ * sorted map. The item rectangles (#1134), the resolved track-list serialization (#1136/#1280)
+ * and the empty-axis distinction (#1167) are covered by the later sections of this class.</p>
  */
 class DetailedGrid2P7Test {
 
@@ -386,6 +386,196 @@ class DetailedGrid2P7Test {
         assertEquals(List.of("b"), columns.namesForLine(2));
         assertEquals(List.of(), columns.namesForLine(3));
         assertEquals(List.of(List.of(), List.of("a"), List.of("b")), columns.iterLineNames());
+    }
+
+    // ------------------------------------------------------------------
+    // Resolved track-list serialization
+    // ------------------------------------------------------------------
+
+    @Test
+    void resolvedTrackListSerializesSizesInUpstreamFormat() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(50f));
+        NodeId root = tree.newWithChildren(style, List.of(tree.newLeaf(leaf())));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        assertEquals("40px 60px", info.gridTemplateColumns());
+        assertEquals("50px", info.gridTemplateRows());
+        assertEquals(info.gridTemplateColumns(1f), info.gridTemplateColumns(), "default zoom is 1");
+        assertEquals(info.gridTemplateRows(1f), info.gridTemplateRows(), "default zoom is 1");
+    }
+
+    @Test
+    void zoomDividesSerializedTrackSizes() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 100f);
+        style.gridTemplateColumns = List.of(px(100f));
+        style.gridTemplateRows = List.of(px(50f));
+        NodeId root = tree.newWithChildren(style, List.of(tree.newLeaf(leaf())));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        assertEquals("50px", info.gridTemplateColumns(2f));
+        assertEquals("25px", info.gridTemplateRows(2f));
+        // f32 shortest round-trip decimal, like Rust's Display: 100 / 3 = 33.333332.
+        assertEquals("33.333332px", info.gridTemplateColumns(3f));
+
+        StringBuilder columns = new StringBuilder("prefix:");
+        info.writeGridTemplateColumns(columns, 4f);
+        assertEquals("prefix:25px", columns.toString());
+        StringBuilder rows = new StringBuilder();
+        info.writeGridTemplateRows(rows);
+        assertEquals("50px", rows.toString());
+        StringBuilder defaultColumns = new StringBuilder();
+        info.writeGridTemplateColumns(defaultColumns);
+        assertEquals("100px", defaultColumns.toString());
+    }
+
+    @Test
+    void resolvedTrackListPrintsLineNamesInDeclarationOrder() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(50f));
+        style.gridTemplateColumnNames = List.of(
+            new NamedGridLine("full-start", 1),
+            new NamedGridLine("main-start", 2),
+            new NamedGridLine("main-end", 3),
+            new NamedGridLine("full-end", 3));
+        style.gridTemplateAreas = List.of(new GridTemplateArea("hero", 1, 2, 1, 3));
+        NodeId root = tree.newWithChildren(style, List.of(tree.newLeaf(leaf())));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        // Trailing explicit line names are appended after the last track; the implicit
+        // grid-template-areas hero-start/hero-end names never appear (#1185).
+        assertEquals("[full-start] 40px [main-start] 60px [main-end full-end]",
+            info.gridTemplateColumns());
+        assertEquals("50px", info.gridTemplateRows());
+        assertEquals("[full-start] 20px [main-start] 30px [main-end full-end]",
+            info.gridTemplateColumns(2f));
+        assertFalse(info.gridTemplateColumns().contains("hero"));
+    }
+
+    @Test
+    void resolvedTrackListOmitsTrailingNamesBeyondTheExplicitGrid() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        style.gridTemplateColumns = List.of(px(50f));
+        style.gridTemplateColumnNames = List.of(
+            new NamedGridLine("a", 1),
+            new NamedGridLine("b", 2));
+        style.gridTemplateRows = List.of(px(50f));
+        style.gridAutoColumns = List.of(px(25f));
+
+        TaffyStyle itemStyle = leaf();
+        itemStyle.gridColumn = line(3); // one positive implicit column after the explicit track
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(style, List.of(item));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        // This port's line-3 placement materialises two positive implicit tracks (pinned by the
+        // first-slice test); both use the 25px auto-column size.
+        assertEquals(2, info.columns().positiveImplicitTracks());
+        // The explicit end line's names are printed on the first implicit track's start line; the
+        // line after the last full-grid track is unnamed, so no names follow the final 25px.
+        assertEquals("[a] 50px [b] 25px 25px", info.gridTemplateColumns());
+    }
+
+    @Test
+    void resolvedTrackListIncludesLeadingImplicitTracksAsUnnamed() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        style.gridTemplateColumns = List.of(px(50f));
+        style.gridTemplateColumnNames = List.of(
+            new NamedGridLine("a", 1),
+            new NamedGridLine("b", 2));
+        style.gridTemplateRows = List.of(px(50f));
+        style.gridAutoColumns = List.of(px(25f));
+
+        TaffyStyle itemStyle = leaf();
+        itemStyle.gridColumn = line(-3); // one negative implicit column before the explicit track
+        NodeId item = tree.newLeaf(itemStyle);
+        NodeId root = tree.newWithChildren(style, List.of(item));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        assertEquals(1, info.columns().negativeImplicitTracks());
+        assertEquals("25px [a] 50px [b]", info.gridTemplateColumns());
+    }
+
+    @Test
+    void repeatPositionalNamesSerializeInDeclarationOrder() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        style.gridTemplateColumnsWithRepeat = List.of(
+            GridTemplateComponent.repeat(GridRepetition.count(2, List.of(px(50f)),
+                List.of(List.of("col-start"), List.of("col-end")))));
+        style.gridTemplateColumnNames = List.of(
+            new NamedGridLine("outer-start", 1),
+            new NamedGridLine("outer-end", 3));
+        style.gridTemplateRows = List.of(px(50f));
+        NodeId root = tree.newWithChildren(style, List.of(tree.newLeaf(leaf())));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        // The per-line order follows this port's flattened style inputs (flat names first), which
+        // differs from upstream's positional-set interleaving on the collapsed last line only.
+        assertEquals("[outer-start col-start] 50px [col-end col-start] 50px [outer-end col-end]",
+            info.gridTemplateColumns());
+    }
+
+    @Test
+    void emptyAxisSerializesAsNoneWhileCollapsedOrMaterialisedAxesSerializeTheirTracks() {
+        // A true zero-track axis is not produced by this port's layout (the size estimate
+        // materialises one implicit track), but the detailed value object accepts and serializes
+        // it exactly like upstream: "none".
+        DetailedGridInfo.Tracks empty = new DetailedGridInfo.Tracks(
+            0, 0, 0, List.of(), 12f, Map.of());
+        assertEquals("none", empty.toTrackListString());
+        assertEquals("none", empty.toTrackListString(2f));
+
+        // An all-collapsed auto-fit axis keeps its expanded tracks (all zero-sized), so it does
+        // not serialize as "none": the difference from a true zero-track axis stays observable.
+        List<GridTrackInfo> collapsed = List.of(track(7f, 0f), track(7f, 0f), track(7f, 0f), track(7f, 0f));
+        DetailedGridInfo.Tracks collapsedAxis = new DetailedGridInfo.Tracks(
+            0, 4, 0, collapsed, 7f, Map.of());
+        assertEquals("0px 0px 0px 0px", collapsedAxis.toTrackListString());
+
+        // The grid path's plain empty axis materialises one implicit track (the residual noted by
+        // the first slice): 0px column, 50px row, never "none".
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        TaffyStyle hiddenStyle = leaf();
+        hiddenStyle.display = TaffyDisplay.NONE;
+        NodeId root = tree.newWithChildren(style, List.of(tree.newLeaf(hiddenStyle)));
+        tree.computeLayout(root, TaffySize.maxContent());
+        DetailedGridInfo info = infoOf(tree, root);
+        assertEquals("0px", info.gridTemplateColumns());
+        assertEquals("50px", info.gridTemplateRows());
+    }
+
+    @Test
+    void toStringIncludesResolvedTracksItemsAndAreas() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(100f, 50f);
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(50f));
+        style.gridTemplateAreas = List.of(new GridTemplateArea("hero", 1, 2, 1, 2));
+        NodeId root = tree.newWithChildren(style, List.of(tree.newLeaf(leaf())));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        String text = infoOf(tree, root).toString();
+        assertTrue(text.startsWith("DetailedGridInfo{"), text);
+        assertTrue(text.contains("columns=40px 60px"), text);
+        assertTrue(text.contains("rows=50px"), text);
+        assertTrue(text.contains("items=[GridItemArea["), text);
+        assertTrue(text.contains(" -> ItemRectangle["), text);
+        assertTrue(text.contains("areas={hero=GridArea["), text);
     }
 
     // ------------------------------------------------------------------
