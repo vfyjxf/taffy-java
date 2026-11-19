@@ -67,14 +67,18 @@ snapshot.
 - **P2 (done, tag `p2-complete`)**: `writeTree`/transpose helpers and the
   opt-in generated-test freshness gate (with a method-level allowlist for the
   two BK-13 hand edits).
-- **P3 (done)**: ST-05 replaced split, BK-08/09/12/14/17, FL-10/11/12/13/14
-  and the CR-07/BL-06 baseline helper + block/flex/grid propagation are merged;
-  `display: flow-root` currently implements the margin-isolation part (float
-  containment awaits F7). Known partials: BK-15's height-only aspect-ratio
-  derivation and BK-04's block stretch exclusion (tracked in the workspace
-  residuals; neither blocks P4).
-- **Next**: finish P3's baseline/alignment remainder, then P4 (scrollable overflow)
-  and P6/P7.
+- **P3 (done, tag `p3-complete`)**: ST-05 replaced split, BK-08/09/12/14/17,
+  FL-10/11/12/13/14 and the CR-07/BL-06 baseline helper + block/flex/grid
+  propagation are merged; `display: flow-root` currently implements the
+  margin-isolation part (float containment awaits F7). Known partials: BK-15's
+  height-only aspect-ratio derivation and BK-04's block stretch exclusion
+  (tracked in the workspace residuals).
+- **P4 (done, tag `p4-complete`)**: leaf/block/flex/grid populate
+  `ScrollableOverflow`; `scrollWidth()`/`scrollHeight()` derive the reachable
+  range from it (including reversed origins); `ScrollableOverflowUtil` shared by
+  all three algorithms; SO-04 gentest assertions. The legacy `contentSize`
+  component remains until 2.0 and keeps its 1.x RTL divergence for flex/grid.
+- **Next**: P5 (sizing keywords, safe/self alignment) then P6/P7.
 
 The detailed, reviewed change list is produced from the commit ranges in
 `Data/taffy-java/analysis/` and is not checked into this repository.

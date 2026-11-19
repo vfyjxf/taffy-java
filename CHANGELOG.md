@@ -44,6 +44,17 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
   instructions in `gentest/README.md`.
 
+### P4 additions (scrollable overflow)
+
+- `Layout.scrollableOverflow()` / `LayoutOutput.scrollableOverflow()` are now
+  populated by the leaf, block, flex and grid algorithms; `RoundLayout` preserves
+  and rounds the rectangle; `Layout.scrollWidth()`/`scrollHeight()` derive the
+  reachable range from it, including reversed (RTL / `column-reverse` /
+  `wrap-reverse`) scroll origins. Hand-built layouts keep the legacy
+  `contentSize` formula as the 1.x compatibility path.
+- New public `util.ScrollableOverflowUtil` (contribution/union/finalize) and the
+  gentest SO-04 assertions for scroll containers' `scrollWidth`/`scrollHeight`.
+
 ### P3 additions (partial)
 
 - `TaffyDisplay.FLOW_ROOT` (appended enum constant) with block-algorithm dispatch and
@@ -114,6 +125,11 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   [docs/migration-1.2.md](docs/migration-1.2.md) explains how to compare your
   output against it. Downstream pixel/snapshot tests may need updated
   expectations.
+- **P4 batch**: `scrollWidth()`/`scrollHeight()` now report the reachable range
+  from the scrollable-overflow rectangle instead of `contentSize`; leaf
+  `contentSize` is `start padding + measured + (scroll ? end padding)` (RTL
+  swaps sides); block/flex/grid populate the rectangle for in-flow and absolute
+  children.
 - **P3 batch (partial)**: block children resolve percentage padding/inset and
   percentage heights against the content box (a definite height now provides the
   basis; `min-height` alone does not); margin collapse-through is decided by the
