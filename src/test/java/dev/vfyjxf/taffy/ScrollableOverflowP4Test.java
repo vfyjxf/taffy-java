@@ -609,6 +609,42 @@ public class ScrollableOverflowP4Test {
         assertContainsOrigin(scrollLtr);
     }
 
+    @Test
+    @DisplayName("rounding_preserves_the_scrollable_overflow_rectangle")
+    void roundingPreservesScrollableOverflow() {
+        TaffyTree tree = new TaffyTree();
+        NodeId node = tree.newLeaf(leafStyle(100f, 100f, TaffyDirection.LTR, SCROLL));
+        tree.setUnroundedLayout(node, new Layout(
+            0,
+            new FloatPoint(0.4f, 0.4f),
+            new FloatSize(10.6f, 5.4f),
+            new FloatSize(30.4f, 20.6f),
+            new ScrollableOverflow(new FloatRect(-0.3f, 30.6f, -0.4f, 12.4f), false, false),
+            new FloatSize(1.4f, 0.6f),
+            FloatRect.zero(),
+            FloatRect.zero(),
+            FloatRect.zero()
+        ));
+
+        RoundLayout.roundLayout(tree, node);
+
+        ScrollableOverflow rounded = tree.getLayout(node).scrollableOverflow();
+        assertEquals(31f, rounded.right(), EPSILON, "30.6 rounds to 31 instead of being dropped");
+        assertEquals(12f, rounded.bottom(), EPSILON, "12.4 rounds to 12");
+        assertEquals(
+            Float.floatToRawIntBits(-0.0f),
+            Float.floatToRawIntBits(rounded.left()),
+            "a -0.0 start edge must survive rounding with its sign"
+        );
+        assertEquals(
+            Float.floatToRawIntBits(-0.0f),
+            Float.floatToRawIntBits(rounded.top()),
+            "a -0.0 start edge must survive rounding with its sign"
+        );
+        assertFalse(rounded.reversedX());
+        assertFalse(rounded.reversedY());
+    }
+
     // === SO-01: ScrollableOverflow rectangle semantics ===
 
     @Test
@@ -795,6 +831,25 @@ public class ScrollableOverflowP4Test {
 
         assertEquals(60f, tree.getLayout(node).scrollableOverflow().right(), EPSILON);
         assertEquals(25f, tree.getLayout(node).scrollableOverflow().bottom(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("default_rounding_keeps_the_leaf_overflow_reachable")
+    void defaultRoundingKeepsLeafOverflow() {
+        // Rounding is enabled by default: the leaf rectangle computed by LayoutComputer must survive
+        // RoundLayout instead of being reset to ZERO by a compatibility-constructor rebuild.
+        TaffyTree tree = new TaffyTree();
+        NodeId node = tree.newLeafWithMeasure(
+            leafStyle(100f, 100f, TaffyDirection.LTR, SCROLL),
+            (knownDimensions, availableSpace) -> new FloatSize(300f, 200f)
+        );
+
+        tree.computeLayout(node, TaffySize.maxContent());
+        Layout layout = tree.getLayout(node);
+
+        assertEquals(330f, layout.scrollableOverflow().right(), EPSILON, "10 + 300 + 20");
+        assertEquals(220f, layout.scrollableOverflow().bottom(), EPSILON, "5 + 200 + 15");
+        assertEquals(230f, layout.scrollWidth(), EPSILON, "content 330 less the 100px padding box");
     }
 
     @Test
