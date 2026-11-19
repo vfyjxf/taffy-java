@@ -1,13 +1,26 @@
 package dev.vfyjxf.taffy;
 
+import dev.vfyjxf.taffy.geometry.FloatSize;
+import dev.vfyjxf.taffy.geometry.TaffySize;
+import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.CalcExpression;
+import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDisplay;
+import dev.vfyjxf.taffy.style.TaffyStyle;
+import dev.vfyjxf.taffy.tree.Layout;
+import dev.vfyjxf.taffy.tree.NodeId;
+import dev.vfyjxf.taffy.tree.TaffyTree;
+import dev.vfyjxf.taffy.util.MeasureFunc;
 import dev.vfyjxf.taffy.util.SizingKeyword;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -349,5 +362,292 @@ public class SizingKeywordP5Test {
             assertTrue(Float.isNaN(TaffyDimension.auto().maybeResolve(100f)));
             assertSame(TaffyDimension.fitContent(), TaffyDimension.fitContent());
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 4. flex main axis and flex-basis wiring (FL-17)
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("flex main axis and flex-basis (FL-17)")
+    class FlexMainKeywordTests {
+
+        @Test
+        @DisplayName("flex-basis: min-content measures under a min-content constraint")
+        void flexBasisMinContentMeasuresUnderMinContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.minContent());
+
+            assertEquals(40f, layout.size().width, EPSILON);
+            assertTrue(firstCall(measure).availableSpaces().width.isMinContent(),
+                    "flex base size is measured under min-content");
+        }
+
+        @Test
+        @DisplayName("flex-basis: max-content measures under a max-content constraint")
+        void flexBasisMaxContentMeasuresUnderMaxContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.maxContent());
+
+            assertEquals(100f, layout.size().width, EPSILON);
+            assertTrue(firstCall(measure).availableSpaces().width.isMaxContent(),
+                    "flex base size is measured under max-content");
+        }
+
+        @Test
+        @DisplayName("flex-basis: fit-content measures under the stretch size")
+        void flexBasisFitContentMeasuresUnderStretchSize() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.fitContent());
+
+            assertEquals(100f, layout.size().width, EPSILON);
+            AvailableSpace constraint = firstCall(measure).availableSpaces().width;
+            assertTrue(constraint.isDefinite(), "bare fit-content measures under a definite constraint");
+            assertEquals(300f, constraint.getValue(), EPSILON);
+        }
+
+        @Test
+        @DisplayName("flex-basis: fit-content(40px) measures under the limit")
+        void flexBasisFitContentLengthClampsToLimit() {
+            RecordingMeasure measure = new RecordingMeasure(10f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.fitContent(LengthPercentage.length(40f)));
+
+            assertEquals(40f, layout.size().width, EPSILON);
+            assertEquals(40f, firstCall(measure).availableSpaces().width.getValue(), EPSILON);
+        }
+
+        @Test
+        @DisplayName("flex-basis: fit-content(50%) resolves against the container inner main size")
+        void flexBasisFitContentPercentUsesPercentageBasis() {
+            RecordingMeasure measure = new RecordingMeasure(10f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.fitContent(LengthPercentage.percent(0.5f)));
+
+            assertEquals(100f, layout.size().width, EPSILON);
+            assertEquals(150f, firstCall(measure).availableSpaces().width.getValue(), EPSILON);
+        }
+
+        @Test
+        @DisplayName("flex-basis: fit-content(calc()) resolves against the percentage basis")
+        void flexBasisFitContentCalcUsesPercentageBasis() {
+            RecordingMeasure measure = new RecordingMeasure(10f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.fitContent(
+                            LengthPercentage.calc(CalcExpression.percentPlusLength(0.5f, 10f))));
+
+            assertEquals(100f, layout.size().width, EPSILON);
+            assertEquals(160f, firstCall(measure).availableSpaces().width.getValue(), EPSILON);
+        }
+
+        @Test
+        @DisplayName("an unresolvable fit-content(percentage) basis behaves as content")
+        void flexBasisFitContentPercentUnresolvableBehavesAsContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 40f, 20f, 60f);
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.flexDirection = FlexDirection.COLUMN;
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(300f), TaffyDimension.AUTO);
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.flexBasis = TaffyDimension.fitContent(LengthPercentage.percent(0.5f));
+            NodeId child = tree.newLeafWithMeasure(childStyle, measure);
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            assertEquals(60f, tree.getLayout(child).size().height, EPSILON,
+                    "unknown basis falls back to the default max-content constraint");
+            assertTrue(firstCall(measure).availableSpaces().height.isMaxContent(),
+                    "the keyword is treated as content, not as a definite percentage");
+        }
+
+        @Test
+        @DisplayName("flex-basis: stretch resolves to an exact size without measuring the main axis")
+        void flexBasisStretchResolvesExactly() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.stretch());
+
+            assertEquals(300f, layout.size().width, EPSILON);
+            for (MeasureCall call : measure.calls) {
+                assertFalse(call.availableSpaces().width.isMaxContent(),
+                        "stretch never measures the main axis under max-content");
+            }
+        }
+
+        @Test
+        @DisplayName("flex-basis: content still measures the item's content")
+        void flexBasisContentStillMeasuresFromContent() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.content());
+
+            assertEquals(100f, layout.size().width, EPSILON);
+            assertTrue(firstCall(measure).availableSpaces().width.isMaxContent(),
+                    "content is measured under the default max-content constraint");
+        }
+
+        @Test
+        @DisplayName("a main-axis size keyword applies when flex-basis is auto")
+        void mainSizeKeywordAppliesWhenFlexBasisAuto() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.minContent(), TaffyDimension.length(20f)));
+
+            assertEquals(40f, layout.size().width, EPSILON);
+            assertTrue(firstCall(measure).availableSpaces().width.isMinContent(),
+                    "the main size keyword replaces the default constraint");
+        }
+
+        @Test
+        @DisplayName("a main-axis fit-content(size) applies when flex-basis is auto")
+        void mainSizeFitContentLengthAppliesWhenFlexBasisAuto() {
+            RecordingMeasure measure = new RecordingMeasure(10f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(
+                            TaffyDimension.fitContent(LengthPercentage.length(60f)),
+                            TaffyDimension.length(20f)));
+
+            assertEquals(60f, layout.size().width, EPSILON);
+            assertEquals(60f, firstCall(measure).availableSpaces().width.getValue(), EPSILON);
+        }
+
+        @Test
+        @DisplayName("a main-axis stretch applies exactly when flex-basis is auto")
+        void mainSizeStretchResolvesExactly() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.stretch(), TaffyDimension.length(20f)));
+
+            assertEquals(300f, layout.size().width, EPSILON);
+            for (MeasureCall call : measure.calls) {
+                assertFalse(call.availableSpaces().width.isMaxContent(),
+                        "stretch never measures the main axis under max-content");
+            }
+        }
+
+        @Test
+        @DisplayName("a keyword flex-basis takes precedence over a definite main size")
+        void keywordFlexBasisTakesPrecedenceOverMainSize() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style -> {
+                style.size = new TaffySize<>(TaffyDimension.length(50f), TaffyDimension.length(20f));
+                style.flexBasis = TaffyDimension.maxContent();
+            });
+
+            assertEquals(100f, layout.size().width, EPSILON,
+                    "max-content replaces the 50px main size");
+            assertTrue(firstCall(measure).availableSpaces().width.isMaxContent());
+        }
+
+        @Test
+        @DisplayName("legacy percentage flex-basis values are unchanged")
+        void percentFlexBasisUnchanged() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.flexBasis = TaffyDimension.percent(1f));
+
+            assertEquals(300f, layout.size().width, EPSILON);
+            assertFirstCallIsAutoMinimumProbe(measure);
+        }
+
+        @Test
+        @DisplayName("legacy percentage main sizes are unchanged")
+        void percentMainSizeUnchanged() {
+            RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
+            Layout layout = rowLayout(300f, 100f, measure, style ->
+                    style.size = new TaffySize<>(TaffyDimension.percent(0.5f), TaffyDimension.length(20f)));
+
+            assertEquals(150f, layout.size().width, EPSILON);
+            assertFirstCallIsAutoMinimumProbe(measure);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // helpers
+    // ------------------------------------------------------------------
+
+    private record MeasureCall(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpaces) {
+    }
+
+    private static final class RecordingMeasure implements MeasureFunc {
+
+        private final float minContentWidth;
+        private final float maxContentWidth;
+        private final float minContentHeight;
+        private final float maxContentHeight;
+        final List<MeasureCall> calls = new ArrayList<>();
+
+        RecordingMeasure(float minContentWidth, float maxContentWidth,
+                         float minContentHeight, float maxContentHeight) {
+            this.minContentWidth = minContentWidth;
+            this.maxContentWidth = maxContentWidth;
+            this.minContentHeight = minContentHeight;
+            this.maxContentHeight = maxContentHeight;
+        }
+
+        @Override
+        public FloatSize measure(FloatSize knownDimensions, TaffySize<AvailableSpace> availableSpace) {
+            calls.add(new MeasureCall(knownDimensions, availableSpace));
+            float width = Float.isNaN(knownDimensions.width)
+                    ? resolve(availableSpace.width, minContentWidth, maxContentWidth)
+                    : knownDimensions.width;
+            float height = Float.isNaN(knownDimensions.height)
+                    ? resolve(availableSpace.height, minContentHeight, maxContentHeight)
+                    : knownDimensions.height;
+            return new FloatSize(width, height);
+        }
+
+        private static float resolve(AvailableSpace availableSpace, float minContent, float maxContent) {
+            if (availableSpace == null) return maxContent;
+            if (availableSpace.isMinContent()) return minContent;
+            if (availableSpace.isMaxContent()) return maxContent;
+            return Math.max(Math.min(maxContent, availableSpace.getValue()), minContent);
+        }
+    }
+
+    private static MeasureCall firstCall(RecordingMeasure measure) {
+        assertFalse(measure.calls.isEmpty(), "the item was never measured");
+        return measure.calls.get(0);
+    }
+
+    /**
+     * A definite (non-keyword) flex base size is not measured; the first callback comes from the
+     * automatic minimum-size probe, which always measures under a min-content constraint.
+     */
+    private static void assertFirstCallIsAutoMinimumProbe(RecordingMeasure measure) {
+        if (!measure.calls.isEmpty()) {
+            assertTrue(firstCall(measure).availableSpaces().width.isMinContent(),
+                    "no max-content/definite flex-base measurement for a definite basis");
+        }
+    }
+
+    private interface ChildStyleCustomizer {
+        void customize(TaffyStyle style);
+    }
+
+    private static Layout rowLayout(float width, float height, MeasureFunc measure,
+                                    ChildStyleCustomizer customizer) {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle containerStyle = new TaffyStyle();
+        containerStyle.display = TaffyDisplay.FLEX;
+        containerStyle.flexDirection = FlexDirection.ROW;
+        containerStyle.alignItems = AlignItems.START;
+        containerStyle.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
+        NodeId container = tree.newLeaf(containerStyle);
+
+        TaffyStyle childStyle = new TaffyStyle();
+        customizer.customize(childStyle);
+        NodeId item = tree.newLeafWithMeasure(childStyle, measure);
+        tree.addChild(container, item);
+
+        tree.computeLayout(container, TaffySize.maxContent());
+        return tree.getLayout(item);
     }
 }

@@ -28,6 +28,7 @@ import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
+import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
 import java.util.ArrayList;
@@ -815,47 +816,86 @@ public class FlexboxComputer {
                                             ? paddingBorderMain
                                             : 0f;
 
-            float basis;
-            float resolvedFlexBasis = (flexBasis.isAuto() || flexBasis.isContent()) ? NaN : flexBasis.maybeResolve(isRow ? nodeInnerSize.width : nodeInnerSize.height);
+            // ST-01/FL-17: percentages, stretch and fit-content resolve against the container's
+            // inner main size. FL-15 replaces this with the explicit known_dimensions_are_definite
+            // flag; until then this is exactly the basis the existing percentage resolution used.
+            float percentResolutionMainSize = isRow ? nodeInnerSize.width : nodeInnerSize.height;
+            float itemMarginMain = isRow
+                                  ? item.margin.left + item.margin.right
+                                  : item.margin.top + item.margin.bottom;
+            // The size the item would take if stretched to fill the container's main axis
+            // (upstream main_stretch_size: inner main size minus the item's main margins, floored
+            // at zero). Used by 'stretch' and the bare 'fit-content'.
+            float mainStretchSize = TaffyMath.maybeMax(
+                TaffyMath.maybeSub(percentResolutionMainSize, itemMarginMain), 0f);
+
+            float resolvedFlexBasis = (flexBasis.isAuto() || flexBasis.isContent())
+                                      ? NaN
+                                      : flexBasis.maybeResolve(percentResolutionMainSize);
             // Add box_sizing_adjustment to resolved flex-basis (matching Rust's maybe_add behavior)
             if (!isNaN(resolvedFlexBasis)) {
                 resolvedFlexBasis = resolvedFlexBasis + boxSizingAdjustmentMain;
             }
 
+            // A. If the item has a definite used flex basis, that's the flex base size.
+            //
+            // ST-01/FL-17 (#1099/#1103/#1247): a flex-basis that is a sizing keyword is used in
+            // place of the main size property. 'stretch' resolves to an exact (definite) size
+            // while the other keywords determine the available-space constraint the item is
+            // measured under. A keyword that cannot be resolved in the current context behaves as
+            // 'content', i.e. it is measured under the default constraint below.
+            Float exactBasis = null;
+            AvailableSpace keywordMainAvailableSpace = null;
+
             if (!isNaN(resolvedFlexBasis)) {
-                // A. If the item has a definite used flex basis, that's the flex base size.
-                basis = resolvedFlexBasis;
+                exactBasis = resolvedFlexBasis;
+            } else if (flexBasis.isContent()) {
+                // A flex basis of 'content' indicates an automatic size based on the item's
+                // content: the item is measured (ignoring its main size property) under the
+                // default constraint below.
+            } else if (flexBasis.isSizingKeyword()) {
+                SizingKeyword.Resolution resolution = SizingKeyword.resolve(
+                    flexBasis, mainStretchSize, percentResolutionMainSize);
+                if (resolution != null && resolution.isExact()) {
+                    exactBasis = resolution.getExactValue();
+                } else if (resolution != null) {
+                    keywordMainAvailableSpace = resolution.getMeasureAvailableSpace();
+                }
             } else if (!isNaN(mainSize) && flexBasis.isAuto()) {
                 // B/A. If flex basis is auto, and there's a definite main size, use that.
                 // Only flex-basis: auto may fall back to the main size (#1286): an unresolved
                 // percentage (or any other non-auto basis, e.g. content) is treated as content and
                 // measured below.
-                basis = mainSize;
+                exactBasis = mainSize;
+            } else if (flexBasis.isAuto()) {
+                // A main size that is a sizing keyword either resolves to an exact size or
+                // determines the available-space constraint the item is measured under
+                // (upstream #1099/#1103).
+                TaffyDimension mainDim = isRow ? childStyle.getSize().width : childStyle.getSize().height;
+                SizingKeyword.Resolution resolution = SizingKeyword.resolve(
+                    mainDim, mainStretchSize, percentResolutionMainSize);
+                if (resolution != null && resolution.isExact()) {
+                    exactBasis = resolution.getExactValue();
+                } else if (resolution != null) {
+                    keywordMainAvailableSpace = resolution.getMeasureAvailableSpace();
+                }
+            }
+
+            float basis;
+            if (exactBasis != null) {
+                basis = exactBasis;
             } else {
                 // E. Otherwise, size the item into the available space using its used flex basis
                 //    in place of its main size, treating a value of content as max-content.
                 //    The flex base size is the item's resulting main size.
-
-                // Check if main-axis size is an intrinsic sizing keyword
-                TaffyDimension mainDim = isRow ? childStyle.getSize().width : childStyle.getSize().height;
-                boolean mainIsMinContent = mainDim != null && mainDim.isMinContent();
-                boolean mainIsFitContent = mainDim != null && mainDim.isFitContent();
-
-                // Main axis: determine available space based on intrinsic sizing keyword
-                AvailableSpace mainAvailSpace;
-                if (mainIsMinContent) {
-                    mainAvailSpace = AvailableSpace.minContent();
-                } else if (mainIsFitContent) {
-                    // fit-content behaves like max-content but clamped by available space
-                    mainAvailSpace = isRow ? availableSpace.width : availableSpace.height;
-                    if (mainAvailSpace.isMaxContent() || mainAvailSpace.isMinContent()) {
-                        mainAvailSpace = AvailableSpace.maxContent();
-                    }
-                } else {
-                    // Default to max-content (includes mainIsMaxContent case)
-                    mainAvailSpace = isRow
-                                     ? (availableSpace.width.isMinContent() ? AvailableSpace.minContent() : AvailableSpace.maxContent())
-                                     : (availableSpace.height.isMinContent() ? AvailableSpace.minContent() : AvailableSpace.maxContent());
+                //    A sizing-keyword constraint resolved above replaces the default constraint.
+                AvailableSpace mainAvailSpace = keywordMainAvailableSpace;
+                if (mainAvailSpace == null) {
+                    // Map AvailableSpace::Definite to AvailableSpace::MaxContent
+                    boolean mainIsMinContent = isRow
+                                               ? availableSpace.width.isMinContent()
+                                               : availableSpace.height.isMinContent();
+                    mainAvailSpace = mainIsMinContent ? AvailableSpace.minContent() : AvailableSpace.maxContent();
                 }
 
                 // Cross axis: use computed crossAxisAvailableSpace
