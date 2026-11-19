@@ -36,6 +36,15 @@ public class TaffyTree {
     /** NodeData storage by node ID - using fastutil for faster primitive key access */
     private final Long2ObjectOpenHashMap<NodeData> nodes;
 
+    /**
+     * Detailed grid information recorded by the most recent completed grid layout of a node
+     * (GR-18 additive API). Kept separately from {@link NodeData} so that the internal node
+     * record is untouched; the map is maintained by {@link #setDetailedGridInfo(NodeId,
+     * DetailedGridInfo)} from the grid algorithm and pruned by {@link #remove(NodeId)}/
+     * {@link #clear()}.
+     */
+    private final Long2ObjectOpenHashMap<DetailedGridInfo> detailedGridInfos;
+
     /** Context data (legacy measure functions) storage by node ID */
     private final Long2ObjectOpenHashMap<MeasureFunc> nodeContextData;
 
@@ -76,6 +85,7 @@ public class TaffyTree {
      */
     public TaffyTree(int capacity) {
         this.nodes = new Long2ObjectOpenHashMap<>(capacity);
+        this.detailedGridInfos = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeContextData = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeMeasureContexts = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeMeasureFunctions = new Long2ObjectOpenHashMap<>(capacity);
@@ -227,6 +237,7 @@ public class TaffyTree {
      */
     public void clear() {
         nodes.clear();
+        detailedGridInfos.clear();
         nodeContextData.clear();
         nodeMeasureContexts.clear();
         nodeMeasureFunctions.clear();
@@ -263,6 +274,7 @@ public class TaffyTree {
         children.remove(key);
         parents.remove(key);
         nodes.remove(key);
+        detailedGridInfos.remove(key);
         nodeContextData.remove(key);
         nodeMeasureContexts.remove(key);
         nodeMeasureFunctions.remove(key);
@@ -636,6 +648,61 @@ public class TaffyTree {
     public Layout getUnroundedLayout(NodeId node) {
         NodeData data = nodes.get(node.getId());
         return data != null ? data.getUnroundedLayout() : null;
+    }
+
+    /**
+     * Returns the detailed grid information recorded by the most recent completed layout pass of
+     * a grid container (GR-18 additive API).
+     *
+     * <p>The returned value is an immutable snapshot: it describes the tracks and in-flow item
+     * areas the grid algorithm resolved for this node, in the grid container's border-box
+     * coordinate space, using unrounded values. Reading it never changes layout and it is never
+     * mutated by later layout passes (a later pass replaces the stored value instead).</p>
+     *
+     * <p>Returns {@code null} when the node does not exist, when its current display is not
+     * {@link TaffyDisplay#GRID}, and when a grid node has not gone through the grid layout path
+     * yet. Notably, this port dispatches a childless node to the measured-leaf path, so a grid
+     * container with no children has no detailed information. A non-grid node returns
+     * {@code null} rather than an empty value object: there is no axis or item information to
+     * report, and callers must be able to distinguish "not a grid" from "a grid that has not been
+     * laid out" (the Javadoc of {@link DetailedGridInfo} documents this first-slice contract).</p>
+     *
+     * <p>The information is not cleared eagerly by style or child changes; it is replaced by the
+     * next completed grid layout. Call this after {@code computeLayout}/{@code
+     * computeLayoutWithMeasure} to obtain current values.</p>
+     *
+     * @param node the node to query
+     * @return the detailed grid info, or {@code null} as described above
+     */
+    public DetailedGridInfo getDetailedGridInfo(NodeId node) {
+        NodeData data = nodes.get(node.getId());
+        if (data == null) {
+            return null;
+        }
+        if (data.getStyle().getDisplay() != TaffyDisplay.GRID) {
+            return null;
+        }
+        return detailedGridInfos.get(node.getId());
+    }
+
+    /**
+     * Records the detailed grid information of a node. Layout-algorithm internal: the grid
+     * algorithm calls this after resolving tracks and placements; callers of the public API only
+     * read the value through {@link #getDetailedGridInfo(NodeId)}.
+     *
+     * <p>A {@code null} value clears the entry, and an unknown node is ignored. The map is pruned
+     * by {@link #remove(NodeId)} and {@link #clear()} as well.</p>
+     */
+    void setDetailedGridInfo(NodeId node, DetailedGridInfo detailedGridInfo) {
+        long key = node.getId();
+        if (!nodes.containsKey(key)) {
+            return;
+        }
+        if (detailedGridInfo == null) {
+            detailedGridInfos.remove(key);
+        } else {
+            detailedGridInfos.put(key, detailedGridInfo);
+        }
     }
 
     // === Layout Change Tracking (Yoga-style dirty propagation) ===

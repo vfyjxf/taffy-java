@@ -9,9 +9,11 @@ import dev.vfyjxf.taffy.style.NamedGridLine;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Resolves named grid lines and named grid area edges to numeric line indices.
@@ -583,6 +585,43 @@ public final class NamedLineResolver {
      */
     public boolean hasNamedLines() {
         return !rowLines.isEmpty() || !columnLines.isEmpty() || !areas.isEmpty();
+    }
+
+    /**
+     * An immutable snapshot of the <em>explicit</em> row line names of this resolver, mapping
+     * each name to its 1-based CSS grid line numbers in ascending order.
+     *
+     * <p>Line numbers use the CSS grid line convention (line 1 is the first explicit line;
+     * lines before the explicit grid are negative). Only names that were declared on the
+     * {@code grid-template-rows} track list are included: the {@code <area>-start}/
+     * {@code <area>-end} names generated implicitly by {@code grid-template-areas} live in the
+     * separate area table (see {@link #hasNamedLines()}) and are deliberately excluded, which is
+     * the upstream #1185 rule for the resolved track list. An explicitly declared name that
+     * happens to end in {@code -start}/{@code -end}, including one carried by a repeat()'s
+     * positional name sets, is still included.</p>
+     *
+     * <p>The returned map and its name lists are unmodifiable copies; mutating the resolver
+     * later cannot change them.</p>
+     */
+    public Map<String, List<Integer>> getRowLineNames() {
+        return snapshotLineNames(rowLines);
+    }
+
+    /**
+     * An immutable snapshot of the <em>explicit</em> column line names of this resolver.
+     *
+     * @see #getRowLineNames() for the line-number convention and the #1185 exclusion rule
+     */
+    public Map<String, List<Integer>> getColumnLineNames() {
+        return snapshotLineNames(columnLines);
+    }
+
+    private static Map<String, List<Integer>> snapshotLineNames(Map<String, List<Integer>> source) {
+        TreeMap<String, List<Integer>> copy = new TreeMap<>();
+        for (Map.Entry<String, List<Integer>> entry : source.entrySet()) {
+            copy.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return Collections.unmodifiableMap(copy);
     }
 
     @Override
