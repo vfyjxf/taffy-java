@@ -1037,6 +1037,7 @@ public class FlexboxComputer {
             for (FlexLine line : lines) {
                 // Step 1: Calculate content_contribution and content_flex_fraction for each item
                 for (FlexItem item : line.items) {
+                    TaffyStyle childStyle = layoutComputer.getTree().getStyle(item.nodeId);
                     float marginMain = isRow
                                        ? item.margin.left + item.margin.right
                                        : item.margin.top + item.margin.bottom;
@@ -1100,6 +1101,24 @@ public class FlexboxComputer {
                     } else if (item.overflow.x != Overflow.VISIBLE || item.overflow.y != Overflow.VISIBLE) {
                         // Scroll container: use flex-basis
                         contentContribution = intrinsicFlexBasis + marginMain;
+                    } else if (!Float.isNaN(stylePreferredMain)) {
+                        // FL-18 (#1155): if the item has a definite preferred main size then that is
+                        // its content contribution (an inherent-size measure of the item would return
+                        // it), floored by the item's main-axis padding+border, so measuring the item
+                        // can be skipped. Min/max clamping is applied like the measured contributions.
+                        float itemPaddingBorderMain = isRow
+                                                      ? item.padding.left + item.padding.right
+                                                        + item.border.left + item.border.right
+                                                      : item.padding.top + item.padding.bottom
+                                                        + item.border.top + item.border.bottom;
+                        float innerMainSize = Math.max(stylePreferredMain, itemPaddingBorderMain);
+                        if (isRow) {
+                            contentContribution = TaffyMath.maybeClamp(
+                                innerMainSize + marginMain, styleMinMain, styleMaxMain);
+                        } else {
+                            contentContribution = TaffyMath.maybeClamp(
+                                Math.max(innerMainSize, item.flexBasis) + marginMain, styleMinMain, styleMaxMain);
+                        }
                     } else {
                         // Measure child content size in main axis
                         AvailableSpace outerCrossAvail = isRow ? availableSpace.height : availableSpace.width;
@@ -1165,16 +1184,31 @@ public class FlexboxComputer {
 
                         // Measure only, as upstream's measure_child_size does: performing the layout here would
                         // overwrite the item's descendants and its final layout cache entry with this measuring pass.
+                        // FL-18 (#1155): measure the content size, not the inherent size. The
+                        // item's own preferred main size is applied by the fast path above, so this
+                        // call must not let the leaf re-apply the style size (it also keeps the
+                        // cache entries separate from inherent-size measures).
                         FloatSize measured = layoutComputer.measureChildSize(
                             item.nodeId,
                             childKnownDimensions,
                             nodeInnerSize,
                             childAvailSpace,
-                            SizingMode.INHERENT_SIZE,
+                            SizingMode.CONTENT_SIZE,
                             new TaffyLine<>(false, false)
                         );
 
                         float measuredMain = isRow ? measured.width : measured.height;
+
+                        // FL-18 (#1155): a known cross size is transferred through the item's
+                        // aspect ratio and floors the measured content size.
+                        Float itemAspectRatio = childStyle.getAspectRatio();
+                        float knownCross = isRow ? childKnownDimensions.height : childKnownDimensions.width;
+                        if (itemAspectRatio != null && !Float.isNaN(itemAspectRatio) && !Float.isNaN(knownCross)) {
+                            float transferredMain = isRow
+                                                    ? knownCross * itemAspectRatio
+                                                    : knownCross / itemAspectRatio;
+                            measuredMain = Math.max(measuredMain, transferredMain);
+                        }
 
                         // FL-04 (#1164): floor the inner contribution first, then add the main-axis margin,
                         // and only then clamp by the style min/max. The margin must not be clamped away.

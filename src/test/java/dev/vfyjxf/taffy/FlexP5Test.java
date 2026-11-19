@@ -1,5 +1,6 @@
 package dev.vfyjxf.taffy;
 
+import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
@@ -10,6 +11,7 @@ import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
+import dev.vfyjxf.taffy.tree.LayoutOutput;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.util.AlignmentHelper;
@@ -303,7 +305,96 @@ public class FlexP5Test {
     }
 
     // ------------------------------------------------------------------
-    // 4. legacy keyword regression (numeric values must not change)
+    // 4. intrinsic main-axis sizing (FL-18 #1155)
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("intrinsic main size and aspect ratio (FL-18 #1155)")
+    class IntrinsicAspect {
+
+        @Test
+        @DisplayName("row: a stretched definite cross transfers through aspect-ratio into the intrinsic main size")
+        void rowIntrinsicMainSizeUsesTransferredAspectRatio() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.flexDirection = FlexDirection.ROW;
+            containerStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100f));
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.aspectRatio = 2f;
+            NodeId child = tree.newLeaf(childStyle);
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            // Cross size 100 is stretched definite -> main = 100 * 2.
+            assertEquals(200f, tree.getLayout(container).size().width, EPSILON);
+            assertEquals(100f, tree.getLayout(container).size().height, EPSILON);
+            assertEquals(200f, tree.getLayout(child).size().width, EPSILON);
+            assertEquals(100f, tree.getLayout(child).size().height, EPSILON);
+        }
+
+        @Test
+        @DisplayName("column: a stretched definite cross transfers through aspect-ratio into the intrinsic main size")
+        void columnIntrinsicMainSizeUsesTransferredAspectRatio() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.flexDirection = FlexDirection.COLUMN;
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.AUTO);
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.aspectRatio = 0.5f;
+            NodeId child = tree.newLeaf(childStyle);
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            // Cross size 100 is stretched definite -> main = 100 / 0.5.
+            assertEquals(100f, tree.getLayout(container).size().width, EPSILON);
+            assertEquals(200f, tree.getLayout(container).size().height, EPSILON);
+            assertEquals(100f, tree.getLayout(child).size().width, EPSILON);
+            assertEquals(200f, tree.getLayout(child).size().height, EPSILON);
+        }
+
+        @Test
+        @DisplayName("a definite preferred main size skips the content measure of the intrinsic contribution")
+        void definitePreferredMainSizeSkipsContentMeasure() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.flexDirection = FlexDirection.ROW;
+            containerStyle.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100f));
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.size = new TaffySize<>(TaffyDimension.length(50f), TaffyDimension.length(20f));
+            // An explicit min-size keeps the automatic minimum-size measurement out of the way,
+            // so any main-axis-unknown measure can only come from the intrinsic contribution.
+            childStyle.minSize = new TaffySize<>(TaffyDimension.length(0f), TaffyDimension.length(0f));
+
+            int[] unknownMainMeasures = {0};
+            NodeId child = tree.newLeafWithMeasureFunction(childStyle, context -> {
+                if (Float.isNaN(context.input().knownDimensions().width)) {
+                    unknownMainMeasures[0]++;
+                }
+                return LayoutOutput.fromSizes(new FloatSize(30f, 10f), FloatSize.zero());
+            });
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            assertEquals(0, unknownMainMeasures[0],
+                "the definite preferred main size is used directly instead of measuring the item");
+            assertEquals(50f, tree.getLayout(container).size().width, EPSILON);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 5. legacy keyword regression (numeric values must not change)
     // ------------------------------------------------------------------
 
     @Nested
