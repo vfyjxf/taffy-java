@@ -412,6 +412,41 @@ public class FlexP5Test {
         }
 
         @Test
+        @DisplayName("column intrinsic height measures the child at its max-width-clamped width (FL-20 #1208)")
+        void columnIntrinsicHeightMeasuresAtClampedCrossSize() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.flexDirection = FlexDirection.COLUMN;
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(300f), TaffyDimension.AUTO);
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.flexGrow = 1f;
+            childStyle.flexBasis = TaffyDimension.ZERO;
+            childStyle.size = new TaffySize<>(TaffyDimension.percent(100f), TaffyDimension.AUTO);
+            childStyle.maxSize = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+            NodeId child = tree.newLeafWithMeasureFunction(childStyle, context -> {
+                // Simulate wrapped text: the 300px-wide measure fits in two lines (20px), while
+                // the 200px-wide max-width clamp wraps it onto three lines (30px).
+                float measureWidth = context.input().knownDimensions().width;
+                if (Float.isNaN(measureWidth)) {
+                    measureWidth = 300f;
+                }
+                float height = measureWidth >= 300f ? 20f : 30f;
+                return LayoutOutput.fromSizes(new FloatSize(Math.min(measureWidth, 120f), height), FloatSize.zero());
+            });
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            assertEquals(30f, tree.getLayout(container).size().height, EPSILON,
+                "the intrinsic height must be measured at the 200px max-width clamp, not the 300px width");
+            assertEquals(200f, tree.getLayout(child).size().width, EPSILON);
+            assertEquals(30f, tree.getLayout(child).size().height, EPSILON);
+        }
+
+        @Test
         @DisplayName("a definite preferred main size skips the content measure of the intrinsic contribution")
         void definitePreferredMainSizeSkipsContentMeasure() {
             TaffyTree tree = new TaffyTree();

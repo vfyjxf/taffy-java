@@ -1174,6 +1174,20 @@ public class FlexboxComputer {
                             knownHeight = NaN;
                         }
 
+                        // FL-20 (#1208): clamp the definite cross size by the cross min/max
+                        // sizes (aspect-ratio transferred), as determineFlexBaseSize does: an
+                        // item measured wider than its max-width wraps onto fewer lines and
+                        // under-reports its height.
+                        FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, item.aspectRatio);
+                        FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, item.aspectRatio);
+                        if (isRow) {
+                            knownHeight = TaffyMath.maybeClamp(
+                                knownHeight, transferredMinSize.height, transferredMaxSize.height);
+                        } else {
+                            knownWidth = TaffyMath.maybeClamp(
+                                knownWidth, transferredMinSize.width, transferredMaxSize.width);
+                        }
+
                         // Stretch cross size if needed
                         if (item.alignSelf == AlignSelf.STRETCH) {
                             boolean crossMarginsAuto = isRow
