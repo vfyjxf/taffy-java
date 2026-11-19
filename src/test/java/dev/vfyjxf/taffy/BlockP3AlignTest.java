@@ -40,10 +40,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Not covered, with the reason:</p>
  * <ul>
- *   <li>{@code block_align_content_safe_end_overflow}: the fixture needs {@code safe end}, which
- *       Java's {@link AlignContent} cannot express (no {@code safe}/{@code unsafe} overflow
- *       position, ST-02). The unsafe end/center overflow cases are tested instead and the safe
- *       fallback is a TODO in {@code BlockComputer#blockAlignContentOffset}.</li>
+ *   <li>{@code block_align_content_safe_end_overflow}: the safe-end case is now covered by
+ *       {@code BlockP5Test} through {@link AlignContent#SAFE_END} (ST-02, PK-14 helper
+ *       wiring); this file keeps the unsafe end/center overflow cases.</li>
  *   <li>{@code block_align_content_nested_independent}: its expectation ({@code y=25} under the
  *       inner 60px container) depends on upstream #1087/#1251 making a non-normal
  *       {@code align-content} block establish an independent formatting context (BK-18, P7).
