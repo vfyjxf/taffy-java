@@ -22,7 +22,6 @@ import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.util.MeasureFunc;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -42,14 +41,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *       {@code grid_content_sized_columns_max_content_and_max_content_fixed_and_max_content} is
  *       <b>already reproduced</b>: the {@code minmax(max-content, 20px)} track keeps its 20px
  *       maximum, so this port has no beyond-limits stage that could grow it.</li>
- *   <li><b>GR-02 T14</b> ({@code 3defa72e} #1245): the growth-limit space is only distributed to
- *       infinitely growable tracks (their growth limit is still infinite, or it was raised by the
- *       previous step) and is capped by a {@code fit-content()} argument; only the space left over
- *       is distributed beyond the limits. This port has no growth-limit distribution for spanning
- *       items at all, so both upstream fixtures are still red and are recorded as disabled tests
- *       carrying the browser expectations: {@code grid_fit_content_span_2_capped_by_non_growable_
- *       fit_content_track} (45px / 20px) and {@code grid_fit_content_span_3_between_auto_tracks}
- *       (30px / 30px / 30px). See the P7 report for the measured old values.</li>
+ *   <li><b>GR-02 T14</b> ({@code 3defa72e} #1245): the growth-limit space of a spanning item is
+ *       only distributed to infinitely growable tracks (their growth limit is still infinite, or it
+ *       was raised by the previous step) and is capped by a {@code fit-content()} argument; only
+ *       the space left over is distributed beyond the limits. Implemented in
+ *       {@code GridComputer.distributeSpanningItemGrowthLimits} (11.5 steps 4-5) with upstream's
+ *       planned-increase/growable bookkeeping, so both upstream fixtures reproduce Chrome:
+ *       {@code grid_fit_content_span_2_capped_by_non_growable_fit_content_track} (45px / 20px) and
+ *       {@code grid_fit_content_span_3_between_auto_tracks} (30px / 30px / 30px). The step only
+ *       runs for a definite axis: the min-/max-content constrained axis keeps this port's existing
+ *       base-size model, because upstream's indefinite path also applies the limited min-content
+ *       contribution rule (see the next bullet).</li>
  *   <li><b>GR-02 limited min-content</b> ({@code 1a2d05ab} #1022 step 1): under a min-/max-content
  *       constraint a non-scrolling item's min-content contribution is limited by the sum of the
  *       definite max track sizing functions it spans and floored at its minimum contribution. The
@@ -118,8 +120,6 @@ class GridResidualP7Test {
     // ------------------------------------------------------------------
 
     @Test
-    @Disabled("GR-02 T14 (#1245): the growth-limit distribution for spanning items is not ported; "
-        + "this port gets 2.5px / 22.5px instead of the 45px / 20px below (see the P7 report)")
     @DisplayName("GR-02 T14: grid_fit_content_span_2_capped_by_non_growable_fit_content_track")
     void fitContentSpanTwoCappedByNonGrowableTrack() {
         TaffyTree tree = new TaffyTree();
@@ -148,8 +148,6 @@ class GridResidualP7Test {
     }
 
     @Test
-    @Disabled("GR-02 T14 (#1245): the growth-limit distribution for spanning items is not ported; "
-        + "this port keeps the spanning item at 30px of columns instead of 100px (see the P7 report)")
     @DisplayName("GR-02 T14: grid_fit_content_span_3_between_auto_tracks")
     void fitContentSpanThreeBetweenAutoTracks() {
         TaffyTree tree = new TaffyTree();
