@@ -143,25 +143,35 @@ public record Layout(
     }
 
     /**
-     * Return the scroll width of the node.
+     * Return the maximum horizontal scroll offset of the node.
      *
-     * <p>Still the legacy 1.x formula based on {@link #contentSize()}; the scrollable-overflow
-     * based formula belongs to P4/SO-01.</p>
+     * <p>The reachable extent of the content is the content extent less the width of the padding
+     * box, floored at zero, so it must not depend on which edge a border sits on: both
+     * {@code border.left} and {@code border.right} are added (P4/SO-03, upstream #1007).</p>
+     *
+     * <p><b>1.2 status:</b> still the legacy {@link #contentSize()} formula. The scrollable-overflow
+     * rectangle already existing in {@link #scrollableOverflow()} replaces it once the block, flex
+     * and grid algorithms populate that rectangle (SO-01); the reversed scroll origins are only
+     * expressible through that rectangle, so the two models are not mixed here.</p>
      */
     public float scrollWidth() {
         return Math.max(0, contentSize.width + Math.min(scrollbarSize.width, size.width)
-                           - size.width + border.right);
+                           - size.width + border.left + border.right);
     }
 
     /**
-     * Return the scroll height of the node.
+     * Return the maximum vertical scroll offset of the node.
      *
-     * <p>Still the legacy 1.x formula based on {@link #contentSize()}; the scrollable-overflow
-     * based formula belongs to P4/SO-01.</p>
+     * <p>The reachable extent of the content is the content extent less the height of the padding
+     * box, floored at zero, so it must not depend on which edge a border sits on: both
+     * {@code border.top} and {@code border.bottom} are added (P4/SO-03, upstream #1007).</p>
+     *
+     * <p><b>1.2 status:</b> still the legacy {@link #contentSize()} formula; see
+     * {@link #scrollWidth()} for the pending scrollable-overflow switch.</p>
      */
     public float scrollHeight() {
         return Math.max(0, contentSize.height + Math.min(scrollbarSize.height, size.height)
-                           - size.height + border.bottom);
+                           - size.height + border.top + border.bottom);
     }
 
     // === Getter methods ===
