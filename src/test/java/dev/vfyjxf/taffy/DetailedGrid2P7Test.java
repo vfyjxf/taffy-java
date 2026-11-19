@@ -1,6 +1,7 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.TaffyLine;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.GridPlacement;
@@ -38,7 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code <area>-start}/{@code <area>-end} names of {@code grid-template-areas} live in the
  * separate {@link DetailedGridInfo#areas()} table, and the first-slice
  * {@link DetailedGridInfo.Tracks#lineNames()} accessor keeps returning the same immutable,
- * sorted map.</p>
+ * sorted map. Item rectangles (#1134), the resolved track-list serialization (#1136/#1280) and
+ * the empty-axis distinction (#1167) are covered by the later slices in this file.</p>
  */
 class DetailedGrid2P7Test {
 
@@ -88,6 +90,20 @@ class DetailedGrid2P7Test {
 
     private static GridTrackInfo track(float start, float size) {
         return new GridTrackInfo(start, size);
+    }
+
+    private static TaffyRect<LengthPercentage> all(float value) {
+        LengthPercentage length = LengthPercentage.length(value);
+        return new TaffyRect<>(length, length, length, length);
+    }
+
+    private static void assertRectangle(DetailedGridInfo.ItemRectangle rectangle,
+                                        float x, float y, float width, float height, String message) {
+        assertNotNull(rectangle, message);
+        assertEquals(x, rectangle.x(), EPSILON, message + " x");
+        assertEquals(y, rectangle.y(), EPSILON, message + " y");
+        assertEquals(width, rectangle.width(), EPSILON, message + " width");
+        assertEquals(height, rectangle.height(), EPSILON, message + " height");
     }
 
     // ------------------------------------------------------------------
@@ -202,6 +218,115 @@ class DetailedGrid2P7Test {
         assertEquals(0, columns.lineNameTable().nameCount());
         assertEquals(List.of(), columns.iterLineNames(), "no named lines yields no line groups");
         assertEquals(List.of(), columns.lineNames().keySet().stream().toList());
+    }
+
+    // ------------------------------------------------------------------
+    // Item rectangles
+    // ------------------------------------------------------------------
+
+    @Test
+    void itemRectangleResolvesTheBorderBoxGeometryOfEachArea() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(200f, 74f);
+        style.padding = all(5f);
+        style.border = all(2f);
+        style.gap = new TaffySize<>(LengthPercentage.length(10f), LengthPercentage.length(10f));
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(30f), px(20f));
+
+        NodeId a = tree.newLeaf(leaf());
+        NodeId b = tree.newLeaf(leaf());
+        NodeId c = tree.newLeaf(leaf());
+        NodeId d = tree.newLeaf(leaf());
+        NodeId root = tree.newWithChildren(style, List.of(a, b, c, d));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        assertEquals(4, info.itemCount());
+        assertRectangle(info.itemRectangle(0), 7f, 7f, 40f, 30f, "a");
+        assertRectangle(info.itemRectangle(1), 57f, 7f, 60f, 30f, "b");
+        assertRectangle(info.itemRectangle(2), 7f, 47f, 40f, 20f, "c");
+        assertRectangle(info.itemRectangle(3), 57f, 47f, 60f, 20f, "d");
+        assertNull(info.itemRectangle(4), "out-of-range item index");
+        assertNull(info.itemRectangle(-1), "negative item index");
+
+        // The rectangle describes exactly the geometry the item layout was built from.
+        assertEquals(tree.getLayout(a).location().x, info.itemRectangle(0).x(), EPSILON);
+        assertEquals(tree.getLayout(a).location().y, info.itemRectangle(0).y(), EPSILON);
+        assertEquals(tree.getLayout(d).size().width, info.itemRectangle(3).width(), EPSILON);
+        assertEquals(tree.getLayout(d).size().height, info.itemRectangle(3).height(), EPSILON);
+
+        DetailedGridInfo.ItemRectangle first = info.itemRectangle(0);
+        assertEquals(first.x() + first.width(), first.right(), EPSILON);
+        assertEquals(first.y() + first.height(), first.bottom(), EPSILON);
+    }
+
+    @Test
+    void itemRectangleIncludesGuttersBetweenSpannedTracks() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(120f, 100f);
+        style.padding = all(5f);
+        style.gap = new TaffySize<>(LengthPercentage.length(10f), LengthPercentage.length(10f));
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(50f), px(30f));
+
+        TaffyStyle spanStyle = leaf();
+        spanStyle.gridColumn = new TaffyLine<>(GridPlacement.line(1), GridPlacement.line(3));
+        spanStyle.gridRow = new TaffyLine<>(GridPlacement.line(2), GridPlacement.line(3));
+        NodeId span = tree.newLeaf(spanStyle);
+        NodeId auto = tree.newLeaf(leaf());
+        NodeId root = tree.newWithChildren(style, List.of(span, auto));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        // Row 2, both columns: 40 + 10 gutter + 60 wide; the rectangle includes the gutter.
+        assertRectangle(info.itemRectangle(0), 5f, 65f, 110f, 30f, "spanning item");
+        assertRectangle(info.itemRectangle(1), 5f, 5f, 40f, 50f, "auto item");
+        assertEquals(110f, tree.getLayout(span).size().width, EPSILON);
+    }
+
+    @Test
+    void itemRectangleIncludesContentAlignmentOffset() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(200f, 100f);
+        style.justifyContent = AlignContent.CENTER;
+        style.alignContent = AlignContent.CENTER;
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(50f));
+        NodeId item = tree.newLeaf(leaf());
+        NodeId root = tree.newWithChildren(style, List.of(item));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        // Free inline space 100 -> centered offset 50; free block space 50 -> offset 25.
+        assertRectangle(info.itemRectangle(0), 50f, 25f, 40f, 50f, "centered item");
+        assertEquals(tree.getLayout(item).location().x, info.itemRectangle(0).x(), EPSILON);
+        assertEquals(tree.getLayout(item).location().y, info.itemRectangle(0).y(), EPSILON);
+    }
+
+    @Test
+    void itemRectangleIsPhysicalInRtl() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle style = sizedGrid(110f, 60f);
+        style.direction = dev.vfyjxf.taffy.style.TaffyDirection.RTL;
+        style.padding = all(5f);
+        style.gridTemplateColumns = List.of(px(40f), px(60f));
+        style.gridTemplateRows = List.of(px(50f));
+
+        TaffyStyle spanStyle = leaf();
+        spanStyle.gridColumn = new TaffyLine<>(GridPlacement.line(1), GridPlacement.line(3));
+        NodeId span = tree.newLeaf(spanStyle);
+        NodeId root = tree.newWithChildren(style, List.of(span));
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        DetailedGridInfo info = infoOf(tree, root);
+        // Logical track 1 is physically rightmost (65..105), logical track 2 is 5..65. The
+        // rectangle takes the minimum physical start and maximum physical end (5..105).
+        assertEquals(65f, info.columns().track(0).start(), EPSILON);
+        assertEquals(5f, info.columns().track(1).start(), EPSILON);
+        assertRectangle(info.itemRectangle(0), 5f, 5f, 100f, 50f, "RTL spanning item");
+        assertEquals(5f, tree.getLayout(span).location().x, EPSILON);
+        assertEquals(100f, tree.getLayout(span).size().width, EPSILON);
     }
 
     // ------------------------------------------------------------------

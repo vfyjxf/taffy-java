@@ -33,9 +33,8 @@ import java.util.TreeMap;
  *       explicit line-name table ({@link Tracks#lineNames()}, {@link Tracks#lineNameTable()}).</li>
  *   <li>{@link #items()}: the grid area (1-based full-grid line numbers) of every in-flow,
  *       non-{@code display:none} child, in document order. Out-of-flow children are not part of
- *       grid placement and are therefore absent, matching upstream's {@code DetailedGridInfo.items}.
- *       The physical rectangle of that area and the resolved track-list serialization are
- *       added by the later slices of GR-18, recorded next to this view.</li>
+ *       grid placement and are therefore absent, matching upstream's {@code DetailedGridInfo.items};
+ *       {@link #itemRectangle(int)} resolves the physical rectangle of that area.</li>
  *   <li>{@link #areas()}: the {@code grid-template-areas} edge table (and the areas synthesised
  *       from explicitly declared {@code <area>-start}/{@code <area>-end} line names), kept
  *       separate from the line-name table.</li>
@@ -139,6 +138,45 @@ public record DetailedGridInfo(Tracks rows, Tracks columns, List<GridItemArea> i
             return null;
         }
         return items.get(itemIndex);
+    }
+
+    /**
+     * The physical rectangle of the grid area occupied by the item at {@code itemIndex}, in the
+     * grid container's border-box coordinate space (upstream
+     * {@code DetailedGridInfo::item_grid_area}, #1134).
+     *
+     * <p>The edges resolve to the edges of the tracks bounding the item's area: a start line
+     * resolves to the start of the first track that follows it and an end line to the end of the
+     * last track that precedes it, so the rectangle excludes any gutter or content-alignment
+     * space around the area. Tracks are stored in logical order but their positions are physical,
+     * so in an RTL container the first and last bounding tracks can have swapped physical starts;
+     * the rectangle takes the minimum physical start and maximum physical end (the same min/max
+     * normalisation upstream applies). All values are unrounded, like the track positions.</p>
+     *
+     * <p>Only in-flow items are recorded (out-of-flow children are not grid items), matching
+     * upstream. Resolving an out-of-flow child's area from the grid placement properties is a
+     * later GR-18 slice.</p>
+     *
+     * @param itemIndex index into {@link #items()}; {@code 0} is the first in-flow child
+     * @return the rectangle, or {@code null} when {@code itemIndex} is out of range (mirroring
+     *         upstream's {@code Option} return)
+     * @throws IndexOutOfBoundsException if the recorded area references a line outside the
+     *                                   recorded tracks (an inconsistent snapshot)
+     */
+    public ItemRectangle itemRectangle(int itemIndex) {
+        GridItemArea area = itemArea(itemIndex);
+        if (area == null) {
+            return null;
+        }
+        GridTrackInfo firstColumn = columns.track(area.columnStart() - 1);
+        GridTrackInfo lastColumn = columns.track(area.columnEnd() - 2);
+        float left = Math.min(firstColumn.start(), lastColumn.start());
+        float right = Math.max(firstColumn.end(), lastColumn.end());
+        GridTrackInfo firstRow = rows.track(area.rowStart() - 1);
+        GridTrackInfo lastRow = rows.track(area.rowEnd() - 2);
+        float top = firstRow.start();
+        float bottom = lastRow.end();
+        return new ItemRectangle(left, top, right - left, bottom - top);
     }
 
     /**
@@ -304,6 +342,33 @@ public record DetailedGridInfo(Tracks rows, Tracks columns, List<GridItemArea> i
      * @param columnEnd   column line after the area's last column (0 when unknown)
      */
     public record GridArea(int rowStart, int columnStart, int rowEnd, int columnEnd) {
+    }
+
+    /**
+     * The rectangle of one in-flow item's grid area, relative to the grid container's border box
+     * (upstream's {@code (Point<f32>, Size<f32>)} return of {@code item_grid_area}).
+     *
+     * <p>{@code x}/{@code y} are the physical left/top edges (in LTR and RTL alike, because the
+     * source track positions are already physical), and {@code width}/{@code height} are the
+     * distance between the outer edges of the bounding tracks. The values are unrounded and in
+     * CSS pixels.</p>
+     *
+     * @param x      physical left edge relative to the container's border box
+     * @param y      physical top edge relative to the container's border box
+     * @param width  width of the area, including any gutters between spanned tracks
+     * @param height height of the area, including any gutters between spanned tracks
+     */
+    public record ItemRectangle(float x, float y, float width, float height) {
+
+        /** The physical right edge: {@code x + width}. */
+        public float right() {
+            return x + width;
+        }
+
+        /** The physical bottom edge: {@code y + height}. */
+        public float bottom() {
+            return y + height;
+        }
     }
 
     /**

@@ -16,8 +16,9 @@ package dev.vfyjxf.taffy.tree;
  * spanning item has {@code columnEnd() - columnStart() == 2}.</p>
  *
  * <p>This is the Java counterpart of upstream taffy's {@code DetailedGridItemsInfo}
- * (#1134), which stores the same four 1-based line numbers. The rectangle of the area in
- * physical coordinates ({@code item_grid_area} upstream) is a later GR-18 slice.</p>
+ * (#1134), which stores the same four 1-based line numbers. The physical rectangle of the
+ * area is resolved on demand by
+ * {@link DetailedGridInfo#itemRectangle(int)} (upstream {@code item_grid_area}).</p>
  *
  * @param rowStart    1-based line where the item's rows start
  * @param rowEnd      1-based line where the item's rows end (exclusive)
