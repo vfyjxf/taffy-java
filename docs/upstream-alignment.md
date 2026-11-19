@@ -73,6 +73,12 @@ snapshot.
   margin-isolation part (float containment awaits F7). Known partials: BK-15's
   height-only aspect-ratio derivation and BK-04's block stretch exclusion
   (tracked in the workspace residuals).
+- **P6 (partial, tag `p6-complete`)**: OF-02/03/04/05/06/07, ST-06 and FL-22/23
+  are merged (position keywords, abspos margins/replaced/self/safe, root
+  viewport ICB/RTL, flex writing-mode static positions). **OF-01** (full OOF
+  hoisting + containing-block-based locations) is deferred to the 1.4 preview /
+  2.0 default (D2), so 1.2 still lays out out-of-flow boxes from the direct
+  parent.
 - **P5 (done, tag `p5-complete`)**: ST-02/ST-03/ST-04 keyword model +
   `AlignmentHelper`, BK-14/BK-16, FL-18/19/20, ST-01/FL-17 (`SizingKeyword`) and
   BK-19 are merged across block/flex/grid. Deferred by dependency/decision:

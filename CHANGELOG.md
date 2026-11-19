@@ -44,6 +44,17 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
   instructions in `gentest/README.md`.
 
+### P6 additions (position / out-of-flow)
+
+- `TaffyPosition` gained `STATIC`, `FIXED` and `STICKY` (appended; the 1.2 default
+  stays `RELATIVE`, decision D1), plus `isOutOfFlow()`. Only `RELATIVE` applies
+  relative insets; `FIXED` is out of flow.
+- Out-of-flow boxes now honor `align-self`/`justify-self` (including safe
+  overflow), auto margins only absorb space with both insets set, replaced boxes
+  are not stretched by double insets, and the root is laid out in a
+  viewport-sized initial containing block with RTL support. Flex absolute static
+  positions are writing-mode relative and safe.
+
 ### P5 additions (alignment keywords)
 
 - `NORMAL`, `SELF_START`/`SELF_END` and the `SAFE_*` overflow-position variants were
@@ -139,6 +150,11 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   [docs/migration-1.2.md](docs/migration-1.2.md) explains how to compare your
   output against it. Downstream pixel/snapshot tests may need updated
   expectations.
+- **P6 batch (partial)**: `position: static/fixed/sticky` keywords, out-of-flow
+  alignment/safe/margins, replaced sizing, root viewport ICB and RTL root, flex
+  static positions. **OF-01** (full out-of-flow hoisting with an independent OOF
+  pass and containing-block-based locations) is deferred to the 1.4 preview /
+  2.0 default line (decision D2); 1.2 keeps parent-based out-of-flow layout.
 - **P5 batch (partial)**: explicit `NORMAL` can override inherited alignment;
   `SELF_START`/`SELF_END` resolve against the item's own direction; `SAFE_*` falls
   back to start only on overflow. Block-level boxes honor `justify-self`; flex
