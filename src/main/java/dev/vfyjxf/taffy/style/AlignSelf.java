@@ -29,7 +29,80 @@ public enum AlignSelf {
      * Unlike {@link #FLEX_END}, this is not affected by {@code flex-wrap: wrap-reverse};
      * it always resolves to the cross-end edge of the container.
      */
-    END;
+    END,
+
+    /**
+     * The layout mode's default alignment (upstream #1254): {@code stretch} for flex items and
+     * for grid items without a definite size, {@code start} where stretching does not apply.
+     * <p>
+     * Unlike {@link #AUTO}, which is the legacy "not specified" sentinel, this is an explicit
+     * keyword that can override an inherited alignment. Appended after the existing constants so
+     * their ordinals stay stable (1.2 compatibility policy S2/Q2).
+     */
+    NORMAL,
+
+    /**
+     * Items are packed toward the start of the axis as determined by the item's own
+     * writing mode/direction rather than the container's (upstream #1077).
+     * <p>
+     * Equivalent to {@link #START} when the item's direction matches the container's and to
+     * {@link #END} when they differ in the inline axis. Resolution is not wired into the layout
+     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     */
+    SELF_START,
+
+    /**
+     * Items are packed toward the end of the axis as determined by the item's own writing
+     * mode/direction rather than the container's (upstream #1077).
+     * <p>
+     * Equivalent to {@link #END} when the item's direction matches the container's and to
+     * {@link #START} when they differ in the inline axis. Resolution is not wired into the layout
+     * algorithms in this batch; use {@code AlignmentHelper.resolveSelfRelative}.
+     */
+    SELF_END,
+
+    /**
+     * Like {@link #START}, but falls back to {@link #START} when the alignment subject overflows
+     * the alignment container, so the start edge stays visible (upstream #952, CSS Box Alignment
+     * {@code safe start}).
+     */
+    SAFE_START,
+
+    /**
+     * Like {@link #END}, but falls back to {@link #START} when the alignment subject overflows
+     * the alignment container (upstream #952, {@code safe end}).
+     */
+    SAFE_END,
+
+    /**
+     * Like {@link #FLEX_START}, but falls back to {@link #START} when the alignment subject
+     * overflows the alignment container (upstream #952, {@code safe flex-start}).
+     */
+    SAFE_FLEX_START,
+
+    /**
+     * Like {@link #FLEX_END}, but falls back to {@link #START} when the alignment subject
+     * overflows the alignment container (upstream #952, {@code safe flex-end}).
+     */
+    SAFE_FLEX_END,
+
+    /**
+     * Like {@link #CENTER}, but falls back to {@link #START} when the alignment subject overflows
+     * the alignment container (upstream #952, {@code safe center}).
+     */
+    SAFE_CENTER,
+
+    /**
+     * Like {@link #SELF_START}, but falls back to {@link #START} when the alignment subject
+     * overflows the alignment container (upstream #952, {@code safe self-start}).
+     */
+    SAFE_SELF_START,
+
+    /**
+     * Like {@link #SELF_END}, but falls back to {@link #START} when the alignment subject
+     * overflows the alignment container (upstream #952, {@code safe self-end}).
+     */
+    SAFE_SELF_END;
 
     /**
      * Creates an AlignSelf from an AlignItems value.
@@ -48,6 +121,16 @@ public enum AlignSelf {
             case CENTER -> CENTER;
             case BASELINE -> BASELINE;
             case STRETCH -> STRETCH;
+            case NORMAL -> NORMAL;
+            case SELF_START -> SELF_START;
+            case SELF_END -> SELF_END;
+            case SAFE_START -> SAFE_START;
+            case SAFE_END -> SAFE_END;
+            case SAFE_FLEX_START -> SAFE_FLEX_START;
+            case SAFE_FLEX_END -> SAFE_FLEX_END;
+            case SAFE_CENTER -> SAFE_CENTER;
+            case SAFE_SELF_START -> SAFE_SELF_START;
+            case SAFE_SELF_END -> SAFE_SELF_END;
             case AUTO -> STRETCH; // defensive (handled above)
         };
     }
@@ -63,6 +146,16 @@ public enum AlignSelf {
             case FLEX_END -> AlignItems.FLEX_END;
             case CENTER -> AlignItems.CENTER;
             case BASELINE -> AlignItems.BASELINE;
+            case NORMAL -> AlignItems.NORMAL;
+            case SELF_START -> AlignItems.SELF_START;
+            case SELF_END -> AlignItems.SELF_END;
+            case SAFE_START -> AlignItems.SAFE_START;
+            case SAFE_END -> AlignItems.SAFE_END;
+            case SAFE_FLEX_START -> AlignItems.SAFE_FLEX_START;
+            case SAFE_FLEX_END -> AlignItems.SAFE_FLEX_END;
+            case SAFE_CENTER -> AlignItems.SAFE_CENTER;
+            case SAFE_SELF_START -> AlignItems.SAFE_SELF_START;
+            case SAFE_SELF_END -> AlignItems.SAFE_SELF_END;
             case STRETCH, AUTO -> AlignItems.STRETCH;
         };
     }

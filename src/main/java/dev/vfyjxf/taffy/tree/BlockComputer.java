@@ -1373,22 +1373,23 @@ public class BlockComputer {
      * receive a negative offset. This mirrors upstream `apply_alignment_fallback` +
      * `compute_alignment_offset` with `num_items = 1` and zero gap (upstream #959 / #952).</p>
      *
-     * <p>TODO(ST-02): Java's {@link AlignContent} has no {@code safe}/{@code unsafe} overflow
-     * position and no first-class {@code normal}, so an explicit `safe end`/`safe center`
-     * cannot be expressed and the safety step of the shared helper is not modelled here. When
-     * the safety model lands this method should delegate to it (and {@code AUTO}, the current
-     * "unset" sentinel, should resolve to upstream's {@code normal}, which is a no-op once
-     * resolved).</p>
+     * <p>Wiring note (ST-02): the {@code safe}/{@code unsafe} keyword model and the first-class
+     * {@code normal} keyword now exist on {@link AlignContent} and are centralised in
+     * {@link dev.vfyjxf.taffy.util.AlignmentHelper}, but block layout is not connected to the
+     * helper in this batch. The {@code SAFE_*} cases below therefore keep the geometry of their
+     * non-safe keyword (the overflow fallback belongs to the helper), and {@code NORMAL} keeps
+     * the legacy unset behaviour until BK-18 wires block {@code align-content} fully.</p>
      */
     private static float blockAlignContentOffset(AlignContent alignContent, float freeSpace) {
         return switch (alignContent) {
-            // AUTO is the "unset" sentinel and is filtered out by the caller; keep the switch
-            // exhaustive without introducing a "normal" behaviour here (BK-18).
-            case AUTO, START, FLEX_START -> 0f;
+            // AUTO (legacy unset) and NORMAL (layout-mode default) both keep a zero offset until
+            // block align-content is wired to AlignmentHelper (BK-18). SAFE_* map to their
+            // non-safe keyword because the overflow fallback belongs to the helper.
+            case AUTO, NORMAL, START, FLEX_START, SAFE_START, SAFE_FLEX_START -> 0f;
             // End aligns the content's bottom edge with the content box's bottom edge.
-            case END, FLEX_END -> freeSpace;
+            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
             // Unsafe centering: overflowing content is centred off both edges.
-            case CENTER -> freeSpace / 2f;
+            case CENTER, SAFE_CENTER -> freeSpace / 2f;
             // Single-subject distribution fallbacks: stretch and space-between pack at the
             // start (the whole stack is one subject, so there is no gap to distribute).
             case STRETCH, SPACE_BETWEEN -> 0f;
