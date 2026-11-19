@@ -5,6 +5,7 @@ import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.BoxSizing;
+import dev.vfyjxf.taffy.style.GridAutoFlow;
 import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.GridTemplateComponent;
 import dev.vfyjxf.taffy.style.LengthPercentage;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /**
  * P7 grid placement/sizing batch: upstream-equivalent fixtures for
@@ -78,9 +80,239 @@ class GridAutoFitP7Test {
         assertEquals(height, layout.size().height, EPSILON, label + " height");
     }
 
+    /** An item placed at a definite row and column (both spans 1). */
+    private static TaffyStyle placed(int columnLine, int rowLine) {
+        TaffyStyle style = new TaffyStyle();
+        style.gridColumn = new TaffyLine<>(GridPlacement.line(columnLine), GridPlacement.auto());
+        style.gridRow = new TaffyLine<>(GridPlacement.line(rowLine), GridPlacement.auto());
+        return style;
+    }
+
+    /** An item locked to a row and spanning the passed number of rows (auto column). */
+    private static TaffyStyle rowSpan(int rowLine, int span) {
+        TaffyStyle style = new TaffyStyle();
+        style.gridRow = new TaffyLine<>(GridPlacement.line(rowLine), GridPlacement.span(span));
+        return style;
+    }
+
+    /** An item locked to a single row (auto column). */
+    private static TaffyStyle rowLine(int rowLine) {
+        TaffyStyle style = new TaffyStyle();
+        style.gridRow = new TaffyLine<>(GridPlacement.line(rowLine), GridPlacement.auto());
+        return style;
+    }
+
     // ------------------------------------------------------------------
     // GR-07: auto-repeat count includes every non-auto-repeat track
     // ------------------------------------------------------------------
+
+    // ------------------------------------------------------------------
+    // GR-13: sparse occupancy intervals, collision jumping, sparse cursors
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("GR-13: sparse occupancy intervals and placement cursors")
+    class SparseOccupancyPlacement {
+
+        @Test
+        @DisplayName("grid_auto_placement_sparse_spanning_locked_items")
+        void gridAutoPlacementSparseSpanningLockedItems() {
+            // Upstream fixture grid_auto_placement_sparse_spanning_locked_items: with sparse packing,
+            // items locked to a row are placed after items previously auto-placed with the same start
+            // line, ignoring items that span in from other tracks (upstream #1263).
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = grid();
+            rootStyle.gridAutoColumns = new ArrayList<>(List.of(px(50f)));
+            rootStyle.gridAutoRows = new ArrayList<>(List.of(px(20f)));
+            List<NodeId> children = new ArrayList<>();
+            children.add(tree.newLeaf(placed(1, 2)));       // row 2, column 1
+            children.add(tree.newLeaf(placed(2, 3)));       // row 3, column 2
+            children.add(tree.newLeaf(rowSpan(2, 2)));            // row 2 / span 2
+            children.add(tree.newLeaf(rowSpan(1, 2)));            // row 1 / span 2
+            children.add(tree.newLeaf(rowLine(1)));               // row 1
+            children.add(tree.newLeaf(rowLine(3)));               // row 3
+            children.add(tree.newLeaf(rowLine(2)));               // row 2
+            children.add(tree.newLeaf(new TaffyStyle()));         // fully auto
+            NodeId root = tree.newWithChildren(rootStyle, children);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertSize(tree.getLayout(root), 200f, 60f, "container");
+            assertLayout(tree.getLayout(children.get(0)), 0f, 20f, 50f, 20f, "child 0");
+            assertLayout(tree.getLayout(children.get(1)), 50f, 40f, 50f, 20f, "child 1");
+            assertLayout(tree.getLayout(children.get(2)), 100f, 20f, 50f, 40f, "child 2");
+            assertLayout(tree.getLayout(children.get(3)), 50f, 0f, 50f, 40f, "child 3");
+            assertLayout(tree.getLayout(children.get(4)), 100f, 0f, 50f, 20f, "child 4");
+            assertLayout(tree.getLayout(children.get(5)), 0f, 40f, 50f, 20f, "child 5");
+            assertLayout(tree.getLayout(children.get(6)), 150f, 20f, 50f, 20f, "child 6");
+            assertLayout(tree.getLayout(children.get(7)), 0f, 0f, 50f, 20f, "child 7");
+        }
+
+        @Test
+        @DisplayName("alternating_row_spans_use_sparse_row_cursors")
+        void alternatingRowSpansUseSparseRowCursors() {
+            // Mirrors upstream's grid-alternating-spans benchmark shape: row-locked items alternate
+            // between rows 1..2 and row 2, and sparse placement walks the columns.
+            int itemCount = 200;
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = grid();
+            rootStyle.gridAutoColumns = new ArrayList<>(List.of(px(1f)));
+            rootStyle.gridAutoRows = new ArrayList<>(List.of(px(1f)));
+            rootStyle.gridTemplateColumns = new ArrayList<>();
+            for (int i = 0; i < itemCount; i++) {
+                rootStyle.gridTemplateColumns.add(px(1f));
+            }
+            List<NodeId> children = new ArrayList<>();
+            for (int i = 0; i < itemCount; i++) {
+                TaffyStyle itemStyle = new TaffyStyle();
+                itemStyle.gridRow = (i % 2 == 0)
+                    ? new TaffyLine<>(GridPlacement.line(1), GridPlacement.span(2))
+                    : new TaffyLine<>(GridPlacement.line(2), GridPlacement.auto());
+                children.add(tree.newLeaf(itemStyle));
+            }
+            NodeId root = tree.newWithChildren(rootStyle, children);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertLayout(tree.getLayout(children.get(0)), 0f, 0f, 1f, 2f, "item 0");
+            assertLayout(tree.getLayout(children.get(1)), 1f, 1f, 1f, 1f, "item 1");
+            assertLayout(tree.getLayout(children.get(2)), 2f, 0f, 1f, 2f, "item 2");
+            assertLayout(tree.getLayout(children.get(3)), 3f, 1f, 1f, 1f, "item 3");
+            assertLayout(tree.getLayout(children.get(itemCount - 2)), 198f, 0f, 1f, 2f, "item N-2");
+            assertLayout(tree.getLayout(children.get(itemCount - 1)), 199f, 1f, 1f, 1f, "item N-1");
+        }
+
+        @Test
+        @DisplayName("old_sparse_row_flow_placement_is_unchanged")
+        void oldSparseRowFlowPlacementIsUnchanged() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = grid();
+            rootStyle.gridTemplateColumns = new ArrayList<>(List.of(px(50f), px(50f)));
+            rootStyle.gridTemplateRows = new ArrayList<>(List.of(px(20f), px(20f)));
+            rootStyle.gridAutoColumns = new ArrayList<>(List.of(px(50f)));
+            rootStyle.gridAutoRows = new ArrayList<>(List.of(px(20f)));
+            List<NodeId> children = new ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                children.add(tree.newLeaf(new TaffyStyle()));
+            }
+            NodeId root = tree.newWithChildren(rootStyle, children);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            float[][] expected = {
+                {0f, 0f}, {50f, 0f}, {0f, 20f}, {50f, 20f},
+                {0f, 40f}, {50f, 40f}, {0f, 60f}, {50f, 60f}
+            };
+            for (int i = 0; i < expected.length; i++) {
+                assertLayout(tree.getLayout(children.get(i)), expected[i][0], expected[i][1], 50f, 20f,
+                    "item " + i);
+            }
+        }
+
+        @Test
+        @DisplayName("old_dense_column_flow_placement_is_unchanged")
+        void oldDenseColumnFlowPlacementIsUnchanged() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = grid();
+            rootStyle.gridAutoFlow = GridAutoFlow.COLUMN;
+            rootStyle.gridTemplateColumns = new ArrayList<>(List.of(px(50f), px(50f), px(50f), px(50f)));
+            rootStyle.gridTemplateRows = new ArrayList<>(List.of(px(20f), px(20f)));
+            List<NodeId> children = new ArrayList<>();
+            for (int i = 0; i < 8; i++) {
+                children.add(tree.newLeaf(new TaffyStyle()));
+            }
+            NodeId root = tree.newWithChildren(rootStyle, children);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            float[][] expected = {
+                {0f, 0f}, {0f, 20f}, {50f, 0f}, {50f, 20f},
+                {100f, 0f}, {100f, 20f}, {150f, 0f}, {150f, 20f}
+            };
+            for (int i = 0; i < expected.length; i++) {
+                assertLayout(tree.getLayout(children.get(i)), expected[i][0], expected[i][1], 50f, 20f,
+                    "item " + i);
+            }
+        }
+
+        @Test
+        @DisplayName("old_dense_placement_in_negative_tracks_is_unchanged")
+        void oldDensePlacementInNegativeTracksIsUnchanged() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = grid();
+            rootStyle.gridAutoFlow = GridAutoFlow.ROW_DENSE;
+            rootStyle.gridTemplateColumns = new ArrayList<>(List.of(px(50f), px(50f)));
+            rootStyle.gridTemplateRows = new ArrayList<>(List.of(px(20f), px(20f)));
+            rootStyle.gridAutoColumns = new ArrayList<>(List.of(px(50f)));
+            rootStyle.gridAutoRows = new ArrayList<>(List.of(px(20f)));
+            TaffyStyle firstStyle = new TaffyStyle();
+            firstStyle.gridColumn = new TaffyLine<>(GridPlacement.line(-5), GridPlacement.auto());
+            firstStyle.gridRow = new TaffyLine<>(GridPlacement.line(1), GridPlacement.auto());
+            TaffyStyle secondStyle = new TaffyStyle();
+            secondStyle.gridRow = new TaffyLine<>(GridPlacement.line(2), GridPlacement.auto());
+            NodeId first = tree.newLeaf(firstStyle);
+            NodeId second = tree.newLeaf(secondStyle);
+            NodeId third = tree.newLeaf(new TaffyStyle());
+            NodeId root = tree.newWithChildren(rootStyle, first, second, third);
+
+            tree.computeLayout(root, TaffySize.maxContent());
+
+            assertLayout(tree.getLayout(first), 0f, 0f, 50f, 20f, "first item");
+            assertLayout(tree.getLayout(second), 0f, 20f, 50f, 20f, "second item");
+            assertLayout(tree.getLayout(third), 50f, 0f, 50f, 20f, "third item");
+        }
+
+        @Test
+        @DisplayName("small_item_in_max_size_occupied_grid_terminates")
+        void smallItemInMaxSizeOccupiedGridTerminates() {
+            // Upstream adversarial_styles::small_item_in_max_size_occupied_grid_terminates: a search
+            // colliding with the whole grid must jump past the occupied interval instead of scanning
+            // (10000 tracks)^2 candidate cells (upstream #1038).
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {
+                TaffyTree tree = new TaffyTree();
+                TaffyStyle bigStyle = new TaffyStyle();
+                bigStyle.gridRow = new TaffyLine<>(GridPlacement.span(10_000), GridPlacement.auto());
+                bigStyle.gridColumn = new TaffyLine<>(GridPlacement.span(10_000), GridPlacement.auto());
+                TaffyStyle smallStyle = new TaffyStyle();
+                smallStyle.gridRow = new TaffyLine<>(GridPlacement.span(10_000), GridPlacement.auto());
+                smallStyle.gridColumn = new TaffyLine<>(GridPlacement.span(1), GridPlacement.auto());
+                NodeId big = tree.newLeaf(bigStyle);
+                NodeId small = tree.newLeaf(smallStyle);
+                TaffyStyle rootStyle = grid();
+                rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
+                NodeId root = tree.newWithChildren(rootStyle, big, small);
+
+                tree.computeLayout(root, TaffySize.maxContent());
+
+                assertSize(tree.getLayout(root), 100f, 100f, "container");
+            });
+        }
+
+        @Test
+        @DisplayName("extreme_placements_and_spans_terminate")
+        void extremePlacementsAndSpansTerminate() {
+            // Upstream adversarial_styles::extreme_placements_and_spans_terminate: items may span
+            // thousands of tracks and be placed thousands of tracks outside the explicit grid.
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {
+                TaffyTree tree = new TaffyTree();
+                TaffyStyle spanStyle = new TaffyStyle();
+                spanStyle.gridRow = new TaffyLine<>(GridPlacement.auto(), GridPlacement.span(2_000));
+                spanStyle.gridColumn = new TaffyLine<>(GridPlacement.auto(), GridPlacement.span(2_000));
+                TaffyStyle extremeStyle = new TaffyStyle();
+                extremeStyle.gridRow = new TaffyLine<>(GridPlacement.line(-2_000), GridPlacement.line(2_000));
+                extremeStyle.gridColumn = new TaffyLine<>(GridPlacement.line(-2_000), GridPlacement.line(2_000));
+                NodeId span = tree.newLeaf(spanStyle);
+                NodeId extreme = tree.newLeaf(extremeStyle);
+                TaffyStyle rootStyle = grid();
+                rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
+                NodeId root = tree.newWithChildren(rootStyle, span, extreme);
+
+                tree.computeLayout(root, TaffySize.maxContent());
+
+                assertSize(tree.getLayout(root), 100f, 100f, "container");
+            });
+        }
+    }
 
     @Nested
     @DisplayName("GR-07: auto-repeat count and auto-fit trailing collapse")
