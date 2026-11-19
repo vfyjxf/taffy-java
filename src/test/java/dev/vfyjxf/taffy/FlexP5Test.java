@@ -361,6 +361,57 @@ public class FlexP5Test {
         }
 
         @Test
+        @DisplayName("transferred max cross clamps the measured cross size (FL-19 #989)")
+        void transferredMaxCrossClampsMeasuredCrossSize() {
+            // max-width alone does not restrict the height; the aspect ratio transfers it to 20.
+            // The content measurement would report 60 (wrapped text), so only the transferred
+            // clamp keeps the item at 40x20.
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.alignItems = AlignItems.START;
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.maxSize = new TaffySize<>(TaffyDimension.length(40f), TaffyDimension.AUTO);
+            childStyle.aspectRatio = 2f;
+            NodeId child = tree.newLeafWithMeasureFunction(childStyle,
+                context -> LayoutOutput.fromSizes(new FloatSize(220f, 60f), FloatSize.zero()));
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            assertEquals(40f, tree.getLayout(child).size().width, EPSILON);
+            assertEquals(20f, tree.getLayout(child).size().height, EPSILON,
+                "40 / aspect-ratio 2 = 20; the raw max-size has no height to clamp with");
+        }
+
+        @Test
+        @DisplayName("transferred min cross clamps the measured cross size (FL-19 #989)")
+        void transferredMinCrossClampsMeasuredCrossSize() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.alignItems = AlignItems.START;
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.length(100f));
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(20f));
+            childStyle.aspectRatio = 2f;
+            NodeId child = tree.newLeafWithMeasureFunction(childStyle,
+                context -> LayoutOutput.fromSizes(new FloatSize(10f, 10f), FloatSize.zero()));
+            tree.addChild(container, child);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            assertEquals(40f, tree.getLayout(child).size().width, EPSILON,
+                "min-height 20 * aspect-ratio 2 = a 40px minimum width");
+            assertEquals(20f, tree.getLayout(child).size().height, EPSILON);
+        }
+
+        @Test
         @DisplayName("a definite preferred main size skips the content measure of the intrinsic contribution")
         void definitePreferredMainSizeSkipsContentMeasure() {
             TaffyTree tree = new TaffyTree();
