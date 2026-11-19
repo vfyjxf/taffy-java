@@ -667,6 +667,20 @@ public class GridComputer {
         float contentBoxInsetWidth = contentBoxInset.left + contentBoxInset.right;
         float contentBoxInsetHeight = contentBoxInset.top + contentBoxInset.bottom;
 
+        // The track sizing algorithm operates on the grid container's content box, so the min/max
+        // sizes (which are border-box sizes) have to be converted to content-box sizes before being
+        // passed to it (GR-03 / upstream #1023). Note that minSize/maxSize already include the
+        // box-sizing adjustment (padding + border for content-box styles), so subtracting the content
+        // box inset here does not double count it.
+        FloatSize innerMinSize = new FloatSize(
+            TaffyMath.maybeSub(minSize.width, contentBoxInsetWidth),
+            TaffyMath.maybeSub(minSize.height, contentBoxInsetHeight)
+        );
+        FloatSize innerMaxSize = new FloatSize(
+            TaffyMath.maybeSub(maxSize.width, contentBoxInsetWidth),
+            TaffyMath.maybeSub(maxSize.height, contentBoxInsetHeight)
+        );
+
         // First, compute constrained available space (before subtracting content box inset)
         // This clamps the available space by min/max size constraints
         TaffySize<AvailableSpace> constrainedAvailableSpace;
@@ -725,7 +739,8 @@ public class GridComputer {
             numColumns, numRows, colCounts, rowCounts);
 
         // Calculate track sizes even if no items - based on template
-        FloatList columnSizes = calculateColumnSizes(style, nodeInnerSize, availableGridSpace, availableSpace, gap, numColumns, numRows, items, colCounts, expandedColumns);
+        FloatList columnSizes = calculateColumnSizes(style, nodeInnerSize, innerMinSize.width, innerMaxSize.width,
+            availableGridSpace, availableSpace, gap, numColumns, numRows, items, colCounts, expandedColumns);
 
         // CSS Grid: Collapse empty auto-fit columns
         // Per CSS Grid spec, auto-fit tracks that don't contain any items should be collapsed (size = 0)
@@ -840,7 +855,8 @@ public class GridComputer {
         // Resolve baseline-aligned item baselines before row sizing (CSS Grid 11.5.1)
         resolveItemBaselines(items, nodeInnerSize);
 
-        FloatList rowSizes = calculateRowSizes(style, nodeInnerSize, availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
+        FloatList rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
+            availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
 
         // Calculate initial row sum (like Rust's initial_row_sum)
         float initialRowSum = 0f;
@@ -969,8 +985,8 @@ public class GridComputer {
 
         if (rerunColumnSizing) {
             // Re-run column sizing with known row sizes
-            columnSizes = calculateColumnSizesWithRowSizes(style, nodeInnerSize, availableGridSpace, availableSpace, gap,
-                numColumns, numRows, items, colCounts, expandedColumns, finalRowSizes);
+            columnSizes = calculateColumnSizesWithRowSizes(style, nodeInnerSize, innerMinSize.width, innerMaxSize.width,
+                availableGridSpace, availableSpace, gap, numColumns, numRows, items, colCounts, expandedColumns, finalRowSizes);
             // Re-apply auto-fit collapse after re-run
             collapseEmptyAutoFitColumns(columnSizes, style, items, nodeInnerSize, gap.width, colCounts);
 
@@ -1057,8 +1073,8 @@ public class GridComputer {
 
             if (rerunRowSizing) {
                 // Re-run row sizing with known column sizes
-                rowSizes = calculateRowSizes(style, nodeInnerSize, availableGridSpace, gap, numRows,
-                    items, columnSizes, colCounts, rowCounts, expandedRows);
+                rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
+                    availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
             }
         }
 
@@ -2710,6 +2726,8 @@ public class GridComputer {
     private FloatList calculateColumnSizes(
         TaffyStyle style,
         FloatSize nodeInnerSize,
+        float innerMinWidth,
+        float innerMaxWidth,
         TaffySize<AvailableSpace> availableGridSpace,
         TaffySize<AvailableSpace> originalAvailableSpace,
         FloatSize gap,
@@ -2718,13 +2736,16 @@ public class GridComputer {
         List<GridItem> items,
         TrackCounts colCounts,
         List<TrackSizingFunction> expandedCols) {
-        return calculateColumnSizesWithRowSizes(style, nodeInnerSize, availableGridSpace, originalAvailableSpace, gap,
+        return calculateColumnSizesWithRowSizes(style, nodeInnerSize, innerMinWidth, innerMaxWidth,
+            availableGridSpace, originalAvailableSpace, gap,
             numColumns, numRows, items, colCounts, expandedCols, null);
     }
 
     private FloatList calculateColumnSizesWithRowSizes(
         TaffyStyle style,
         FloatSize nodeInnerSize,
+        float innerMinWidth,
+        float innerMaxWidth,
         TaffySize<AvailableSpace> availableGridSpace,
         TaffySize<AvailableSpace> originalAvailableSpace,
         FloatSize gap,
@@ -3747,57 +3768,6 @@ public class GridComputer {
                         }
                     }
 
-                    // PHASE 2: stretch_auto_tracks - only when:
-                    // 1. Container has definite size or min-size
-                    // 2. justifyContent is STRETCH (default for Grid)
-                    // Per CSS Grid spec, stretch_auto_tracks only applies when justify-content/align-content is stretch
-                    // 
-                    // Key difference from PHASE 1: stretch_auto_tracks recalculates free space from scratch
-                    // using axis_available_space_for_expansion (which is inner_node_size when definite).
-                    // This is NOT the remaining space from PHASE 1 - it's a fresh calculation.
-                    // AUTO/null means the legacy grid default = STRETCH; an explicit NORMAL behaves
-                    // as STRETCH for grid containers too (upstream #1255 / grid_align_content).
-                    AlignContent justifyContent = style.justifyContent;
-                    boolean shouldStretch = (justifyContent == null || justifyContent == AlignContent.AUTO
-                                             || justifyContent == AlignContent.NORMAL
-                                             || justifyContent == AlignContent.STRETCH);
-                    if (!Float.isNaN(nodeInnerSize.width) && shouldStretch) {
-                        // Recalculate free space for stretch (not using remainingSpace from PHASE 1)
-                        float stretchUsedSpace = 0;
-                        for (float s : sizes) {
-                            stretchUsedSpace += (!Float.isNaN(s) ? s : 0);
-                        }
-                        float stretchFreeSpace = effectiveAvailableWidth - stretchUsedSpace;
-
-                        if (stretchFreeSpace > 0.001f) {
-                            // Find auto tracks only (not minmax tracks)
-                            List<Integer> autoTracks = new ArrayList<>();
-                            for (int i : growableTrackIndices) {
-                                TrackSizingFunction track;
-                                if (i >= growExplicitStart && i < growExplicitEnd) {
-                                    int templateIndex = i - growExplicitStart;
-                                    track = (templateCols != null && templateIndex < templateCols.size())
-                                            ? templateCols.get(templateIndex) : null;
-                                } else {
-                                    track = null;
-                                }
-
-                                if (track == null || track.isAuto()) {
-                                    autoTracks.add(i);
-                                }
-                            }
-
-                            if (!autoTracks.isEmpty()) {
-                                float extraPerTrack = stretchFreeSpace / autoTracks.size();
-                                for (int i : autoTracks) {
-                                    float currentSize = sizes.getFloat(i);
-                                    if (!Float.isNaN(currentSize)) {
-                                        sizes.set(i, currentSize + extraPerTrack);
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
             // When freeSpace < 0, tracks stay at their base size (min-content for auto)
@@ -3827,6 +3797,72 @@ public class GridComputer {
             // For MinContent: do nothing, keep base_size as-is
         }
 
+        // 11.7 Expand Flexible Tracks: min/max correction (GR-03 / upstream #1023).
+        // The flexible track expansion above only sees the container's content. When the container's
+        // inner size is indefinite but it has a definite min- or max-size, the expansion has to be
+        // redone against that inner size when the hypothetical grid size falls outside it. The inner
+        // min/max sizes are content-box values; the gaps are not part of the track list here, so they
+        // are removed from the space to fill.
+        if (Float.isNaN(nodeInnerSize.width)) {
+            applyFlexibleTrackMinMaxCorrection(sizes, frTrackIndices, frValues,
+                TaffyMath.maybeSub(innerMinWidth, gap.width * Math.max(0, numColumns - 1)),
+                TaffyMath.maybeSub(innerMaxWidth, gap.width * Math.max(0, numColumns - 1)));
+        }
+
+        // 11.8. Stretch auto Tracks
+        // Expands tracks whose max track sizing function is auto, dividing the remaining positive,
+        // definite free space equally among them. Per upstream stretch_auto_tracks, when the
+        // container's inner size is indefinite the inner min-size is used instead, and a min-content
+        // constraint leaves no free space (GR-03 / #1023).
+        //
+        // AUTO/null means the legacy grid default = STRETCH; an explicit NORMAL behaves as STRETCH
+        // for grid containers too (upstream #1255 / grid_align_content).
+        AlignContent justifyContent = style.justifyContent;
+        boolean shouldStretch = (justifyContent == null || justifyContent == AlignContent.AUTO
+                                 || justifyContent == AlignContent.NORMAL
+                                 || justifyContent == AlignContent.STRETCH);
+        float stretchAvailableSpace = NaN;
+        if (!Float.isNaN(nodeInnerSize.width)) {
+            stretchAvailableSpace = effectiveAvailableWidth;
+        } else if (!Float.isNaN(innerMinWidth) && !gridWidthSpace.isMinContent()) {
+            stretchAvailableSpace = TaffyMath.maybeSub(innerMinWidth, gap.width * Math.max(0, numColumns - 1));
+        }
+        if (shouldStretch && !Float.isNaN(stretchAvailableSpace)) {
+            // Recalculate free space for stretch (this is not the remaining space from the maximise
+            // step: stretch is only limited by the container's inner size / min-size).
+            float stretchUsedSpace = 0;
+            for (float s : sizes) {
+                stretchUsedSpace += (!Float.isNaN(s) ? s : 0);
+            }
+            float stretchFreeSpace = stretchAvailableSpace - stretchUsedSpace;
+            if (stretchFreeSpace > 0.001f) {
+                int stretchExplicitStart = colCounts.negativeImplicit;
+                int stretchExplicitEnd = stretchExplicitStart + colCounts.explicit;
+                // Only tracks with an auto max track sizing function are stretched (not minmax tracks
+                // and not flexible tracks).
+                List<Integer> autoTracks = new ArrayList<>();
+                for (int i = 0; i < sizes.size(); i++) {
+                    TrackSizingFunction track;
+                    if (i >= stretchExplicitStart && i < stretchExplicitEnd) {
+                        int templateIndex = i - stretchExplicitStart;
+                        track = (templateCols != null && templateIndex < templateCols.size())
+                                ? templateCols.get(templateIndex) : null;
+                    } else {
+                        track = null;
+                    }
+                    if (track == null || track.isAuto()) {
+                        autoTracks.add(i);
+                    }
+                }
+                if (!autoTracks.isEmpty()) {
+                    float extraPerTrack = stretchFreeSpace / autoTracks.size();
+                    for (int i : autoTracks) {
+                        sizes.set(i, sizes.getFloat(i) + extraPerTrack);
+                    }
+                }
+            }
+        }
+
         // Final pass: ensure no null values remain
         for (int i = 0; i < sizes.size(); i++) {
             if (Float.isNaN(sizes.getFloat(i))) {
@@ -3835,6 +3871,108 @@ public class GridComputer {
         }
 
         return sizes;
+    }
+
+    /**
+     * The track sizing algorithm's "find the size of an fr" (CSS Grid 11.7.1) over a complete track
+     * list. Unlike {@link #findSizeOfFrForDefinite}, the base sizes of non-flexible tracks are part
+     * of the space that has to be filled, which matters for the min/max correction of flexible track
+     * expansion ({@code expand_flexible_tracks} in the upstream algorithm).
+     *
+     * @param sizes          the current base size of every track in the axis
+     * @param frTrackIndices the indices of the tracks whose max track sizing function is flexible
+     * @param frValues       the flex factor of each flexible track (same order as {@code frTrackIndices})
+     * @param spaceToFill    the space the tracks should fill
+     * @return the used flex fraction
+     */
+    private float findSizeOfFr(
+        FloatList sizes,
+        IntList frTrackIndices,
+        FloatList frValues,
+        float spaceToFill) {
+        if (spaceToFill <= 0f || frTrackIndices.isEmpty()) return 0f;
+
+        // The algorithm restarts treating at least one more flexible track as inflexible each time,
+        // so a valid hypothetical fr size is found within (number of flexible tracks + 1) iterations.
+        // The bound also guarantees termination for non-finite inputs (GR-20 / upstream #1036).
+        float hypotheticalFrSize = Float.POSITIVE_INFINITY;
+        int maxIterations = frTrackIndices.size() + 1;
+        for (int iteration = 0; iteration < maxIterations; iteration++) {
+            float usedSpace = 0f;
+            float naiveFlexFactorSum = 0f;
+            for (int i = 0; i < sizes.size(); i++) {
+                float baseSize = sizes.getFloat(i);
+                if (Float.isNaN(baseSize)) baseSize = 0f;
+                int frIndex = frTrackIndices.indexOf(i);
+                if (frIndex >= 0 && frValues.getFloat(frIndex) * hypotheticalFrSize >= baseSize) {
+                    naiveFlexFactorSum += frValues.getFloat(frIndex);
+                } else {
+                    usedSpace += baseSize;
+                }
+            }
+            float leftoverSpace = spaceToFill - usedSpace;
+            float flexFactor = Math.max(naiveFlexFactorSum, 1f);
+            float previousHypotheticalFrSize = hypotheticalFrSize;
+            hypotheticalFrSize = leftoverSpace / flexFactor;
+
+            boolean valid = true;
+            for (int frIndex = 0; frIndex < frTrackIndices.size(); frIndex++) {
+                int i = frTrackIndices.getInt(frIndex);
+                float baseSize = sizes.getFloat(i);
+                if (Float.isNaN(baseSize)) baseSize = 0f;
+                float flexFactorValue = frValues.getFloat(frIndex);
+                // A flexible track is only still flexible if its share at the new hypothetical fr
+                // size covers its base size, unless it already failed to do so in the previous pass.
+                if (!(flexFactorValue * hypotheticalFrSize >= baseSize
+                      || flexFactorValue * previousHypotheticalFrSize < baseSize)) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid) break;
+        }
+        return Math.max(0f, hypotheticalFrSize);
+    }
+
+    /**
+     * Redo the flexible track expansion against a definite content-box min/max size (CSS Grid 11.7
+     * "expand flexible tracks" min/max correction; upstream #1023). Only called when the container's
+     * inner size is indefinite but its style min/max size is definite.
+     *
+     * @param tracksAvailableMin the content-box min size (in tracks + gaps space), or NaN
+     * @param tracksAvailableMax the content-box max size (in tracks + gaps space), or NaN
+     */
+    private void applyFlexibleTrackMinMaxCorrection(
+        FloatList sizes,
+        IntList frTrackIndices,
+        FloatList frValues,
+        float tracksAvailableMin,
+        float tracksAvailableMax) {
+        if (frTrackIndices.isEmpty()) return;
+        if (Float.isNaN(tracksAvailableMin) && Float.isNaN(tracksAvailableMax)) return;
+
+        float hypotheticalGridSize = 0f;
+        for (int i = 0; i < sizes.size(); i++) {
+            float size = sizes.getFloat(i);
+            hypotheticalGridSize += Float.isNaN(size) ? 0f : size;
+        }
+
+        float flexFraction;
+        // Note: min size takes precedence over max size (upstream comment).
+        if (!Float.isNaN(tracksAvailableMin) && hypotheticalGridSize < tracksAvailableMin) {
+            flexFraction = findSizeOfFr(sizes, frTrackIndices, frValues, tracksAvailableMin);
+        } else if (!Float.isNaN(tracksAvailableMax) && hypotheticalGridSize > tracksAvailableMax) {
+            flexFraction = findSizeOfFr(sizes, frTrackIndices, frValues, tracksAvailableMax);
+        } else {
+            return;
+        }
+
+        for (int frIndex = 0; frIndex < frTrackIndices.size(); frIndex++) {
+            int i = frTrackIndices.getInt(frIndex);
+            float baseSize = sizes.getFloat(i);
+            if (Float.isNaN(baseSize)) baseSize = 0f;
+            sizes.set(i, Math.max(baseSize, frValues.getFloat(frIndex) * flexFraction));
+        }
     }
 
     /**
@@ -4113,6 +4251,8 @@ public class GridComputer {
     private FloatList calculateRowSizes(
         TaffyStyle style,
         FloatSize nodeInnerSize,
+        float innerMinHeight,
+        float innerMaxHeight,
         TaffySize<AvailableSpace> availableGridSpace,
         FloatSize gap,
         int numRows,
@@ -4157,6 +4297,9 @@ public class GridComputer {
         float totalFr = 0f;
         float usedSpace = 0;
         int autoCount = 0;
+        // Flexible track indices/values (needed for the min/max correction of flexible expansion)
+        IntList frTrackIndices = new IntArrayList();
+        FloatList frValues = new FloatArrayList();
 
         // Get auto rows for implicit tracks
         List<TrackSizingFunction> autoRows = style.getGridAutoRows();
@@ -4198,6 +4341,8 @@ public class GridComputer {
 
             if (track != null && track.isFr()) {
                 totalFr += track.getFrValue();
+                frTrackIndices.add(i);
+                frValues.add(track.getFrValue());
                 sizes.add(NaN);
             } else if (track == null || track.isAuto() || track.isMinContent() || track.isMaxContent()) {
                 // Auto or content-based track - will be resolved later
@@ -4208,6 +4353,8 @@ public class GridComputer {
                 TrackSizingFunction maxF = track.getMaxFunc();
                 if (maxF != null && maxF.isFr()) {
                     totalFr += maxF.getFrValue();
+                    frTrackIndices.add(i);
+                    frValues.add(maxF.getFrValue());
                     sizes.add(NaN);
                 } else if (maxF != null && maxF.isFixed()) {
                     // Use the max size as the track size for now (simplified)
@@ -4410,9 +4557,15 @@ public class GridComputer {
                     }
                 }
             }
-        } else if (autoCount > 0 && !Float.isNaN(nodeInnerSize.height)) {
-            // No fr units but have auto tracks with definite container size
-            // 11.8 Stretch auto Tracks: expand auto tracks to fill remaining space
+        } else if (autoCount > 0 && (!Float.isNaN(nodeInnerSize.height)
+                                     || (!Float.isNaN(innerMinHeight) && !gridHeightSpace.isMinContent()))) {
+            // No fr units but have auto tracks with a definite container or inner min size
+            // 11.8 Stretch auto Tracks: expand auto tracks to fill remaining space. When the inner
+            // size is indefinite, the content-box min-size provides the space to stretch into
+            // (GR-03 / upstream #1023); a min-content constraint leaves no free space.
+            float stretchSpace = !Float.isNaN(nodeInnerSize.height)
+                                 ? availableHeight
+                                 : TaffyMath.maybeSub(innerMinHeight, gap.height * Math.max(0, numRows - 1));
 
             // Step 1: Calculate content size for all auto tracks
             FloatList autoContentSizes = new FloatArrayList();
@@ -4429,7 +4582,7 @@ public class GridComputer {
 
             // Step 2: Calculate actual remaining space after content sizes
             float totalUsed = usedSpace + autoContentTotal;
-            float freeSpace = availableHeight - totalUsed;
+            float freeSpace = stretchSpace - totalUsed;
 
             // Step 3: Distribute free space equally among auto tracks (only if positive)
             float extraPerAutoTrack = freeSpace > 0 ? freeSpace / autoCount : 0f;
@@ -4449,6 +4602,15 @@ public class GridComputer {
                     sizes.set(i, maxRowHeight);
                 }
             }
+        }
+
+        // 11.7 Expand Flexible Tracks: min/max correction (GR-03 / upstream #1023). See the column
+        // path for the rationale; the inner min/max sizes are content-box values and the gaps are not
+        // part of the track list here.
+        if (Float.isNaN(nodeInnerSize.height)) {
+            applyFlexibleTrackMinMaxCorrection(sizes, frTrackIndices, frValues,
+                TaffyMath.maybeSub(innerMinHeight, gap.height * Math.max(0, numRows - 1)),
+                TaffyMath.maybeSub(innerMaxHeight, gap.height * Math.max(0, numRows - 1)));
         }
 
         // Final pass: ensure no null values remain (fallback for edge cases)
