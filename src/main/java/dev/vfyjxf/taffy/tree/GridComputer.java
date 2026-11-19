@@ -717,8 +717,17 @@ public class GridComputer {
         List<TrackSizingFunction> expandedColumns = getExpandedTemplateColumns(style, nodeInnerSize.width, gap.width);
         List<TrackSizingFunction> expandedRows = getExpandedTemplateRows(style, nodeInnerSize.height, gap.height);
 
+        // Resolve named lines exactly once, before the grid size estimate (GR-15 / #1259), and share
+        // the resolver between the in-flow placement pass and the absolutely positioned children.
+        int columnAutoRepetitions = autoRepetitionCount(style.gridTemplateColumnsWithRepeat,
+            nodeInnerSize.width, gap.width);
+        int rowAutoRepetitions = autoRepetitionCount(style.gridTemplateRowsWithRepeat,
+            nodeInnerSize.height, gap.height);
+        NamedLineResolver namedLineResolver = createNamedLineResolver(style, expandedColumns, expandedRows,
+            columnAutoRepetitions, rowAutoRepetitions);
+
         // Generate grid items
-        List<GridItem> items = generateGridItems(node, style, nodeInnerSize);
+        List<GridItem> items = generateGridItems(node, style, nodeInnerSize, namedLineResolver);
 
         // Determine grid dimensions based on template or content
         TrackCounts colCounts = computeColumnCounts(items, expandedColumns);
@@ -1118,7 +1127,7 @@ public class GridComputer {
             // Layout absolutely positioned children even if no regular items. Their overflow is
             // accumulated in the container's padding-box frame and merged below (upstream oof.rs).
             FloatRect absoluteOverflowRect = layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX,
-                scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtlEmpty);
+                scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtlEmpty, namedLineResolver);
 
             // Layout hidden children (display: none)
             List<NodeId> children = tree.getChildren(node);
@@ -1209,7 +1218,7 @@ public class GridComputer {
 
         // Layout absolutely positioned children, accumulating their overflow contributions
         FloatRect absoluteOverflowRect = layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX,
-            scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtl);
+            scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtl, namedLineResolver);
 
         // Layout hidden children (display: none)
         List<NodeId> children = tree.getChildren(node);
@@ -1558,39 +1567,51 @@ public class GridComputer {
     /**
      * Create a {@link NamedLineResolver} for a grid container.
      * <p>
-     * The explicit track counts are derived from the grid templates in the same way as the in-flow
-     * placement path, so that named-line lookup and fallback numbering are identical for in-flow and
-     * absolutely positioned items.
+     * The explicit track counts are derived from the <em>expanded</em> templates (so that a
+     * {@code repeat()} contributes its expanded track count, GR-17 / #1035) combined with the
+     * extents of {@code grid-template-areas}, and clamped into the limited grid. The same resolver
+     * instance is used by the in-flow placement pass and by the absolutely positioned children, so
+     * that named-line lookup and fallback numbering are identical on both paths and named lines are
+     * resolved exactly once before the grid size estimate (GR-15 / #1259).
+     *
+     * @param containerStyle      the grid container's style
+     * @param expandedColumns     the column template with auto-repetitions expanded
+     * @param expandedRows        the row template with auto-repetitions expanded
+     * @param columnAutoRepetitions the number of times the column auto-repetition is expanded
+     * @param rowAutoRepetitions    the number of times the row auto-repetition is expanded
      */
-    private NamedLineResolver createNamedLineResolver(TaffyStyle containerStyle) {
-        int explicitColCount = explicitTrackCount(containerStyle.getGridTemplateColumns());
-        int explicitRowCount = explicitTrackCount(containerStyle.getGridTemplateRows());
-
-        NamedLineResolver namedLineResolver = new NamedLineResolver(containerStyle);
-        namedLineResolver.setExplicitColumnCount(explicitColCount);
-        namedLineResolver.setExplicitRowCount(explicitRowCount);
+    private NamedLineResolver createNamedLineResolver(TaffyStyle containerStyle,
+                                                      List<TrackSizingFunction> expandedColumns,
+                                                      List<TrackSizingFunction> expandedRows,
+                                                      int columnAutoRepetitions,
+                                                      int rowAutoRepetitions) {
+        NamedLineResolver namedLineResolver =
+            new NamedLineResolver(containerStyle, columnAutoRepetitions, rowAutoRepetitions);
+        namedLineResolver.setExplicitColumnCount(explicitTrackCount(expandedColumns, namedLineResolver.getAreaColumnCount()));
+        namedLineResolver.setExplicitRowCount(explicitTrackCount(expandedRows, namedLineResolver.getAreaRowCount()));
         return namedLineResolver;
     }
 
     /**
-     * The number of explicit tracks declared by a grid template. This is the explicit track count
-     * used for named-line fallback numbering (it intentionally counts declared template entries,
-     * matching the in-flow placement path).
+     * The number of explicit tracks in one axis: the expanded template track count, extended to the
+     * extents of {@code grid-template-areas} and clamped into the limited grid (upstream
+     * {@code explicit_col_count = max(template_count, area_count).min(MAX_GRID_TRACKS)}).
      */
-    private static int explicitTrackCount(List<TrackSizingFunction> template) {
-        return (template != null) ? template.size() : 0;
+    private static int explicitTrackCount(List<TrackSizingFunction> expandedTemplate, int areaTrackCount) {
+        int templateCount = (expandedTemplate != null) ? Math.min(expandedTemplate.size(), MAX_GRID_TRACKS) : 0;
+        return Math.max(templateCount, Math.min(areaTrackCount, MAX_GRID_TRACKS));
     }
 
-    private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize) {
+    private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
+                                             NamedLineResolver namedLineResolver) {
         TaffyTree tree = layoutComputer.getTree();
         List<GridItem> items = new ArrayList<>();
 
-        // Get explicit track counts for negative line number resolution
-        int explicitColCount = explicitTrackCount(containerStyle.getGridTemplateColumns());
-        int explicitRowCount = explicitTrackCount(containerStyle.getGridTemplateRows());
-
-        // Create NamedLineResolver for resolving named grid lines
-        NamedLineResolver namedLineResolver = createNamedLineResolver(containerStyle);
+        // Explicit track counts for negative line number resolution. They come from the resolver so
+        // that in-flow items, absolutely positioned items and named-line fallbacks all number their
+        // lines against the same (expanded template + grid areas) explicit grid.
+        int explicitColCount = namedLineResolver.getExplicitColumnCount();
+        int explicitRowCount = namedLineResolver.getExplicitRowCount();
 
         int order = 0;
         for (NodeId childId : tree.getChildren(node)) {
@@ -1862,6 +1883,57 @@ public class GridComputer {
         }
 
         // Has auto-repetition - calculate how many times to repeat
+        int numRepetitions = computeAutoRepetitionCount(template, autoRepeatIndex, autoRepeat, containerSize, gap);
+
+        // Build result with expanded repetitions, truncating the expanded template at the track limit.
+        List<TrackSizingFunction> result = new ArrayList<>();
+        for (int i = 0; i < template.size(); i++) {
+            GridTemplateComponent comp = template.get(i);
+            if (i == autoRepeatIndex) {
+                // Expand auto-repetition
+                for (int j = 0; j < numRepetitions; j++) {
+                    for (TrackSizingFunction track : autoRepeat.getTracks()) {
+                        if (result.size() >= MAX_GRID_TRACKS) return result;
+                        result.add(track);
+                    }
+                }
+            } else if (comp.isSingle()) {
+                if (result.size() >= MAX_GRID_TRACKS) return result;
+                result.add(comp.getSingle());
+            } else if (comp.isRepeat()) {
+                GridRepetition repeat = comp.getRepeat();
+                for (int j = 0; j < repeat.getCount(); j++) {
+                    for (TrackSizingFunction track : repeat.getTracks()) {
+                        if (result.size() >= MAX_GRID_TRACKS) return result;
+                        result.add(track);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The number of times the auto-repetition ({@code auto-fill}/{@code auto-fit}) at
+     * {@code autoRepeatIndex} is expanded in the axis with the passed definite container size and
+     * gap.
+     * <p>
+     * The result is the largest number of repetitions that does not overflow the container (or 1
+     * when the container size is indefinite), clamped into the limited grid at the repetition's
+     * insertion point so that the tracks before it are preserved and the tracks after it are
+     * truncated in source order (https://www.w3.org/TR/css-grid-1/#overlarge-grids, GR-05 / #986).
+     * <p>
+     * The named-line resolver (GR-17 / #1035) uses the very same count so that the line names of
+     * the tracks generated by the repetition are numbered identically to the expanded template.
+     *
+     * @param template        the grid template containing the auto-repetition
+     * @param autoRepeatIndex the index of the auto-repetition component in {@code template}
+     * @param autoRepeat      the auto-repetition component
+     * @param containerSize   the definite container size in this axis
+     * @param gap             the gap between tracks in this axis
+     */
+    private int computeAutoRepetitionCount(List<GridTemplateComponent> template, int autoRepeatIndex,
+                                           GridRepetition autoRepeat, float containerSize, float gap) {
         int numRepetitions;
         if (Float.isNaN(containerSize) || containerSize <= 0) {
             // No definite container size, use 1 repetition
@@ -1928,35 +2000,25 @@ public class GridComputer {
         // Clamp the number of repetitions based on the auto-repeat's insertion point so that tracks
         // before it are preserved and tracks after it are truncated in source order
         // (https://www.w3.org/TR/css-grid-1/#overlarge-grids).
-        int autoRepeatInsertionPoint = autoRepeatInsertionPoint(template, autoRepeatIndex);
-        numRepetitions = clampAutoRepetitionCount(autoRepeatInsertionPoint, autoRepeat.getTrackCount(), numRepetitions);
+        int insertionPoint = autoRepeatInsertionPoint(template, autoRepeatIndex);
+        return clampAutoRepetitionCount(insertionPoint, autoRepeat.getTrackCount(), numRepetitions);
+    }
 
-        // Build result with expanded repetitions, truncating the expanded template at the track limit.
-        List<TrackSizingFunction> result = new ArrayList<>();
+    /**
+     * The number of times the auto-repetition of a template is expanded, or 0 when the template
+     * has no {@code auto-fill}/{@code auto-fit} repetition.
+     */
+    private int autoRepetitionCount(List<GridTemplateComponent> template, float containerSize, float gap) {
+        if (template == null || template.isEmpty()) {
+            return 0;
+        }
         for (int i = 0; i < template.size(); i++) {
-            GridTemplateComponent comp = template.get(i);
-            if (i == autoRepeatIndex) {
-                // Expand auto-repetition
-                for (int j = 0; j < numRepetitions; j++) {
-                    for (TrackSizingFunction track : autoRepeat.getTracks()) {
-                        if (result.size() >= MAX_GRID_TRACKS) return result;
-                        result.add(track);
-                    }
-                }
-            } else if (comp.isSingle()) {
-                if (result.size() >= MAX_GRID_TRACKS) return result;
-                result.add(comp.getSingle());
-            } else if (comp.isRepeat()) {
-                GridRepetition repeat = comp.getRepeat();
-                for (int j = 0; j < repeat.getCount(); j++) {
-                    for (TrackSizingFunction track : repeat.getTracks()) {
-                        if (result.size() >= MAX_GRID_TRACKS) return result;
-                        result.add(track);
-                    }
-                }
+            GridTemplateComponent component = template.get(i);
+            if (component != null && component.isAutoRepetition()) {
+                return computeAutoRepetitionCount(template, i, component.getRepeat(), containerSize, gap);
             }
         }
-        return result;
+        return 0;
     }
 
     /**
@@ -2049,69 +2111,9 @@ public class GridComputer {
             return null;
         }
 
-        // Calculate number of repetitions (same logic as expandAutoRepetition)
-        int numRepetitions;
-        if (Float.isNaN(containerSize) || containerSize <= 0) {
-            numRepetitions = 1;
-        } else {
-            // Calculate space per repetition
-            float perRepetitionSpace = 0f;
-            int tracksPerRepetition = autoFit.getTrackCount();
-            for (TrackSizingFunction track : autoFit.getTracks()) {
-                float val = track.getDefiniteValue(containerSize);
-                if (!Float.isNaN(val)) {
-                    perRepetitionSpace += val;
-                }
-            }
-
-            // Calculate non-repeating used space
-            float nonRepeatingUsedSpace = 0f;
-            int nonRepeatingTrackCount = 0;
-            for (int i = 0; i < template.size(); i++) {
-                if (i == autoFitIndex) continue;
-                GridTemplateComponent comp = template.get(i);
-                if (comp.isSingle()) {
-                    float val = comp.getSingle().getDefiniteValue(containerSize);
-                    if (!Float.isNaN(val)) {
-                        nonRepeatingUsedSpace += val;
-                        nonRepeatingTrackCount++;
-                    }
-                } else if (comp.isRepeat()) {
-                    GridRepetition repeat = comp.getRepeat();
-                    for (int j = 0; j < repeat.getCount(); j++) {
-                        for (TrackSizingFunction track : repeat.getTracks()) {
-                            float val = track.getDefiniteValue(containerSize);
-                            if (!Float.isNaN(val)) {
-                                nonRepeatingUsedSpace += val;
-                                nonRepeatingTrackCount++;
-                            }
-                        }
-                    }
-                }
-            }
-
-            int firstRepNonRepeatingTracks = nonRepeatingTrackCount + tracksPerRepetition;
-            float firstRepUsedSpace = nonRepeatingUsedSpace + perRepetitionSpace
-                                      + Math.max(0, firstRepNonRepeatingTracks - 1) * gap;
-
-            if (firstRepUsedSpace > containerSize) {
-                numRepetitions = 1;
-            } else {
-                float perRepGap = tracksPerRepetition * gap;
-                float perRepTotal = perRepetitionSpace + perRepGap;
-                if (perRepTotal <= 0) {
-                    numRepetitions = 1;
-                } else {
-                    float remainingSpace = containerSize - firstRepUsedSpace;
-                    // Clamp to the track limit before the float->int cast (see expandAutoRepetition).
-                    numRepetitions = 1 + Math.min(MAX_GRID_TRACKS, (int) Math.floor(remainingSpace / perRepTotal));
-                }
-            }
-        }
-
-        // Clamp the auto-fit repetitions exactly like expandAutoRepetition so that the collapsed
-        // range stays aligned with the expanded template (GR-05 / #986).
-        numRepetitions = clampAutoRepetitionCount(tracksBefore, autoFit.getTrackCount(), numRepetitions);
+        // Calculate number of repetitions with the same helper that expands the template, so that
+        // the collapsed range stays aligned with the expanded template (GR-05 / #986).
+        int numRepetitions = computeAutoRepetitionCount(template, autoFitIndex, autoFit, containerSize, gap);
 
         int totalAutoFitTracks = (int) Math.min((long) numRepetitions * autoFit.getTrackCount(),
             Math.max(0, MAX_GRID_TRACKS - tracksBefore));
@@ -5318,7 +5320,8 @@ public class GridComputer {
         TrackCounts rowCounts,
         GridAxisLines columnLines,
         GridAxisLines rowLines,
-        boolean isRtl) {
+        boolean isRtl,
+        NamedLineResolver namedLineResolver) {
         TaffyTree tree = layoutComputer.getTree();
 
         boolean isScrollContainer = ScrollableOverflowUtil.isScrollContainer(tree.getStyle(node).getOverflow());
@@ -5332,18 +5335,16 @@ public class GridComputer {
                                         ? new FloatRect(0f, absoluteClientSize.width, 0f, 0f)
                                         : FloatRect.zero();
 
-        // Named lines/spans must be resolved to numeric lines before the absolute grid area is
-        // computed, otherwise NAMED_LINE/NAMED_SPAN placements fall back to the container edges and
-        // the absolutely positioned item fills the whole grid. This mirrors the in-flow path
-        // (generateGridItems), using the same resolver configuration for identical line numbers.
-        NamedLineResolver namedLineResolver = createNamedLineResolver(tree.getStyle(node));
-
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (!childStyle.getPosition().isOutOfFlow()) continue;
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
 
-            // Resolve grid placement for absolute positioned items
+            // Resolve grid placement for absolute positioned items.
+            // Named lines/spans must be resolved to numeric lines before the absolute grid area is
+            // computed, otherwise NAMED_LINE/NAMED_SPAN placements fall back to the container edges
+            // and the absolutely positioned item fills the whole grid. The resolver is the same
+            // instance that the in-flow path built before the grid size estimate (GR-15 / #1259).
             TaffyLine<GridPlacement> gridCol = childStyle.gridColumn;
             TaffyLine<GridPlacement> gridRow = childStyle.gridRow;
 
