@@ -1373,15 +1373,19 @@ public class BlockComputer {
                 Float.isNaN(bottom) ? 0f : nonAutoMarginBottom
             );
 
-            // Calculate auto margin space
-            // Auto margins for absolutely positioned elements only resolve if inset is set
-            float absoluteAutoMarginSpaceX = Float.isNaN(right) ? finalSize.width : areaWidth - right - (!Float.isNaN(left) ? left : 0f);
-            float absoluteAutoMarginSpaceY = Float.isNaN(bottom) ? finalSize.height : areaHeight - bottom - (!Float.isNaN(top) ? top : 0f);
-
-            float freeSpaceX = absoluteAutoMarginSpaceX - finalSize.width
-                               - nonAutoMargin.left - nonAutoMargin.right;
-            float freeSpaceY = absoluteAutoMarginSpaceY - finalSize.height
-                               - nonAutoMargin.top - nonAutoMargin.bottom;
+            // Auto margins only absorb free space in an axis where *both* insets are non-auto.
+            // With one (or no) inset the axis is over-constrained, so an auto margin resolves to
+            // zero instead of inflating towards the one set inset. The free space is measured
+            // against the positioning area, and a margin only counts when its own inset is set
+            // (nonAutoMargin). Upstream #1202 (3307c7e0).
+            float freeSpaceX = !Float.isNaN(left) && !Float.isNaN(right)
+                               ? areaWidth - left - right - finalSize.width
+                                 - nonAutoMargin.left - nonAutoMargin.right
+                               : 0f;
+            float freeSpaceY = !Float.isNaN(top) && !Float.isNaN(bottom)
+                               ? areaHeight - top - bottom - finalSize.height
+                                 - nonAutoMargin.top - nonAutoMargin.bottom
+                               : 0f;
 
             // Calculate auto margin size against the free space left by the *used* (clamped) size.
             // BK-07 / upstream #1096.

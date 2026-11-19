@@ -176,4 +176,133 @@ public class PositionP6Test {
         assertLocation(tree, fixed, 30f, 40f, "fixed child");
         assertSize(tree, fixed, 10f, 10f, "fixed child");
     }
+
+    // === OF-03 / #1202: abspos auto margins only absorb space with both insets set ===
+
+    /** Lays out one absolutely positioned child in a 200x200 container of the given display. */
+    private static Layout absposChild(TaffyDisplay display, TaffyStyle childStyle) {
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        TaffyTree tree = new TaffyTree();
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(container(display, 200f, 200f), child);
+        tree.computeLayout(root, TaffySize.maxContent());
+        return layout(tree, child);
+    }
+
+    private static TaffyRect<LengthPercentageAuto> margin(
+        LengthPercentageAuto left, LengthPercentageAuto right,
+        LengthPercentageAuto top, LengthPercentageAuto bottom) {
+        return new TaffyRect<>(left, right, top, bottom);
+    }
+
+    private static TaffyRect<LengthPercentageAuto> inset(
+        LengthPercentageAuto left, LengthPercentageAuto right,
+        LengthPercentageAuto top, LengthPercentageAuto bottom) {
+        return new TaffyRect<>(left, right, top, bottom);
+    }
+
+    /**
+     * Upstream #1202: with both inline insets set, two auto margins split the free space left by
+     * the used size, inset positions and non-auto margins between them (the pre-existing behavior
+     * for the fully specified case must not change).
+     */
+    @Test
+    @DisplayName("OF-03: block abspos auto margins split the free space when both insets are set")
+    void blockAbsposAutoMarginsAbsorbWithBothInsets() {
+        TaffyStyle childStyle = sized(50f, 50f);
+        childStyle.margin = margin(LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO,
+                                   LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        childStyle.inset = inset(px(10f), px(20f), LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO);
+
+        Layout child = absposChild(TaffyDisplay.BLOCK, childStyle);
+
+        // 200 - 10 - 20 - 50 = 120 free space; 60 per auto margin; x = 10 + 60.
+        assertEquals(70f, child.location().x, EPSILON, "block both-inset auto margin x");
+        assertEquals(0f, child.location().y, EPSILON, "block both-inset auto margin y");
+    }
+
+    /**
+     * Upstream #1202: with only the end inset set, the inline axis is over-constrained and the
+     * auto margin resolves to zero instead of absorbing the space up to the inset.
+     */
+    @Test
+    @DisplayName("OF-03: block abspos single inset does not inflate the auto margin")
+    void blockAbsposSingleInsetDoesNotInflateAutoMargin() {
+        TaffyStyle rightOnly = sized(50f, 50f);
+        rightOnly.margin = margin(LengthPercentageAuto.ZERO, LengthPercentageAuto.AUTO,
+                                  LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        rightOnly.inset = inset(LengthPercentageAuto.AUTO, px(20f), px(10f), LengthPercentageAuto.AUTO);
+        Layout rightLayout = absposChild(TaffyDisplay.BLOCK, rightOnly);
+        assertEquals(130f, rightLayout.location().x, EPSILON, "block right-inset auto margin x");
+        assertEquals(10f, rightLayout.location().y, EPSILON, "block right-inset auto margin y");
+
+        TaffyStyle bottomOnly = sized(50f, 50f);
+        bottomOnly.margin = margin(LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+                                   LengthPercentageAuto.ZERO, LengthPercentageAuto.AUTO);
+        bottomOnly.inset = inset(px(10f), LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO, px(20f));
+        Layout bottomLayout = absposChild(TaffyDisplay.BLOCK, bottomOnly);
+        assertEquals(10f, bottomLayout.location().x, EPSILON, "block bottom-inset auto margin x");
+        assertEquals(130f, bottomLayout.location().y, EPSILON, "block bottom-inset auto margin y");
+
+        // A single *start* inset already resolved to zero free space before #1202; keep it pinned.
+        TaffyStyle leftOnly = sized(50f, 50f);
+        leftOnly.margin = margin(LengthPercentageAuto.AUTO, LengthPercentageAuto.ZERO,
+                                 LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        leftOnly.inset = inset(px(10f), LengthPercentageAuto.AUTO, px(10f), LengthPercentageAuto.AUTO);
+        Layout leftLayout = absposChild(TaffyDisplay.BLOCK, leftOnly);
+        assertEquals(10f, leftLayout.location().x, EPSILON, "block left-inset auto margin x");
+        assertEquals(10f, leftLayout.location().y, EPSILON, "block left-inset auto margin y");
+    }
+
+    /** The same #1202 rule as implemented by the flexbox absolute-positioning pass. */
+    @Test
+    @DisplayName("OF-03: flex abspos auto margins split the free space when both insets are set")
+    void flexAbsposAutoMarginsAbsorbWithBothInsets() {
+        TaffyStyle childStyle = sized(50f, 50f);
+        childStyle.margin = margin(LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO,
+                                   LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        childStyle.inset = inset(px(10f), px(20f), LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO);
+
+        Layout child = absposChild(TaffyDisplay.FLEX, childStyle);
+
+        assertEquals(70f, child.location().x, EPSILON, "flex both-inset auto margin x");
+        assertEquals(0f, child.location().y, EPSILON, "flex both-inset auto margin y");
+    }
+
+    @Test
+    @DisplayName("OF-03: flex abspos single inset does not inflate the auto margin")
+    void flexAbsposSingleInsetDoesNotInflateAutoMargin() {
+        TaffyStyle rightOnly = sized(50f, 50f);
+        rightOnly.margin = margin(LengthPercentageAuto.ZERO, LengthPercentageAuto.AUTO,
+                                  LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        rightOnly.inset = inset(LengthPercentageAuto.AUTO, px(20f), px(10f), LengthPercentageAuto.AUTO);
+        Layout rightLayout = absposChild(TaffyDisplay.FLEX, rightOnly);
+        assertEquals(130f, rightLayout.location().x, EPSILON, "flex right-inset auto margin x");
+        assertEquals(10f, rightLayout.location().y, EPSILON, "flex right-inset auto margin y");
+
+        TaffyStyle leftOnly = sized(50f, 50f);
+        leftOnly.margin = margin(LengthPercentageAuto.AUTO, LengthPercentageAuto.ZERO,
+                                 LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+        leftOnly.inset = inset(px(10f), LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO, LengthPercentageAuto.AUTO);
+        Layout leftLayout = absposChild(TaffyDisplay.FLEX, leftOnly);
+        assertEquals(10f, leftLayout.location().x, EPSILON, "flex left-inset auto margin x");
+    }
+
+    /**
+     * Regression: absolute positioning of a non-replaced box between two insets still stretches
+     * the auto size to fill the positioning area (the OF-04 replaced guard must not change it).
+     */
+    @Test
+    @DisplayName("OF-03: legacy absolute inset stretching still fills the area")
+    void absoluteInsetStretchingRegression() {
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.inset = inset(px(10f), px(20f), px(10f), px(20f));
+
+        Layout child = absposChild(TaffyDisplay.BLOCK, childStyle);
+
+        assertEquals(170f, child.size().width, EPSILON, "absolute stretched width");
+        assertEquals(170f, child.size().height, EPSILON, "absolute stretched height");
+        assertEquals(10f, child.location().x, EPSILON, "absolute stretched x");
+        assertEquals(10f, child.location().y, EPSILON, "absolute stretched y");
+    }
 }

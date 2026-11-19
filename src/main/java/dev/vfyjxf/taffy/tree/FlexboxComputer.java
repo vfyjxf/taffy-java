@@ -3116,10 +3116,20 @@ public class FlexboxComputer {
                 measuredOutput
             );
 
-            // Calculate free space and expand auto margins
+            // Auto margins only absorb free space in an axis where *both* insets are non-auto;
+            // with one (or no) inset the axis is over-constrained and they resolve to 0.
+            // The free space is measured against the positioning area (the container's border box
+            // less border and scrollbar gutter), and a margin only counts when its own inset is
+            // set. Upstream #1202 (3307c7e0).
+            float nonAutoXMarginSum = (isNaN(left) ? 0f : margin.left) + (isNaN(right) ? 0f : margin.right);
+            float nonAutoYMarginSum = (isNaN(top) ? 0f : margin.top) + (isNaN(bottom) ? 0f : margin.bottom);
             FloatSize freeSpace = new FloatSize(
-                Math.max(0f, containerSize.width - finalSize.width - margin.left - margin.right),
-                Math.max(0f, containerSize.height - finalSize.height - margin.top - margin.bottom)
+                !isNaN(left) && !isNaN(right)
+                ? Math.max(0f, insetRelativeWidth - left - right - finalSize.width - nonAutoXMarginSum)
+                : 0f,
+                !isNaN(top) && !isNaN(bottom)
+                ? Math.max(0f, insetRelativeHeight - top - bottom - finalSize.height - nonAutoYMarginSum)
+                : 0f
             );
 
             // Resolve auto margins
