@@ -228,6 +228,24 @@ public final class TaffyStyle {
      */
     public FlexWrap flexWrap = FlexWrap.NO_WRAP;
 
+    /**
+     * The minimum number of flex lines requested for a multi-line flex container
+     * ({@code flex-line-count}).
+     * <p>
+     * When items are balanced ({@link FlexWrap#BALANCE} or {@link FlexWrap#BALANCE_REVERSE}) they
+     * are divided into at least this many lines. For any multi-line container, the definite
+     * cross-axis available space used when measuring items is divided between this many lines
+     * (after subtracting the cross-axis gaps between them).
+     * <p>
+     * {@code 0} means "not set" and behaves like the CSS initial value of {@code 1}; values below
+     * {@code 0} are treated the same way. The value is clamped to the number of items when it is
+     * used for balancing.
+     *
+     * @see <a href="https://drafts.csswg.org/css-flexbox-2/#flex-line-count-property">CSS Flexbox 2 -
+     *      flex-line-count</a>
+     */
+    public int flexLineCount = 0;
+
     // === Flexbox Item Properties ===
 
     /**
@@ -529,6 +547,7 @@ public final class TaffyStyle {
         copy.direction = this.direction;
         copy.flexDirection = this.flexDirection;
         copy.flexWrap = this.flexWrap;
+        copy.flexLineCount = this.flexLineCount;
         copy.flex = this.flex;
         copy.flexBasis = this.flexBasis;
         copy.flexGrow = this.flexGrow;
@@ -684,6 +703,25 @@ public final class TaffyStyle {
     public FlexDirection getFlexDirection() {return flexDirection;}
 
     public FlexWrap getFlexWrap() {return flexWrap;}
+
+    /**
+     * Returns the requested minimum flex line count, or {@code 0} when it is not set.
+     *
+     * @see #flexLineCount
+     */
+    public int getFlexLineCount() {return flexLineCount;}
+
+    /**
+     * Sets the requested minimum flex line count. {@code 0} (the default) clears it.
+     *
+     * @param value the minimum number of flex lines; values below {@code 1} behave like {@code 1}
+     * @return this style, for chaining
+     * @see #flexLineCount
+     */
+    public TaffyStyle setFlexLineCount(int value) {
+        this.flexLineCount = value;
+        return this;
+    }
 
     /**
      * Returns the raw flex field value (may be NaN if not set)
