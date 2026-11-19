@@ -214,4 +214,54 @@ public class FloatRegressP7Test {
         // RTL default aligns the 50px child at x=150; right inset 20 wins over left inset 10.
         assertLocation(tree.getLayout(child), 130f, 5f, "RTL child");
     }
+
+    // === #1041: clear with no relevant floats is a no-op ===
+
+    @Test
+    @DisplayName("#1041: clear:right on the first right float does not move it")
+    void clearOnFirstRightFloatIsNoOp() {
+        TaffyTree tree = new TaffyTree();
+
+        NodeId floatNode = tree.newLeaf(floated(TaffyFloat.RIGHT, 50f, 20f, Clear.RIGHT));
+        TaffyStyle rootStyle = sized(200f, Float.NaN);
+        NodeId root = tree.newWithChildren(rootStyle, floatNode);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertLocation(tree.getLayout(floatNode), 150f, 0f, "float");
+    }
+
+    @Test
+    @DisplayName("#1041: clear:right after only left floats is a no-op")
+    void clearRightAfterLeftFloatIsNoOp() {
+        TaffyTree tree = new TaffyTree();
+
+        NodeId leftFloat = tree.newLeaf(floated(TaffyFloat.LEFT, 50f, 20f, Clear.NONE));
+        NodeId rightFloat = tree.newLeaf(floated(TaffyFloat.RIGHT, 40f, 10f, Clear.RIGHT));
+        TaffyStyle rootStyle = sized(200f, Float.NaN);
+        NodeId root = tree.newWithChildren(rootStyle, leftFloat, rightFloat);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertLocation(tree.getLayout(leftFloat), 0f, 0f, "left float");
+        // The left float is irrelevant to clear:right, so the right float stays in the same band.
+        assertLocation(tree.getLayout(rightFloat), 160f, 0f, "right float");
+    }
+
+    @Test
+    @DisplayName("#1041: clear on an in-flow box with no floats is a no-op")
+    void clearOnBlockWithoutFloatsIsNoOp() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = sized(Float.NaN, 10f);
+        childStyle.clear = Clear.BOTH;
+        NodeId child = tree.newLeaf(childStyle);
+        TaffyStyle rootStyle = sized(200f, Float.NaN);
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertLocation(tree.getLayout(child), 0f, 0f, "child");
+        assertSize(tree.getLayout(child), 200f, 10f, "child");
+    }
 }
