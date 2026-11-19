@@ -544,7 +544,7 @@ public class FlexboxComputer {
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE ||
-                childStyle.getPosition() == TaffyPosition.ABSOLUTE) {
+                childStyle.getPosition().isOutOfFlow()) {
                 order++;
                 continue;
             }
@@ -666,13 +666,22 @@ public class FlexboxComputer {
                 childStyle.getMargin().bottom.isAuto()
             );
 
-            TaffyRect<LengthPercentageAuto> insetStyle = childStyle.getInset();
-            item.inset = new FloatRect(
-                insetStyle.left.maybeResolve(nodeInnerSize.width),
-                insetStyle.right.maybeResolve(nodeInnerSize.width),
-                insetStyle.top.maybeResolve(nodeInnerSize.height),
-                insetStyle.bottom.maybeResolve(nodeInnerSize.height)
-            );
+            // Only `position: relative` applies its inset as a correction offset. Static and
+            // sticky boxes are laid out in normal flow without one (a sticky offset depends on
+            // the scroll position and is the caller's job), and a fixed box is out of flow and
+            // never becomes a flex item. Upstream #1140 stores the equivalent empty inset
+            // (`Rect::NONE`) for every non-relative item.
+            if (childStyle.getPosition() == TaffyPosition.RELATIVE) {
+                TaffyRect<LengthPercentageAuto> insetStyle = childStyle.getInset();
+                item.inset = new FloatRect(
+                    insetStyle.left.maybeResolve(nodeInnerSize.width),
+                    insetStyle.right.maybeResolve(nodeInnerSize.width),
+                    insetStyle.top.maybeResolve(nodeInnerSize.height),
+                    insetStyle.bottom.maybeResolve(nodeInnerSize.height)
+                );
+            } else {
+                item.inset = new FloatRect(Float.NaN, Float.NaN, Float.NaN, Float.NaN);
+            }
 
             item.hypotheticalInnerSize = new FloatSize(0f, 0f);
             item.hypotheticalOuterSize = new FloatSize(0f, 0f);
@@ -3000,7 +3009,7 @@ public class FlexboxComputer {
 
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
-            if (childStyle.getPosition() != TaffyPosition.ABSOLUTE) continue;
+            if (!childStyle.getPosition().isOutOfFlow()) continue;
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
 
             // Area available for positioning (container size minus border and scrollbar gutter)

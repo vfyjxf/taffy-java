@@ -520,7 +520,7 @@ public class LayoutComputer {
             !style.isBlock() ||
             overflow.x.isScrollContainer() ||
             overflow.y.isScrollContainer() ||
-            style.getPosition() == TaffyPosition.ABSOLUTE ||
+            style.getPosition().isOutOfFlow() ||
             ( !Float.isNaN(style.getAspectRatio())) ||
             padding.top > 0 ||
             padding.bottom > 0 ||

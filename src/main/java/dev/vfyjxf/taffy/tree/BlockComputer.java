@@ -189,7 +189,7 @@ public class BlockComputer {
             !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
-            style.getPosition() == TaffyPosition.RELATIVE &&
+            !style.getPosition().isOutOfFlow() &&
             padding.top == 0 &&
             border.top == 0;
 
@@ -198,7 +198,7 @@ public class BlockComputer {
             !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
-            style.getPosition() == TaffyPosition.RELATIVE &&
+            !style.getPosition().isOutOfFlow() &&
             padding.bottom == 0 &&
             border.bottom == 0;
 
@@ -218,7 +218,7 @@ public class BlockComputer {
             !style.isBlock() ||
             style.getOverflow().x.isScrollContainer() ||
             style.getOverflow().y.isScrollContainer() ||
-            style.getPosition() == TaffyPosition.ABSOLUTE ||
+            style.getPosition().isOutOfFlow() ||
             (!Float.isNaN(style.getAspectRatio())) ||
             padding.top > 0 ||
             padding.bottom > 0 ||
@@ -419,7 +419,7 @@ public class BlockComputer {
                         shifted.location().y += groupOffset;
                         item.finalLayout = shifted;
                     }
-                    if (item.position == TaffyPosition.ABSOLUTE) {
+                    if (item.position.isOutOfFlow()) {
                         item.staticPosition.y += groupOffset;
                     }
                 }
@@ -794,7 +794,7 @@ public class BlockComputer {
         float maxChildWidth = 0f;
 
         for (BlockItem item : items) {
-            if (item.position == TaffyPosition.ABSOLUTE) continue;
+            if (item.position.isOutOfFlow()) continue;
 
             FloatSize knownDimensions = maybeClamp(item.size, item.minSize, item.maxSize);
 
@@ -883,7 +883,7 @@ public class BlockComputer {
         boolean isRtl = direction != null && direction.isRtl();
 
         for (BlockItem item : items) {
-            if (item.position == TaffyPosition.ABSOLUTE) {
+            if (item.position.isOutOfFlow()) {
                 // In RTL, static position starts from right
                 float staticX = isRtl
                     ? (containerOuterWidth - contentBoxInset.right)
@@ -1023,15 +1023,24 @@ public class BlockComputer {
                 Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
             );
 
-            // Resolve item inset. Horizontal insets resolve against the containing block width;
-            // vertical insets against its percentage resolution height (not a hard-coded zero
-            // basis, which made e.g. `top: 50%` a no-op). BK-08 / upstream #1122 (f1a03062).
-            float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
-            float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
-            float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
-            float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
-            float insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
-            float insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
+            // Resolve item inset. Only `position: relative` applies its inset as a correction
+            // offset. Static and sticky boxes are laid out in normal flow without a relative
+            // offset (a sticky offset depends on the scroll position and is the caller's job),
+            // and fixed is out of flow, so it is positioned by the absolute pass instead.
+            // Upstream #1140.
+            // Horizontal insets resolve against the containing block width; vertical insets
+            // against its percentage resolution height (not a hard-coded zero basis, which made
+            // e.g. `top: 50%` a no-op). BK-08 / upstream #1122 (f1a03062).
+            float insetOffsetX = 0f;
+            float insetOffsetY = 0f;
+            if (item.position == TaffyPosition.RELATIVE) {
+                float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
+                float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
+                float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
+                float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
+                insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
+                insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
+            }
 
             // Compute y margin offset with margin collapse.
             //
@@ -1254,7 +1263,7 @@ public class BlockComputer {
         FloatSize contentSize = FloatSize.zero();
 
         for (BlockItem item : items) {
-            if (item.position != TaffyPosition.ABSOLUTE) continue;
+            if (!item.position.isOutOfFlow()) continue;
 
             TaffyStyle childStyle = tree.getStyle(item.nodeId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
