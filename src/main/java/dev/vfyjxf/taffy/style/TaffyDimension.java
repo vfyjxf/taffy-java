@@ -385,11 +385,14 @@ public final class TaffyDimension {
      * resolved by this helper: stretch resolves against the available space, and content is a
      * {@code flex-basis} keyword handled by the flexbox algorithm. Both throw
      * {@link UnsupportedOperationException} rather than returning {@link Float#NaN}, so callers
-     * cannot silently treat them as {@code auto}. The opt-in sizing-keyword resolution that will
-     * give them a real resolver is deferred to 1.3 (decision S5).
+     * cannot silently treat them as {@code auto}. Use
+     * {@link dev.vfyjxf.taffy.util.SizingKeyword} for context-aware resolution (ST-01/FL-17),
+     * including {@code fit-content(<length-percentage>)} limits, which this helper does not
+     * consult.
      *
      * <p>This method is additive and does not change the legacy behavior: {@link #maybeResolve(float)}
-     * still returns {@code NaN} for all intrinsic keywords until the opt-in mode lands.
+     * still returns {@code NaN} for all intrinsic keywords; {@link dev.vfyjxf.taffy.util.SizingKeyword}
+     * is the additive route consumed by the flexbox algorithm.
      *
      * @param minContent the measured min-content size, in layout units
      * @param maxContent the measured max-content size, in layout units
