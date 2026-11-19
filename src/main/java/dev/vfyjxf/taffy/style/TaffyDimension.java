@@ -55,17 +55,27 @@ public final class TaffyDimension {
     private final Type type;
     private final float value;
     private final CalcExpression calcExpression;
+    private final LengthPercentage fitContentLimit;
 
     private TaffyDimension(Type type, float value) {
         this.type = type;
         this.value = value;
         this.calcExpression = null;
+        this.fitContentLimit = null;
     }
     
     private TaffyDimension(CalcExpression calcExpression) {
         this.type = Type.CALC;
         this.value = 0;
         this.calcExpression = calcExpression;
+        this.fitContentLimit = null;
+    }
+
+    private TaffyDimension(LengthPercentage fitContentLimit) {
+        this.type = Type.FIT_CONTENT;
+        this.value = 0;
+        this.calcExpression = null;
+        this.fitContentLimit = fitContentLimit;
     }
 
     /**
@@ -120,6 +130,21 @@ public final class TaffyDimension {
      */
     public static TaffyDimension fitContent() {
         return FIT_CONTENT;
+    }
+
+    /**
+     * Creates a {@code fit-content(<length-percentage>)} value.
+     *
+     * <p>The limit is a length, a percentage or a calc expression (upstream #1247); it is
+     * resolved by {@link dev.vfyjxf.taffy.util.SizingKeyword} against the percentage resolution
+     * basis of the axis, and a limit whose basis is unknown makes the keyword behave as
+     * {@code auto}/{@code content}. The bare {@link #fitContent()} keyword is equivalent to
+     * {@code fit-content(stretch)}.</p>
+     *
+     * @param limit the fit-content limit; must not be {@code null}
+     */
+    public static TaffyDimension fitContent(LengthPercentage limit) {
+        return new TaffyDimension(Objects.requireNonNull(limit, "limit"));
     }
     
     /**
@@ -204,6 +229,22 @@ public final class TaffyDimension {
      */
     public CalcExpression getCalcExpression() {
         return calcExpression;
+    }
+
+    /**
+     * Returns the {@code fit-content(<length-percentage>)} limit, or {@code null} for the bare
+     * {@link #fitContent()} keyword and for every other type.
+     */
+    public LengthPercentage getFitContentLimit() {
+        return fitContentLimit;
+    }
+
+    /**
+     * Returns true when this is {@code fit-content(<length-percentage>)} with an explicit limit.
+     * The bare {@link #fitContent()} keyword returns false.
+     */
+    public boolean hasFitContentLimit() {
+        return type == Type.FIT_CONTENT && fitContentLimit != null;
     }
 
     /**
@@ -298,6 +339,35 @@ public final class TaffyDimension {
     }
 
     /**
+     * Returns true when this dimension is one of the CSS sizing keywords handled by
+     * {@link dev.vfyjxf.taffy.util.SizingKeyword}: {@code min-content}, {@code max-content},
+     * {@code fit-content} / {@code fit-content(...)} and {@code stretch}.
+     *
+     * <p>This is the upstream {@code Dimension::is_sizing_keyword} name for
+     * {@link #isIntrinsicKeyword()}; it intentionally excludes {@link Type#CONTENT}, which is
+     * only valid for {@code flex-basis} and is resolved by the flexbox algorithm.</p>
+     */
+    public boolean isSizingKeyword() {
+        return isIntrinsicKeyword();
+    }
+
+    /**
+     * Returns true when this dimension is a sizing keyword whose used size is obtained by
+     * measuring the node's content: {@code min-content}, {@code max-content} and
+     * {@code fit-content} (with or without a limit).
+     *
+     * <p>{@code stretch} returns false because it resolves to an exact size (the stretch size)
+     * and never measures; {@code content} returns false because it is a {@code flex-basis}
+     * keyword resolved by the flexbox algorithm. Concrete values also return false.</p>
+     */
+    public boolean requiresMeasurement() {
+        return switch (type) {
+            case MIN_CONTENT, MAX_CONTENT, FIT_CONTENT -> true;
+            case LENGTH, PERCENT, AUTO, CALC, STRETCH, CONTENT -> false;
+        };
+    }
+
+    /**
      * Resolves a content-based intrinsic sizing keyword against already measured intrinsic sizes.
      *
      * <ul>
@@ -315,11 +385,14 @@ public final class TaffyDimension {
      * resolved by this helper: stretch resolves against the available space, and content is a
      * {@code flex-basis} keyword handled by the flexbox algorithm. Both throw
      * {@link UnsupportedOperationException} rather than returning {@link Float#NaN}, so callers
-     * cannot silently treat them as {@code auto}. The opt-in sizing-keyword resolution that will
-     * give them a real resolver is deferred to 1.3 (decision S5).
+     * cannot silently treat them as {@code auto}. Use
+     * {@link dev.vfyjxf.taffy.util.SizingKeyword} for context-aware resolution (ST-01/FL-17),
+     * including {@code fit-content(<length-percentage>)} limits, which this helper does not
+     * consult.
      *
      * <p>This method is additive and does not change the legacy behavior: {@link #maybeResolve(float)}
-     * still returns {@code NaN} for all intrinsic keywords until the opt-in mode lands.
+     * still returns {@code NaN} for all intrinsic keywords; {@link dev.vfyjxf.taffy.util.SizingKeyword}
+     * is the additive route consumed by the flexbox algorithm.
      *
      * @param minContent the measured min-content size, in layout units
      * @param maxContent the measured max-content size, in layout units
@@ -382,8 +455,9 @@ public final class TaffyDimension {
         TaffyDimension that = (TaffyDimension) o;
         if (type != that.type) return false;
         // For singleton types, type equality is sufficient
-        if (type == Type.AUTO || type == Type.MIN_CONTENT || type == Type.MAX_CONTENT || 
-            type == Type.FIT_CONTENT || type == Type.STRETCH || type == Type.CONTENT) return true;
+        if (type == Type.AUTO || type == Type.MIN_CONTENT || type == Type.MAX_CONTENT ||
+            type == Type.STRETCH || type == Type.CONTENT) return true;
+        if (type == Type.FIT_CONTENT) return Objects.equals(fitContentLimit, that.fitContentLimit);
         if (type == Type.CALC) return Objects.equals(calcExpression, that.calcExpression);
         return Float.compare(value, that.value) == 0;
     }
@@ -392,6 +466,9 @@ public final class TaffyDimension {
     public int hashCode() {
         if (type == Type.CALC) {
             return Objects.hash(type, calcExpression);
+        }
+        if (type == Type.FIT_CONTENT) {
+            return Objects.hash(type, fitContentLimit);
         }
         return Objects.hash(type, value);
     }
@@ -405,7 +482,7 @@ public final class TaffyDimension {
             case CALC -> "calc(...)";
             case MIN_CONTENT -> "min-content";
             case MAX_CONTENT -> "max-content";
-            case FIT_CONTENT -> "fit-content";
+            case FIT_CONTENT -> fitContentLimit == null ? "fit-content" : "fit-content(" + fitContentLimit + ")";
             case STRETCH -> "stretch";
             case CONTENT -> "content";
         };
