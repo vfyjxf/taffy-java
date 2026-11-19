@@ -44,6 +44,23 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
   instructions in `gentest/README.md`.
 
+### P7 additions (float, grid details, contain)
+
+- CSS `float`/`clear` (style fields, `FloatContext`/`BlockContext`/`BfcSlot`),
+  block-level float placement/avoidance/content slots, BFC float containment,
+  root/as-float BFC semantics and the FT-02/FT-06 clear/inset/height fixes.
+- Grid track sizing: fr intrinsic distribution (GR-01), minimum contribution
+  completion (GR-02, including the spanning growth-limit distribution), container
+  min/max content-box (GR-03), growth-limit headroom (GR-04), percentages against
+  the grid area (GR-06), auto-fit/auto-repeat and sparse occupancy (GR-07/13),
+  independent row rerun and percentage tracks (GR-11), cyclic percentage minima
+  (GR-12), named lines/repeat line names (GR-15/17), sized grid-template-areas
+  (GR-16), implicit-fixed stretch (GR-20) and additive `DetailedGridInfo`
+  (GR-18).
+- `contain: layout/paint` (independent formatting context and baseline
+  suppression), `flex-wrap: balance/balance-reverse` with `flexLineCount` DP line
+  breaking (FL-21).
+
 ### P6 additions (position / out-of-flow)
 
 - `TaffyPosition` gained `STATIC`, `FIXED` and `STICKY` (appended; the 1.2 default
@@ -150,6 +167,11 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   [docs/migration-1.2.md](docs/migration-1.2.md) explains how to compare your
   output against it. Downstream pixel/snapshot tests may need updated
   expectations.
+- **P7 batch (partial)**: float layout and clear, grid track sizing/named
+  lines/detailed info, block `contain`, flex balance. Remaining/known residuals:
+  TS-06's +646-fixture corpus, GR-10's `RequestedAxis` plumbing, float per-block
+  intrinsic width, and the indefinite-axis limited min-content rule (no upstream
+  fixture distinguishes it). ST-08 and OF-01 remain on the 1.3/2.0 line.
 - **P6 batch (partial)**: `position: static/fixed/sticky` keywords, out-of-flow
   alignment/safe/margins, replaced sizing, root viewport ICB and RTL root, flex
   static positions. **OF-01** (full out-of-flow hoisting with an independent OOF

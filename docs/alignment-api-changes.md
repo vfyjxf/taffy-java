@@ -16,7 +16,7 @@ P0-a, P0-b, P1 and P2 are complete. P3 is mostly complete.
 | **P4** | SO-01..SO-05 scrollable overflow | done (tag `p4-complete`) | behavior; fills the new `ScrollableOverflow` component; `scrollWidth/Height` switch to it |
 | **P5** | ST-02/03/04/08, FL-15..20, BK-16/19 | done (tag `p5-complete`); ST-08 + FL-15/16 deferred by decision/dependency | more enum constants (minor source break); opt-in keyword mode |
 | **P6** | OF-01..07, ST-06, FL-22/23, GR-19, TS-05 | partial (tag `p6-complete`); OF-01/TS-05 deferred by D2 to 1.4/2.0 | `TaffyPosition` STATIC/FIXED/STICKY (source break); abspos semantics |
-| **P7** | FT-01..07, BK-18/20, ST-07, FL-21/25/26, GR-01..04/06/07/11..13/15..18, TS-06 | not started | float layout, grid track types, DetailedGridInfo; largest batch |
+| **P7** | FT-01..07, BK-18/20, ST-07, FL-21/25/26, GR-01..04/06/07/11..13/15..18, TS-06 | partial (tag `p7-complete`); TS-06 corpus/GR-10 plumbing/float per-block width deferred | float layout, grid track types, DetailedGridInfo; largest batch |
 
 So there are **four full phases left (P4-P7) plus the P3 residual segment**.
 

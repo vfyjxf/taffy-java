@@ -73,6 +73,13 @@ snapshot.
   margin-isolation part (float containment awaits F7). Known partials: BK-15's
   height-only aspect-ratio derivation and BK-04's block stretch exclusion
   (tracked in the workspace residuals).
+- **P7 (partial, tag `p7-complete`)**: float/clear engine (placement, avoidance,
+  BFC contexts, FT-02/06 fixes), grid track sizing (GR-01/02/03/04/06/07/11/12/13/
+  15/16/17/20), additive `DetailedGridInfo` (GR-18 first/second slices), block
+  `contain: layout/paint` (ST-07), and flex `balance`/`lineCount` (FL-21).
+  Remaining: TS-06's expanded fixture corpus, GR-10 `RequestedAxis` plumbing,
+  float per-block intrinsic width, and the indefinite-axis limited min-content
+  rule (no distinguishing upstream fixture). ST-08/OF-01 stay on the 1.3/2.0 line.
 - **P6 (partial, tag `p6-complete`)**: OF-02/03/04/05/06/07, ST-06 and FL-22/23
   are merged (position keywords, abspos margins/replaced/self/safe, root
   viewport ICB/RTL, flex writing-mode static positions). **OF-01** (full OOF
