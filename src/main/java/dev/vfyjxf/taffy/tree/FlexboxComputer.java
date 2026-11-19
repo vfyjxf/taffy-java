@@ -3241,7 +3241,7 @@ public class FlexboxComputer {
             JustifyContent jc = justifyContent != null ? justifyContent : JustifyContent.START;
             return switch (jc) {
                 case SPACE_BETWEEN, START -> contentBoxMainStart + marginMainStart;
-                case FLEX_START, STRETCH -> {
+                case NORMAL, FLEX_START, STRETCH -> {
                     // FLEX_START behaves like START normally, like END when wrap-reverse
                     // STRETCH has no effect on main axis in flexbox, treat as FLEX_START
                     if (isWrapReverse) yield containerMain - contentBoxMainEnd - finalMain - marginMainEnd;

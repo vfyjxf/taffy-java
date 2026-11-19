@@ -174,13 +174,20 @@ public class AlignSelfWrapReverseTest {
     }
 
     @Test
-    @DisplayName("new START/END constants are appended after existing constants and round-trip to AlignItems")
+    @DisplayName("legacy constant ordinals are stable and START/END round-trip to AlignItems")
     void newConstantsAreAppendedAndRoundTrip() {
+        // 1.2 compatibility policy Q2/S2: new constants are appended and existing ordinals stay
+        // stable. Assert the legacy prefix instead of the tail so later P5 appends (NORMAL,
+        // SELF_*, SAFE_*) do not invalidate this stability check.
         AlignSelf[] values = AlignSelf.values();
-        assertEquals(AlignSelf.START, values[values.length - 2],
-            "START must be appended (Q2: minor source-compatible enum growth)");
-        assertEquals(AlignSelf.END, values[values.length - 1],
-            "END must be appended (Q2: minor source-compatible enum growth)");
+        assertEquals(AlignSelf.AUTO, values[0]);
+        assertEquals(AlignSelf.FLEX_START, values[1]);
+        assertEquals(AlignSelf.FLEX_END, values[2]);
+        assertEquals(AlignSelf.CENTER, values[3]);
+        assertEquals(AlignSelf.BASELINE, values[4]);
+        assertEquals(AlignSelf.STRETCH, values[5]);
+        assertEquals(AlignSelf.START, values[6], "START keeps its pre-existing ordinal (Q2)");
+        assertEquals(AlignSelf.END, values[7], "END keeps its pre-existing ordinal (Q2)");
         assertEquals(AlignItems.START, AlignSelf.START.toAlignItems());
         assertEquals(AlignItems.END, AlignSelf.END.toAlignItems());
         assertEquals(AlignItems.FLEX_START, AlignSelf.FLEX_START.toAlignItems());

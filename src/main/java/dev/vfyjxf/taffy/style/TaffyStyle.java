@@ -595,6 +595,7 @@ public final class TaffyStyle {
             case START -> JustifyContent.START;
             case END -> JustifyContent.END;
             case STRETCH -> JustifyContent.STRETCH;
+            case NORMAL -> JustifyContent.NORMAL;
             case AUTO -> JustifyContent.FLEX_START; // defensive (handled above)
         };
     }

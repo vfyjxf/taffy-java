@@ -29,5 +29,15 @@ public enum JustifyContent {
      * In CSS Grid: auto tracks expand to share remaining space equally.
      * In Flexbox: equivalent to FLEX_START (no effect on main axis distribution).
      */
-    STRETCH;
+    STRETCH,
+
+    /**
+     * The layout mode's default alignment (upstream #1255): {@code stretch} for flex and grid
+     * containers, {@code start} for block containers.
+     * <p>
+     * Unlike {@link #AUTO}, which is the legacy "not specified" sentinel, this is an explicit
+     * keyword that can override an inherited alignment. Appended after the existing constants so
+     * their ordinals stay stable (1.2 compatibility policy S2/Q2).
+     */
+    NORMAL;
 }

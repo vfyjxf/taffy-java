@@ -1384,7 +1384,7 @@ public class BlockComputer {
         return switch (alignContent) {
             // AUTO is the "unset" sentinel and is filtered out by the caller; keep the switch
             // exhaustive without introducing a "normal" behaviour here (BK-18).
-            case AUTO, START, FLEX_START -> 0f;
+            case AUTO, NORMAL, START, FLEX_START -> 0f;
             // End aligns the content's bottom edge with the content box's bottom edge.
             case END, FLEX_END -> freeSpace;
             // Unsafe centering: overflowing content is centred off both edges.

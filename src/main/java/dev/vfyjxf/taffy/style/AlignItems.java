@@ -42,5 +42,15 @@ public enum AlignItems {
     BASELINE,
     
     /** Stretch to fill the container */
-    STRETCH;
+    STRETCH,
+
+    /**
+     * The layout mode's default alignment (upstream #1254): {@code stretch} for flex items and
+     * for grid items without a definite size, {@code start} where stretching does not apply.
+     * <p>
+     * Unlike {@link #AUTO}, which is the legacy "not specified" sentinel, this is an explicit
+     * keyword that can override an inherited alignment. Appended after the existing constants so
+     * their ordinals stay stable (1.2 compatibility policy S2/Q2).
+     */
+    NORMAL;
 }

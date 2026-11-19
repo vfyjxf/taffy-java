@@ -29,7 +29,17 @@ public enum AlignSelf {
      * Unlike {@link #FLEX_END}, this is not affected by {@code flex-wrap: wrap-reverse};
      * it always resolves to the cross-end edge of the container.
      */
-    END;
+    END,
+
+    /**
+     * The layout mode's default alignment (upstream #1254): {@code stretch} for flex items and
+     * for grid items without a definite size, {@code start} where stretching does not apply.
+     * <p>
+     * Unlike {@link #AUTO}, which is the legacy "not specified" sentinel, this is an explicit
+     * keyword that can override an inherited alignment. Appended after the existing constants so
+     * their ordinals stay stable (1.2 compatibility policy S2/Q2).
+     */
+    NORMAL;
 
     /**
      * Creates an AlignSelf from an AlignItems value.
@@ -48,6 +58,7 @@ public enum AlignSelf {
             case CENTER -> CENTER;
             case BASELINE -> BASELINE;
             case STRETCH -> STRETCH;
+            case NORMAL -> NORMAL;
             case AUTO -> STRETCH; // defensive (handled above)
         };
     }
@@ -63,6 +74,7 @@ public enum AlignSelf {
             case FLEX_END -> AlignItems.FLEX_END;
             case CENTER -> AlignItems.CENTER;
             case BASELINE -> AlignItems.BASELINE;
+            case NORMAL -> AlignItems.NORMAL;
             case STRETCH, AUTO -> AlignItems.STRETCH;
         };
     }
