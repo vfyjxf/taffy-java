@@ -8,6 +8,7 @@ import dev.vfyjxf.taffy.geometry.TaffyPoint;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignContent;
+import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
@@ -18,6 +19,7 @@ import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.style.TextAlign;
+import dev.vfyjxf.taffy.util.AlignmentHelper;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
@@ -75,6 +77,24 @@ public class BlockComputer {
         FloatSize computedSize;
         FloatPoint staticPosition;
         boolean canBeCollapsedThrough;
+        /**
+         * The item's raw {@code justify-self} value; {@link AlignItems#AUTO} is the legacy
+         * "not specified" sentinel (the container's {@code justify-items} applies instead).
+         * Upstream #1250.
+         */
+        AlignItems justifySelf;
+        /**
+         * The item's resolved direction ({@code INHERIT} already resolved through the parent
+         * chain), used to resolve {@code self-start}/{@code self-end} in the inline axis.
+         * Upstream #1077.
+         */
+        TaffyDirection direction;
+        /**
+         * Whether the item's style {@code width} is {@code auto}. Only such a box resolves its
+         * width to {@code fit-content} when {@code justify-self} is neither {@code normal} nor
+         * {@code stretch}. Upstream #1250.
+         */
+        boolean widthIsAuto;
         /**
          * Pending layout of an in-flow child. Held back from {@code setUnroundedLayout} so that a
          * measurement pass ({@link RunMode#COMPUTE_SIZE}) can return before any tree state is
@@ -311,6 +331,7 @@ public class BlockComputer {
             containerPercentageResolutionHeight,
             contentBoxInset,
             style.getTextAlign(),
+            style.justifyItems,
             direction,
             ownMarginsCollapseWithChildren
         );
@@ -359,7 +380,9 @@ public class BlockComputer {
         // baseline shift from #996 (b9bfa1d1).
         float firstBaseline = layoutResult.firstBaseline;
         AlignContent alignContent = style.getAlignContent();
-        if (alignContent != AlignContent.AUTO) {
+        // AUTO is the legacy "not specified" sentinel and keeps the historical no-op; an explicit
+        // NORMAL is a first-class value and resolves to START in block layout (upstream #1255).
+        if (!AlignmentHelper.isUnset(alignContent)) {
             float resolvedContentBoxInsetHeight = contentBoxInset.top + contentBoxInset.bottom;
             float containerInnerHeight = containerOuterHeight - resolvedContentBoxInsetHeight;
             float inflowContentHeight = layoutResult.contentHeight - resolvedContentBoxInsetHeight;
@@ -718,6 +741,9 @@ public class BlockComputer {
             item.canBeCollapsedThrough = false;
             item.isTable = childStyle.getItemIsTable();
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
+            item.justifySelf = childStyle.justifySelf;
+            item.direction = layoutComputer.resolveDirection(childId);
+            item.widthIsAuto = childStyle.getSize().width.isAuto();
             // For compressible replaced items a percentage width/max-width resolves against a
             // zero-width containing block in the min-content contribution, so the item contributes
             // at most this cap. Upstream #1401 (4aca4f49).
@@ -793,6 +819,7 @@ public class BlockComputer {
         float containerPercentageResolutionHeight,
         FloatRect contentBoxInset,
         TextAlign textAlign,
+        AlignItems justifyItems,
         TaffyDirection direction,
         TaffyLine<Boolean> ownMarginsCollapseWithChildren) {
 
@@ -854,11 +881,59 @@ public class BlockComputer {
             );
             float itemNonAutoXMarginSum = itemNonAutoMargin.left + itemNonAutoMargin.right;
 
+            // Resolve this item's inline-axis self alignment (css-align-3 section 6.1.1, upstream
+            // #1250). Only the legacy AUTO sentinel means "not specified": it falls back to the
+            // container's justify-items, while an explicit NORMAL suppresses that fallback and
+            // keeps the default block layout rules. The combined value is then resolved against
+            // the item's own direction, so self-start/self-end flip in the inline axis when the
+            // item's direction differs from the container's (upstream #1077).
+            AlignItems justifySelf = item.justifySelf != null && item.justifySelf != AlignItems.AUTO
+                                     ? item.justifySelf
+                                     : justifyItems;
+            if (justifySelf == AlignItems.AUTO) {
+                justifySelf = null;
+            }
+            justifySelf = AlignmentHelper.resolveSelfRelative(justifySelf, item.direction, direction, true);
+            boolean isStretchJustifySelf = justifySelf == AlignItems.STRETCH;
+            // The resolved justify-self if it is neither normal nor stretch: only such a value
+            // sizes an auto width as fit-content and aligns the margin box itself.
+            AlignItems nonStretchJustifySelf =
+                justifySelf == null || isStretchJustifySelf || AlignmentHelper.isNormal(justifySelf)
+                ? null
+                : justifySelf;
+
             FloatSize knownDimensions;
-            if (item.isTable) {
+            // Unless stretched, tables resolve their own width (CSS2 section 10.3.3): an
+            // auto-width table is sized by its content, not by the containing block. A stretch
+            // justify-self stretches such a box through the regular stretch path instead
+            // (upstream #1250).
+            if (item.isTable && !isStretchJustifySelf) {
                 knownDimensions = new FloatSize(NaN, NaN);
             } else {
-                float width = Float.isNaN(item.size.width) ? containerInnerWidth - itemNonAutoXMarginSum : item.size.width;
+                float width;
+                if (!Float.isNaN(item.size.width)) {
+                    width = item.size.width;
+                } else if (nonStretchJustifySelf != null && item.widthIsAuto) {
+                    // "The automatic width of a block-level box whose justify-self is neither
+                    // normal nor stretch is fit-content rather than stretch": measure the item
+                    // under the available width, which is upstream's Dimension::fit_content()
+                    // sizing-keyword resolution (upstream #1250).
+                    float fitContentAvailable = Math.max(0f, containerInnerWidth - itemNonAutoXMarginSum);
+                    FloatSize measured = layoutComputer.measureChildSize(
+                        item.nodeId,
+                        new FloatSize(NaN, NaN),
+                        parentSize,
+                        new TaffySize<>(
+                            AvailableSpace.definite(fitContentAvailable),
+                            AvailableSpace.maxContent()
+                        ),
+                        SizingMode.INHERENT_SIZE,
+                        new TaffyLine<>(true, true)
+                    );
+                    width = Float.isNaN(measured.width) ? fitContentAvailable : measured.width;
+                } else {
+                    width = containerInnerWidth - itemNonAutoXMarginSum;
+                }
                 width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
                 knownDimensions = maybeClamp(
                     new FloatSize(width, item.size.height),
@@ -945,18 +1020,36 @@ public class BlockComputer {
 
             float y = committedYOffset + insetOffsetY + yMarginOffset;
 
-            // Calculate x position based on direction
+            // Calculate the x position. A non-stretch justify-self aligns the item's margin box
+            // within its alignment container and takes precedence over legacy text-align, but
+            // auto margins take precedence over both: they have already absorbed the free space,
+            // and the historical auto-margin placement below is the result the spec expects for
+            // that case (upstream #1250).
             float itemOuterWidth = finalSize.width + resolvedMargin.left + resolvedMargin.right;
             float freeSpace = containerInnerWidth - itemOuterWidth;
+            boolean hasAutoXMargin = item.margin.left.isAuto() || item.margin.right.isAuto();
             float x;
 
-            if (isRtl) {
+            if (nonStretchJustifySelf != null && !hasAutoXMargin) {
+                // A safe value falls back to start when the margin box overflows the containing
+                // block; otherwise the safety modifier is dropped (upstream #952).
+                AlignItems keyword = AlignmentHelper.resolveSelfSafety(nonStretchJustifySelf, freeSpace < 0f);
+                float offset = switch (keyword) {
+                    // Centring is direction-independent...
+                    case CENTER -> freeSpace / 2f;
+                    // ...whereas start/end are logical edges: in RTL start is the right edge.
+                    case END, FLEX_END, SELF_END -> isRtl ? 0f : freeSpace;
+                    default -> isRtl ? freeSpace : 0f;
+                };
+                x = contentBoxInset.left + resolvedMargin.left + insetOffsetX + offset;
+            } else if (isRtl) {
                 // RTL: Default alignment is to the right (START in RTL)
                 // Calculate x so item aligns to right edge by default
                 x = contentBoxInset.left + freeSpace + resolvedMargin.left + insetOffsetX;
 
-                // Apply text alignment adjustments for RTL
-                if (itemOuterWidth < containerInnerWidth) {
+                // Apply text alignment adjustments for RTL. Text-align only applies when no
+                // non-stretch justify-self took over the inline-axis alignment.
+                if (nonStretchJustifySelf == null && itemOuterWidth < containerInnerWidth) {
                     switch (textAlign) {
                         case LEFT:
                         case END:
@@ -976,8 +1069,9 @@ public class BlockComputer {
                 // LTR: Default alignment is to the left
                 x = contentBoxInset.left + insetOffsetX + resolvedMargin.left;
 
-                // Apply text alignment adjustments for LTR
-                if (itemOuterWidth < containerInnerWidth) {
+                // Apply text alignment adjustments for LTR. Text-align only applies when no
+                // non-stretch justify-self took over the inline-axis alignment.
+                if (nonStretchJustifySelf == null && itemOuterWidth < containerInnerWidth) {
                     switch (textAlign) {
                         case RIGHT:
                         case END:
@@ -1360,43 +1454,35 @@ public class BlockComputer {
     }
 
     /**
-     * Resolves the block-axis offset that `align-content` applies to a block container's in-flow
+     * Resolves the block-axis offset that align-content applies to a block container's in-flow
      * content.
      *
-     * <p>The whole in-flow stack is a single alignment subject, so the distribution keywords
-     * use their single-subject fallbacks before the offset is computed (css-align-3 §5.3):
-     * {@code stretch} and {@code space-between} behave as {@code flex-start} (offset 0), while
-     * {@code space-around} and {@code space-evenly} behave as {@code center} when there is free
-     * space; on overflow they carry implicit {@code safe} semantics and pack at the start. The
-     * block axis has no flex direction, so {@code flex-start}/{@code flex-end} coincide with
-     * start/end. Centering and end alignment are unsafe by default, so overflowing content can
-     * receive a negative offset. This mirrors upstream `apply_alignment_fallback` +
-     * `compute_alignment_offset` with `num_items = 1` and zero gap (upstream #959 / #952).</p>
+     * <p>The whole in-flow stack is a single alignment subject, so the distribution keywords use
+     * their single-subject fallbacks before the offset is computed (css-align-3 §5.3), and the
+     * keyword/offset math is exactly the shared model in {@link AlignmentHelper} (upstream
+     * #959 / #952):</p>
      *
-     * <p>Wiring note (ST-02): the {@code safe}/{@code unsafe} keyword model and the first-class
-     * {@code normal} keyword now exist on {@link AlignContent} and are centralised in
-     * {@link dev.vfyjxf.taffy.util.AlignmentHelper}, but block layout is not connected to the
-     * helper in this batch. The {@code SAFE_*} cases below therefore keep the geometry of their
-     * non-safe keyword (the overflow fallback belongs to the helper), and {@code NORMAL} keeps
-     * the legacy unset behaviour until BK-18 wires block {@code align-content} fully.</p>
+     * <ul>
+     *   <li>an explicit {@code NORMAL} resolves to {@code START} in block layout (it is the
+     *       layout-mode default for a block container), while the legacy
+     *       {@link AlignContent#AUTO} sentinel is filtered out by the caller and never reaches
+     *       this method;</li>
+     *   <li>{@code stretch} and {@code space-between} fall back to {@code flex-start} (offset 0)
+     *       for the single subject, and {@code space-around}/{@code space-evenly} fall back to
+     *       {@code center} when there is free space;</li>
+     *   <li>a {@code SAFE_*} value that overflows (non-positive free space) falls back to
+     *       {@code START}, so it packs at the start edge instead of receiving a negative offset,
+     *       whereas the unsafe positional keywords stay unsafe and may overflow;</li>
+     *   <li>the block axis has no flex direction, so {@code flex-start}/{@code flex-end} coincide
+     *       with start/end (layoutIsFlexReversed is false).</li>
+     * </ul>
      */
     private static float blockAlignContentOffset(AlignContent alignContent, float freeSpace) {
-        return switch (alignContent) {
-            // AUTO (legacy unset) and NORMAL (layout-mode default) both keep a zero offset until
-            // block align-content is wired to AlignmentHelper (BK-18). SAFE_* map to their
-            // non-safe keyword because the overflow fallback belongs to the helper.
-            case AUTO, NORMAL, START, FLEX_START, SAFE_START, SAFE_FLEX_START -> 0f;
-            // End aligns the content's bottom edge with the content box's bottom edge.
-            case END, FLEX_END, SAFE_END, SAFE_FLEX_END -> freeSpace;
-            // Unsafe centering: overflowing content is centred off both edges.
-            case CENTER, SAFE_CENTER -> freeSpace / 2f;
-            // Single-subject distribution fallbacks: stretch and space-between pack at the
-            // start (the whole stack is one subject, so there is no gap to distribute).
-            case STRETCH, SPACE_BETWEEN -> 0f;
-            // Single-subject fallback to center when there is free space; on overflow the
-            // implicit safe semantics of the space-* keywords flip them to start.
-            case SPACE_AROUND, SPACE_EVENLY -> freeSpace > 0f ? freeSpace / 2f : 0f;
-        };
+        // normal is layout-mode dependent: a block container aligns its content to start (unlike
+        // flex/grid, where it behaves as stretch).
+        AlignContent resolved = AlignmentHelper.resolveNormal(alignContent, AlignContent.START);
+        AlignContent keyword = AlignmentHelper.applyAlignmentFallback(resolved, freeSpace, 1);
+        return AlignmentHelper.computeAlignmentOffset(freeSpace, 1, 0f, keyword, false, true);
     }
 
     // Helper methods
