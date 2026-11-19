@@ -468,7 +468,7 @@ public class BlockComputer {
         // area itself, so the container description carries no padding of its own (upstream's oof
         // pass describes its container with a zero padding rectangle and a zero margin).
         // SO-01 / upstream #1118.
-        FloatRect outOfFlowOverflow = performAbsoluteLayoutOnChildren(
+        OutOfFlowOverflow outOfFlowOverflow = performAbsoluteLayoutOnChildren(
             items,
             finalOuterSize,
             absolutePositionInset,
@@ -516,8 +516,16 @@ public class BlockComputer {
         ScrollableOverflowUtil.Container inFlowOverflowContainer = new ScrollableOverflowUtil.Container(
             scrollContainer, clientSize, rtl, false, resolvedPadding);
 
-        FloatRect accumulatedOverflow = outOfFlowOverflow;
+        FloatRect accumulatedOverflow = ScrollableOverflowUtil.union(
+            FloatRect.zero(), outOfFlowOverflow.scrollableOverflow());
 
+        // The legacy 1.2 content size is still reported by this record component, and is what
+        // scrollWidth()/scrollHeight() consume until the P4 integration switches them to the
+        // rectangle. It follows upstream's pre-#1118 block rules, but with its contributions
+        // measured from the client area (#1007): the reachable content extent then excludes the
+        // leading border, which is exactly the term the symmetric scroll-size formula adds back.
+        // Upstream #1007. 2.0 removes the component entirely.
+        FloatSize inFlowContentSize = FloatSize.zero();
         for (BlockItem item : items) {
             Layout childLayout = item.finalLayout;
             // Out-of-flow children were accumulated by the absolute pass above.
@@ -544,7 +552,23 @@ public class BlockComputer {
                     )
                 )
             );
+
+            inFlowContentSize = ContentSizeUtil.max(inFlowContentSize,
+                contentSizeContribution(childLayout, item.overflow, rtl, containerOuterWidth,
+                    resolvedBorder, scrollbarGutter));
         }
+
+        // A scroll container's own end padding is part of its reachable region: the start padding
+        // is already covered by the child positions, the end padding is not. A non-scroll box does
+        // not extend its overflow region with padding that comes after its content.
+        // SO-02 / upstream #1051 and #1114.
+        if (scrollContainer) {
+            inFlowContentSize = new FloatSize(
+                inFlowContentSize.width + (rtl ? resolvedPadding.left : resolvedPadding.right),
+                inFlowContentSize.height + resolvedPadding.bottom
+            );
+        }
+        FloatSize contentSize = ContentSizeUtil.max(inFlowContentSize, outOfFlowOverflow.contentSize());
 
         // The container's own extent is part of its scrollable overflow region too: in RTL the
         // client area's right edge is the scroll origin, and a scroll container's own end padding
@@ -568,8 +592,6 @@ public class BlockComputer {
         ScrollableOverflow scrollableOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
             accumulatedOverflow, clientSize, rtl, false, scrollContainer);
 
-        FloatSize contentSize = computeContentSizeFromChildren(node);
-
         // The final layout output carries the container's first baseline. The ComputeSize returns
         // above deliberately stay baseline-less: upstream returns LayoutOutput::from_outer_size
         // there too (block.rs:482/488/651/656), and only a full layout produces baselines.
@@ -587,28 +609,45 @@ public class BlockComputer {
         );
     }
 
-    private FloatSize computeContentSizeFromChildren(NodeId node) {
-        TaffyTree tree = layoutComputer.getTree();
-        FloatSize contentSize = FloatSize.zero();
-
-        for (NodeId childId : tree.getChildren(node)) {
-            TaffyStyle childStyle = tree.getStyle(childId);
-            if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
-
-            Layout childLayout = tree.getUnroundedLayout(childId);
-            if (childLayout == null) continue;
-
-            FloatSize childContentSize = childLayout.contentSize() != null ? childLayout.contentSize() : childLayout.size();
-            FloatSize contribution = ContentSizeUtil.computeContentSizeContribution(
-                childLayout.location(),
-                childLayout.size(),
-                childContentSize,
-                childStyle.getOverflow()
+    /**
+     * The legacy 1.2 content-size contribution of one laid-out in-flow child.
+     *
+     * <p>The contribution is measured from the container's client area: in LTR the child's
+     * border-box origin minus the container's leading border and scrollbar gutter, in RTL
+     * mirrored from the container's right border edge (upstream's pre-#1118 block rule). The
+     * start-point correction is the block half of upstream #1007: {@code scrollWidth()}
+     * re-adds both borders, so a contribution measured from the border box counted the leading
+     * border twice and left the scroll range one border-width short.</p>
+     *
+     * <p>This is the legacy component only; {@link Layout#scrollableOverflow()} is the model that
+     * replaces it (SO-01). The reversed RTL scroll origin is not expressible through a
+     * {@link FloatSize}, which is why the RTL value stays an approximation until the scroll-size
+     * getters switch to the rectangle (P4 integration).</p>
+     */
+    private static FloatSize contentSizeContribution(
+        Layout childLayout,
+        TaffyPoint<Overflow> childOverflow,
+        boolean rtl,
+        float containerOuterWidth,
+        FloatRect border,
+        FloatRect gutter
+    ) {
+        FloatPoint location = childLayout.location();
+        FloatSize childSize = childLayout.size();
+        FloatPoint contributionLocation = rtl
+            ? new FloatPoint(
+                containerOuterWidth - (location.x + childSize.width) - border.right,
+                location.y - border.top - gutter.top
+            )
+            : new FloatPoint(
+                location.x - border.left - gutter.left,
+                location.y - border.top - gutter.top
             );
-            contentSize = ContentSizeUtil.max(contentSize, contribution);
-        }
-
-        return contentSize;
+        FloatSize childContentSize = childLayout.contentSize() != null
+                                    ? childLayout.contentSize()
+                                    : childSize;
+        return ContentSizeUtil.computeContentSizeContribution(
+            contributionLocation, childSize, childContentSize, childOverflow);
     }
 
     /**
@@ -621,6 +660,16 @@ public class BlockComputer {
     private static float nonPositive(float margin) {
         return Float.isNaN(margin) ? 0f : Math.min(0f, margin);
     }
+
+    /**
+     * The scrollable-overflow rectangle and the legacy content size contributed by a container's
+     * out-of-flow children (P4/SO-01/SO-02).
+     *
+     * @param scrollableOverflow the union of the out-of-flow contributions, in the container's
+     *                           client-area frame
+     * @param contentSize        the legacy content-size extent of the same children
+     */
+    private record OutOfFlowOverflow(FloatRect scrollableOverflow, FloatSize contentSize) {}
 
     private List<BlockItem> generateItemList(NodeId node, FloatSize nodeInnerSize) {
         TaffyTree tree = layoutComputer.getTree();
@@ -1054,9 +1103,10 @@ public class BlockComputer {
      * @param areaSize     the container's final border-box size
      * @param areaInset    the inset of the positioning area within the border box
      * @param overflowContainer the container description used for the contributions
-     * @return the union of the children's overflow contributions, in the client-area frame
+     * @return the union of the children's overflow contributions and their legacy content-size
+     *         extent, both measured in the containing-block frame
      */
-    private FloatRect performAbsoluteLayoutOnChildren(
+    private OutOfFlowOverflow performAbsoluteLayoutOnChildren(
         List<BlockItem> items,
         FloatSize areaSize,
         FloatRect areaInset,
@@ -1067,6 +1117,7 @@ public class BlockComputer {
         float areaHeight = areaSize.height - areaInset.top - areaInset.bottom;
 
         FloatRect accumulatedOverflow = FloatRect.zero();
+        FloatSize contentSize = FloatSize.zero();
 
         for (BlockItem item : items) {
             if (item.position != TaffyPosition.ABSOLUTE) continue;
@@ -1260,9 +1311,25 @@ public class BlockComputer {
                     FloatRect.zero()
                 )
             );
+
+            // The legacy content size keeps upstream's pre-#1118 out-of-flow rule: measured from
+            // the positioning area (client area), mirrored from its right edge in RTL.
+            FloatPoint contributionLocation = overflowContainer.reversedX()
+                ? new FloatPoint(
+                    areaWidth - (x - areaInset.left) - finalSize.width,
+                    y - areaInset.top
+                )
+                : new FloatPoint(x - areaInset.left, y - areaInset.top);
+            contentSize = ContentSizeUtil.max(contentSize,
+                ContentSizeUtil.computeContentSizeContribution(
+                    contributionLocation,
+                    finalSize,
+                    output.contentSize() != null ? output.contentSize() : finalSize,
+                    item.overflow
+                ));
         }
 
-        return accumulatedOverflow;
+        return new OutOfFlowOverflow(accumulatedOverflow, contentSize);
     }
 
     /**
