@@ -31,6 +31,7 @@ import dev.vfyjxf.taffy.tree.grid.NamedLineResolver;
 import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
+import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.TaffyMath;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.floats.FloatList;
@@ -170,6 +171,12 @@ public class GridComputer {
         // Computed values
         FloatSize computedSize;
         FloatPoint location;
+
+        // The item's own scrollable overflow rectangle, as reported by its final layout output
+        // (upstream grid/alignment.rs stores the child output's rectangle in the item's Layout).
+        // Recorded by placeItems and written to the item's Layout by performFinalLayout; the
+        // container's own rectangle accumulates the contribution in placeItems.
+        ScrollableOverflow scrollableOverflow = ScrollableOverflow.ZERO;
 
         // Track crossing flags (for re-run logic)
         boolean crossesIntrinsicColumn;
@@ -1091,8 +1098,10 @@ public class GridComputer {
             GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
                 contentBoxInset.top, alignment.innerHeight(), false);
 
-            // Layout absolutely positioned children even if no regular items
-            layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtlEmpty);
+            // Layout absolutely positioned children even if no regular items. Their overflow is
+            // accumulated in the container's padding-box frame and merged below (upstream oof.rs).
+            FloatRect absoluteOverflowRect = layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX,
+                scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtlEmpty);
 
             // Layout hidden children (display: none)
             List<NodeId> children = tree.getChildren(node);
@@ -1112,7 +1121,21 @@ public class GridComputer {
             }
 
             FloatSize contentSize = computeContentSizeFromChildren(node);
-            return LayoutOutput.fromSizesAndBaselines(containerSize, contentSize, new FloatPoint(NaN, NaN));
+
+            // The container itself contributes its own padding to the scrollable overflow region
+            // (upstream #1051/#1114, grid/mod.rs). With no in-flow item the in-flow accumulator is
+            // empty, so this union is the whole in-flow part of the rectangle.
+            boolean isEmptyScrollContainer = ScrollableOverflowUtil.isScrollContainer(overflow);
+            FloatSize emptyClientSize = clientSize(containerSize, border, scrollbarGutterX, scrollbarGutterY);
+            ScrollableOverflow emptyOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
+                ScrollableOverflowUtil.union(
+                    containerPaddingOverflowRect(emptyClientSize, padding, isRtlEmpty, isEmptyScrollContainer),
+                    absoluteOverflowRect),
+                emptyClientSize,
+                isRtlEmpty,
+                false,
+                isEmptyScrollContainer);
+            return layoutOutput(containerSize, contentSize, emptyOverflow, new FloatPoint(NaN, NaN));
         }
 
         // Resolve the grid lines used by absolutely positioned children (OF-08/GR-14). The lines are
@@ -1128,9 +1151,8 @@ public class GridComputer {
         GridAxisLines rowLines = new GridAxisLines(rowSizes, alignment.gapY(), alignment.offsetY(),
             contentBoxInset.top, alignment.innerHeight(), false);
 
-        // Place items and calculate final positions
-        placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize, style, colCounts, rowCounts, isRtl);
-
+        // Container size. Computed before the item positioning pass because the scrollable overflow
+        // container description (client area) depends on the final container size.
         float containerWidth = !Float.isNaN(styledBasedKnownDimensions.width)
                                ? styledBasedKnownDimensions.width
                                : contentWidth + contentBoxInset.left + contentBoxInset.right;
@@ -1148,6 +1170,19 @@ public class GridComputer {
 
         FloatSize containerSize = new FloatSize(containerWidth, containerHeight);
 
+        // The scrollable overflow of the container is accumulated in its padding-box frame: item
+        // locations are shifted by the padding-box origin (the border edge; this port keeps the RTL
+        // scrollbar gutter on the right, so the origin is the left border edge in both directions).
+        boolean isScrollContainer = ScrollableOverflowUtil.isScrollContainer(overflow);
+        FloatSize clientSize = clientSize(containerSize, border, scrollbarGutterX, scrollbarGutterY);
+        FloatPoint paddingBoxOrigin = new FloatPoint(border.left, border.top);
+        ScrollableOverflowUtil.Container inFlowOverflowContainer = new ScrollableOverflowUtil.Container(
+            isScrollContainer, clientSize, isRtl, false, padding);
+
+        // Place items and calculate final positions, accumulating their overflow contributions
+        FloatRect itemOverflowRect = placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize,
+            style, colCounts, rowCounts, isRtl, paddingBoxOrigin, inFlowOverflowContainer);
+
         if (runMode == RunMode.COMPUTE_SIZE) {
             return LayoutOutput.fromOuterSize(containerSize);
         }
@@ -1155,8 +1190,9 @@ public class GridComputer {
         // Perform final layout
         performFinalLayout(items);
 
-        // Layout absolutely positioned children
-        layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX, scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtl);
+        // Layout absolutely positioned children, accumulating their overflow contributions
+        FloatRect absoluteOverflowRect = layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX,
+            scrollbarGutterY, colCounts, rowCounts, columnLines, rowLines, isRtl);
 
         // Layout hidden children (display: none)
         List<NodeId> children = tree.getChildren(node);
@@ -1180,10 +1216,81 @@ public class GridComputer {
 
         FloatSize contentSize = computeContentSizeFromChildren(node);
 
-        return LayoutOutput.fromSizesAndBaselines(
-            containerSize,
+        // The container's own end padding joins the in-flow rectangle (upstream #1051/#1114) and
+        // the absolutely positioned children contribute their own rectangles (upstream oof.rs).
+        // A single finalize is equivalent to upstream's finalize-then-union-then-finalize pass:
+        // union and the per-edge clipping commute.
+        ScrollableOverflow scrollableOverflow = ScrollableOverflowUtil.finalizeScrollableOverflow(
+            ScrollableOverflowUtil.union(
+                ScrollableOverflowUtil.union(
+                    itemOverflowRect,
+                    containerPaddingOverflowRect(clientSize, padding, isRtl, isScrollContainer)),
+                absoluteOverflowRect),
+            clientSize,
+            isRtl,
+            false,
+            isScrollContainer);
+
+        return layoutOutput(containerSize, contentSize, scrollableOverflow, new FloatPoint(NaN, containerBaseline));
+    }
+
+    /**
+     * The container's client area, in the container's border-box coordinate space: the border box
+     * less its border and the scrollbar gutters (upstream's {@code container_border_box - border -
+     * scrollbar_gutter}). The extent is floored at zero.
+     */
+    private static FloatSize clientSize(FloatSize containerSize, FloatRect border,
+                                       float scrollbarGutterX, float scrollbarGutterY) {
+        return new FloatSize(
+            Math.max(0f, containerSize.width - border.left - border.right - scrollbarGutterX),
+            Math.max(0f, containerSize.height - border.top - border.bottom - scrollbarGutterY)
+        );
+    }
+
+    /**
+     * The rectangle the grid container itself contributes to its scrollable overflow region.
+     *
+     * <p>This is upstream {@code grid/mod.rs}'s {@code is_scroll_container} union (SO-02): a scroll
+     * container's own end padding is part of its reachable region (bottom/right in LTR, the client
+     * width on the reversed inline axis in RTL), while a container that is not a scroll container
+     * only reaches its client area's inline end in RTL (its client area is the region the content
+     * is aligned in). Unioning these rectangles with the children's contributions means a negative
+     * end margin can never shrink the region below the container's own padding.</p>
+     *
+     * @param clientSize        the container's client-area extent
+     * @param padding           the container's resolved padding
+     * @param rtl               whether the container's inline axis is reversed
+     * @param isScrollContainer whether either axis is a scroll container
+     * @return the container's own contribution in its padding-box frame
+     */
+    private static FloatRect containerPaddingOverflowRect(FloatSize clientSize, FloatRect padding,
+                                                          boolean rtl, boolean isScrollContainer) {
+        if (!isScrollContainer) {
+            return rtl ? new FloatRect(0f, clientSize.width, 0f, 0f) : FloatRect.zero();
+        }
+        return rtl
+               ? new FloatRect(Math.min(clientSize.width - padding.left, 0f), clientSize.width, 0f, padding.bottom)
+               : new FloatRect(0f, padding.right, 0f, padding.bottom);
+    }
+
+    /**
+     * Builds a container's {@link LayoutOutput} with its scrollable overflow rectangle, keeping the
+     * legacy {@code contentSize}/{@code firstBaselines} semantics of
+     * {@link LayoutOutput#fromSizesAndBaselines}. The canonical record constructor is used so the
+     * computed rectangle reaches the public {@link Layout} instead of being replaced by
+     * {@link ScrollableOverflow#ZERO} (SO-01).
+     */
+    private static LayoutOutput layoutOutput(FloatSize size, FloatSize contentSize,
+                                            ScrollableOverflow scrollableOverflow, FloatPoint firstBaselines) {
+        return new LayoutOutput(
+            size,
             contentSize,
-            new FloatPoint(NaN, containerBaseline)
+            scrollableOverflow,
+            firstBaselines,
+            Baselines.fromFirst(firstBaselines),
+            CollapsibleMarginSet.ZERO,
+            CollapsibleMarginSet.ZERO,
+            false
         );
     }
 
@@ -4406,7 +4513,22 @@ public class GridComputer {
         return maxRowHeight;
     }
 
-    private void placeItems(
+    /**
+     * Sizes, aligns and positions the in-flow items, performing their final layout.
+     *
+     * <p>Every item's scrollable overflow is turned into a contribution in the container's
+     * padding-box frame (upstream {@code compute_scrollable_overflow_contribution}, SO-01/SO-02):
+     * the item's own rectangle comes from its final layout output, its border moves it from the
+     * client area to the border box, and unreachable overflow is dropped when the container is a
+     * scroll container. The contributions are unioned into the returned rectangle, which the
+     * container finalizes together with its own padding and the out-of-flow children's
+     * rectangles.</p>
+     *
+     * @param paddingBoxOrigin  the padding-box origin in the container's border-box frame
+     * @param overflowContainer the container description used to resolve the contributions
+     * @return the union of the items' overflow contributions
+     */
+    private FloatRect placeItems(
         List<GridItem> items,
         FloatList columnSizes,
         FloatList rowSizes,
@@ -4416,7 +4538,11 @@ public class GridComputer {
         TaffyStyle containerStyle,
         TrackCounts colCounts,
         TrackCounts rowCounts,
-        boolean isRtl) {
+        boolean isRtl,
+        FloatPoint paddingBoxOrigin,
+        ScrollableOverflowUtil.Container overflowContainer) {
+
+        FloatRect itemOverflowRect = FloatRect.zero();
 
         int numColumns = columnSizes.size();
         int numRows = rowSizes.size();
@@ -4849,7 +4975,30 @@ public class GridComputer {
             // baseline leaves NaN here and the container baseline falls back to its height.
             item.baseline = BaselineHelper.childFirstBaseline(
                 finalOutput, item.overflow.y.isScrollContainer());
+
+            // Accumulate the item's scrollable overflow contribution. The item's rectangle is
+            // expressed relative to its own client area, its border moves it into the border-box
+            // frame, and shifting by the padding-box origin puts it in the container's
+            // padding-box frame (upstream grid/alignment.rs). A relative inset offset moves the
+            // box, so the final (stored) location is the one that counts.
+            item.scrollableOverflow = finalOutput.scrollableOverflow();
+            itemOverflowRect = ScrollableOverflowUtil.union(
+                itemOverflowRect,
+                ScrollableOverflowUtil.computeContribution(
+                    new FloatPoint(
+                        item.location.x - paddingBoxOrigin.x,
+                        item.location.y - paddingBoxOrigin.y),
+                    item.computedSize,
+                    item.scrollableOverflow.rect(),
+                    item.border,
+                    item.overflow,
+                    overflowContainer,
+                    item.margin
+                )
+            );
         }
+
+        return itemOverflowRect;
     }
 
     private void performFinalLayout(List<GridItem> items) {
@@ -4861,11 +5010,16 @@ public class GridComputer {
                 item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
             );
 
+            // Canonical Layout: the child reports its own scrollable overflow rectangle (SO-01),
+            // so the parent must carry it through instead of dropping it in a compatibility
+            // constructor. The legacy contentSize component keeps its 1.x value (the item's
+            // border-box size) until 2.0 removes it.
             Layout layout = new Layout(
                 item.order,
                 item.location,
                 item.computedSize,
                 item.computedSize,
+                item.scrollableOverflow,
                 scrollbarSize,
                 item.border,
                 item.padding,
@@ -4876,7 +5030,20 @@ public class GridComputer {
         }
     }
 
-    private void layoutAbsoluteChildren(
+    /**
+     * Sizes, aligns and positions the absolutely positioned children, performing their final
+     * layout and accumulating their scrollable overflow contributions.
+     *
+     * <p>Mirrors upstream's out-of-flow positioning pass ({@code compute/oof.rs}): an absolute box
+     * contributes relative to the absolute positioning area's padding-box origin and extends the
+     * region neither by the container's own padding (the container description carries zero
+     * padding) nor by its own margin. In RTL the client area's inline end is part of the region
+     * even when no candidate survives, so the accumulator starts at the client width.</p>
+     *
+     * @return the union of the absolutely positioned children's overflow contributions, in the
+     *         container's padding-box frame
+     */
+    private FloatRect layoutAbsoluteChildren(
         NodeId node,
         FloatSize containerSize,
         FloatRect border,
@@ -4888,6 +5055,17 @@ public class GridComputer {
         GridAxisLines rowLines,
         boolean isRtl) {
         TaffyTree tree = layoutComputer.getTree();
+
+        boolean isScrollContainer = ScrollableOverflowUtil.isScrollContainer(tree.getStyle(node).getOverflow());
+        FloatSize absoluteClientSize = clientSize(containerSize, border, scrollbarGutterX, scrollbarGutterY);
+        FloatPoint paddingBoxOrigin = new FloatPoint(border.left, border.top);
+        // Upstream oof.rs passes an empty padding rectangle: end padding is the in-flow container's
+        // own concern and must not be added a second time for out-of-flow boxes.
+        ScrollableOverflowUtil.Container overflowContainer = new ScrollableOverflowUtil.Container(
+            isScrollContainer, absoluteClientSize, isRtl, false, FloatRect.zero());
+        FloatRect absoluteOverflowRect = isRtl
+                                        ? new FloatRect(0f, absoluteClientSize.width, 0f, 0f)
+                                        : FloatRect.zero();
 
         // Named lines/spans must be resolved to numeric lines before the absolute grid area is
         // computed, otherwise NAMED_LINE/NAMED_SPAN placements fall back to the container edges and
@@ -5069,11 +5247,15 @@ public class GridComputer {
                 overflow.x == Overflow.SCROLL ? childStyle.getScrollbarWidth() : 0f
             );
 
+            // Canonical Layout: the absolutely positioned child reports its own scrollable
+            // overflow rectangle, which the container accumulates below (SO-01). The legacy
+            // contentSize component keeps its 1.x value.
             Layout layout = new Layout(
                 0,
                 new FloatPoint(x, y),
                 finalSize,
                 output.contentSize(),
+                output.scrollableOverflow(),
                 scrollbarSize,
                 itemBorder,
                 itemPadding,
@@ -5081,7 +5263,25 @@ public class GridComputer {
             );
 
             tree.setUnroundedLayout(childId, layout);
+
+            // Out-of-flow contributions are measured from the absolute positioning area's
+            // padding-box origin and never extend the region by the container's own padding
+            // (upstream oof.rs).
+            absoluteOverflowRect = ScrollableOverflowUtil.union(
+                absoluteOverflowRect,
+                ScrollableOverflowUtil.computeContribution(
+                    new FloatPoint(x - paddingBoxOrigin.x, y - paddingBoxOrigin.y),
+                    finalSize,
+                    output.scrollableOverflow().rect(),
+                    itemBorder,
+                    overflow,
+                    overflowContainer,
+                    FloatRect.zero()
+                )
+            );
         }
+
+        return absoluteOverflowRect;
     }
 
     /**
