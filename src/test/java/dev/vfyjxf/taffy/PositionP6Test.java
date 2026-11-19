@@ -1,5 +1,7 @@
 package dev.vfyjxf.taffy;
 
+import dev.vfyjxf.taffy.geometry.FloatPoint;
+import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
@@ -8,6 +10,7 @@ import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
+import dev.vfyjxf.taffy.tree.LayoutOutput;
 import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import org.junit.jupiter.api.DisplayName;
@@ -304,5 +307,112 @@ public class PositionP6Test {
         assertEquals(170f, child.size().height, EPSILON, "absolute stretched height");
         assertEquals(10f, child.location().x, EPSILON, "absolute stretched x");
         assertEquals(10f, child.location().y, EPSILON, "absolute stretched y");
+    }
+
+    // === OF-04 / #1203: abspos replaced elements are not stretched between their insets ===
+
+    /** A replaced leaf whose intrinsic size is 100x50 (an image, upstream's TestNodeContext). */
+    private static NodeId replacedLeaf(TaffyTree tree, TaffyStyle style) {
+        style.itemIsReplaced = true;
+        return tree.newLeafWithMeasureFunction(style, context -> LayoutOutput.fromSizesAndBaselines(
+            new FloatSize(100f, 50f),
+            FloatSize.zero(),
+            new FloatPoint(Float.NaN, Float.NaN)
+        ));
+    }
+
+    private static Layout replacedAbspos(TaffyStyle childStyle) {
+        return replacedAbspos(TaffyDisplay.BLOCK, childStyle, 400f, 300f);
+    }
+
+    private static Layout replacedAbspos(TaffyDisplay display, TaffyStyle childStyle, float width, float height) {
+        TaffyTree tree = new TaffyTree();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        NodeId child = replacedLeaf(tree, childStyle);
+        NodeId root = tree.newWithChildren(container(display, width, height), child);
+        tree.computeLayout(root, TaffySize.maxContent());
+        return layout(tree, child);
+    }
+
+    /**
+     * An auto-sized absolutely positioned replaced element keeps its intrinsic size instead of
+     * filling the space between its insets (CSS2.1 §10.3.8/§10.6.5); its location still follows
+     * the start insets.
+     */
+    @Test
+    @DisplayName("OF-04: abspos replaced element keeps its intrinsic 100x50 size between insets")
+    void replacedAbsposIsNotStretched() {
+        for (TaffyDisplay display : new TaffyDisplay[]{TaffyDisplay.BLOCK, TaffyDisplay.FLEX, TaffyDisplay.GRID}) {
+            TaffyStyle childStyle = new TaffyStyle();
+            childStyle.inset = inset(px(10f), px(10f), px(10f), px(10f));
+
+            Layout child = replacedAbspos(display, childStyle, 400f, 300f);
+
+            assertEquals(100f, child.size().width, EPSILON, display + " replaced width");
+            assertEquals(50f, child.size().height, EPSILON, display + " replaced height");
+            assertEquals(10f, child.location().x, EPSILON, display + " replaced x");
+            assertEquals(10f, child.location().y, EPSILON, display + " replaced y");
+        }
+    }
+
+    /**
+     * A replaced element with a definite width and an auto height resolves the height from its
+     * aspect ratio rather than from {top, bottom} (CSS2.1 §10.6.5).
+     */
+    @Test
+    @DisplayName("OF-04: abspos replaced auto height comes from the aspect ratio, not the insets")
+    void replacedAbsposHeightUsesAspectRatio() {
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.aspectRatio = 2f; // width / height, i.e. a 200x100 image
+        childStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        childStyle.inset = inset(px(10f), px(10f), px(10f), px(10f));
+
+        Layout child = replacedAbspos(childStyle);
+
+        assertEquals(200f, child.size().width, EPSILON, "replaced aspect-ratio width");
+        assertEquals(100f, child.size().height, EPSILON, "replaced aspect-ratio height");
+    }
+
+    /**
+     * The same insets on a non-replaced box still stretch it between the insets: the #1203 guard
+     * must not change the legacy sizing of ordinary out-of-flow boxes.
+     */
+    @Test
+    @DisplayName("OF-04: non-replaced abspos box is still stretched between its insets")
+    void nonReplacedAbsposIsStillStretched() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.inset = inset(px(10f), px(10f), px(10f), px(10f));
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(container(TaffyDisplay.BLOCK, 400f, 300f), child);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout childLayout = layout(tree, child);
+        assertEquals(380f, childLayout.size().width, EPSILON, "non-replaced stretched width");
+        assertEquals(280f, childLayout.size().height, EPSILON, "non-replaced stretched height");
+        assertEquals(10f, childLayout.location().x, EPSILON, "non-replaced x");
+        assertEquals(10f, childLayout.location().y, EPSILON, "non-replaced y");
+    }
+
+    /**
+     * A compressible replaced form control is <em>not</em> a replaced element for this rule
+     * (upstream #1256 split the two predicates): its auto size keeps the historical stretch.
+     */
+    @Test
+    @DisplayName("OF-04: compressible-replaced box keeps the legacy stretch behavior")
+    void compressibleReplacedIsNotTreatedAsReplaced() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle childStyle = new TaffyStyle();
+        childStyle.position = TaffyPosition.ABSOLUTE;
+        childStyle.itemIsCompressibleReplaced = true;
+        childStyle.inset = inset(px(10f), px(10f), px(10f), px(10f));
+        NodeId child = tree.newLeaf(childStyle);
+        NodeId root = tree.newWithChildren(container(TaffyDisplay.BLOCK, 400f, 300f), child);
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        Layout childLayout = layout(tree, child);
+        assertEquals(380f, childLayout.size().width, EPSILON, "compressible-replaced stretched width");
+        assertEquals(280f, childLayout.size().height, EPSILON, "compressible-replaced stretched height");
     }
 }

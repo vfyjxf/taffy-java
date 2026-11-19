@@ -3031,6 +3031,10 @@ public class FlexboxComputer {
                 isNaN(marginOption.bottom) ? 0f : marginOption.bottom
             );
 
+            // An `auto` size of an absolutely positioned *replaced* element resolves to its
+            // intrinsic size instead of being stretched between its insets (upstream #1203).
+            boolean isReplaced = childStyle.getItemIsReplaced();
+
             // Compute size
             Float aspectRatio = childStyle.getAspectRatio();
             FloatRect itemPadding = Resolve.resolveRectOrZero(childStyle.getPadding(), insetRelativeWidth);
@@ -3059,8 +3063,9 @@ public class FlexboxComputer {
 
             FloatSize knownDimensions = maybeClamp(styleSize, minSz, maxSz);
 
-            // Fill from insets if not set
-            if (isNaN(knownDimensions.width) && !isNaN(left) && !isNaN(right)) {
+            // Fill from insets if not set. A replaced element is not stretched: its auto size
+            // resolves to its intrinsic size instead (upstream #1203).
+            if (!isReplaced && isNaN(knownDimensions.width) && !isNaN(left) && !isNaN(right)) {
                 float newWidth = TaffyMath.maybeSub(TaffyMath.maybeSub(insetRelativeWidth, marginOption.left), marginOption.right);
                 knownDimensions = new FloatSize(
                     Math.max(!isNaN(newWidth) ? newWidth - left - right : 0f, 0f),
@@ -3068,7 +3073,7 @@ public class FlexboxComputer {
                 );
                 knownDimensions = maybeClamp(maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
-            if (isNaN(knownDimensions.height) && !isNaN(top) && !isNaN(bottom)) {
+            if (!isReplaced && isNaN(knownDimensions.height) && !isNaN(top) && !isNaN(bottom)) {
                 float newHeight = TaffyMath.maybeSub(TaffyMath.maybeSub(insetRelativeHeight, marginOption.top), marginOption.bottom);
                 knownDimensions = new FloatSize(
                     knownDimensions.width,

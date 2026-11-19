@@ -1268,6 +1268,14 @@ public class BlockComputer {
             TaffyStyle childStyle = tree.getStyle(item.nodeId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
 
+            // An `auto` size of an absolutely positioned *replaced* element resolves to its
+            // intrinsic size instead of being stretched between its insets
+            // (https://www.w3.org/TR/CSS22/visudet.html#abs-replaced-width and
+            // #abs-replaced-height). Upstream #1203 (b52be36a); #1256 later clarified that this
+            // uses the replaced flag (not the broader compressible-replaced one), matching the
+            // ST-05 split.
+            boolean isReplaced = childStyle.getItemIsReplaced();
+
             Float aspectRatio = childStyle.getAspectRatio();
 
             // Get margin style - need to track which are auto
@@ -1308,15 +1316,16 @@ public class BlockComputer {
             float nonAutoMarginTop = Float.isNaN(marginOpt.top) ? 0f : marginOpt.top;
             float nonAutoMarginBottom = Float.isNaN(marginOpt.bottom) ? 0f : marginOpt.bottom;
 
-            // Fill in width from left/right if not set
-            if (Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
+            // Fill in width from left/right if not set. A replaced element is not stretched:
+            // its auto width resolves to its intrinsic size instead (upstream #1203).
+            if (!isReplaced && Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
                 float newWidth = areaWidth - nonAutoMarginLeft - nonAutoMarginRight - left - right;
                 knownDimensions = new FloatSize(Math.max(newWidth, 0f), knownDimensions.height);
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
 
-            // Fill in height from top/bottom if not set
-            if (Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
+            // Fill in height from top/bottom if not set (not for replaced elements, upstream #1203).
+            if (!isReplaced && Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
                 float newHeight = areaHeight - nonAutoMarginTop - nonAutoMarginBottom - top - bottom;
                 knownDimensions = new FloatSize(knownDimensions.width, Math.max(newHeight, 0f));
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
