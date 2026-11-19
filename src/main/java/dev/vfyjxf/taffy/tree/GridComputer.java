@@ -835,68 +835,17 @@ public class GridComputer {
         }
         initialColumnSum += gap.width * Math.max(0, nonCollapsedColumns - 1);
 
-        // Store whether parent was indefinite before updating
-        boolean parentWidthIndefinite = !availableGridSpace.width.isDefinite();
+        // Whether the grid container's own size is indefinite, which is what decides whether
+        // percentage tracks/gaps have to be re-run (GR-11 / upstream #1243). This is deliberately
+        // not the available-space definiteness: a shrink-to-fit (e.g. inline-grid) container can have
+        // a definite available space while its own size is still content-based.
+        boolean parentWidthIndefinite = Float.isNaN(styledBasedKnownDimensions.width);
+        boolean parentHeightIndefinite = Float.isNaN(styledBasedKnownDimensions.height);
 
-        // If inner node width was indefinite, update it with the column sum
+        // If inner node width was indefinite, update it with the column sum. Row sizing resolves
+        // percentage heights against the content-sized container width (upstream #960).
         if (Float.isNaN(nodeInnerSize.width)) {
             nodeInnerSize = new FloatSize(initialColumnSum, nodeInnerSize.height);
-
-            // Per CSS Grid spec step 7: Resolve percentage track base sizes
-            // In the case of an indefinitely sized container, percentage gap resolves to zero during initial sizing
-            // and needs to be re-resolved based on the content-sized content box of the container
-            // Re-compute gap if it uses percentages (for use in positioning, NOT for container sizing)
-            if (style.getGap().width.isPercent()) {
-                float newGapWidth = style.getGap().width.resolveOrZero(nodeInnerSize.width);
-                gap = new FloatSize(newGapWidth, gap.height);
-                // Note: initialColumnSum is NOT recalculated - container size uses the initial value
-                // The new gap is used for child positioning
-            }
-        }
-
-        // CSS Grid spec Step 7: Re-resolve percentage column base sizes
-        // Percentage tracks that were treated as auto during initial sizing need to be clamped to their resolved sizes
-        // This is CRITICAL for minmax(auto, percent) where the track was sized to content, but needs to be clamped to percent
-        if (parentWidthIndefinite) {
-            // Resolve percentage column sizing functions against the now-known container width
-            for (int i = 0; i < columnSizes.size() && i < expandedColumns.size(); i++) {
-                TrackSizingFunction track = expandedColumns.get(i);
-                if (track != null && track.isMinmax()) {
-                    // Get min and max sizing functions
-                    TrackSizingFunction minF = track.getMinFunc();
-                    TrackSizingFunction maxF = track.getMaxFunc();
-
-                    // Resolve percentage values from min/max
-                    float resolvedMin = NaN;
-                    float resolvedMax = NaN;
-
-                    if (minF != null && minF.isFixed() && minF.getFixedValue() != null && minF.getFixedValue().isPercent()) {
-                        resolvedMin = minF.getFixedValue().resolveOrZero(nodeInnerSize.width);
-                    }
-                    if (maxF != null && maxF.isFixed() && maxF.getFixedValue() != null && maxF.getFixedValue().isPercent()) {
-                        resolvedMax = maxF.getFixedValue().resolveOrZero(nodeInnerSize.width);
-                    }
-
-                    // Clamp base_size to [min, max] as in Rust's maybe_clamp
-                    if (!Float.isNaN(resolvedMin) || !Float.isNaN(resolvedMax)) {
-                        float newSize = columnSizes.getFloat(i);
-                        if (!Float.isNaN(resolvedMin)) {
-                            newSize = Math.max(newSize, resolvedMin);
-                        }
-                        if (!Float.isNaN(resolvedMax)) {
-                            newSize = Math.min(newSize, resolvedMax);
-                        }
-                        columnSizes.set(i, newSize);
-                    }
-                } else if (track != null && track.isFixed() && track.getFixedValue() != null && track.getFixedValue().isPercent()) {
-                    // Simple fixed percentage track
-                    float resolvedSize = track.getFixedValue().resolveOrZero(nodeInnerSize.width);
-                    float currentSize = columnSizes.getFloat(i);
-                    // Clamp to the resolved percentage value
-                    float newSize = Math.max(resolvedSize, Math.min(currentSize, resolvedSize));
-                    columnSizes.set(i, newSize);
-                }
-            }
         }
 
         // If only the container's width has been requested then the rows do not need to be sized at all,
@@ -939,34 +888,29 @@ public class GridComputer {
         }
         initialRowSum += gap.height * Math.max(0, rowSizes.size() - 1);
 
-        // Per CSS Grid spec 11.8: Update inner_node_size.height if it was indefinite
-        boolean parentHeightIndefinite = !availableGridSpace.height.isDefinite();
-        if (Float.isNaN(nodeInnerSize.height)) {
-            nodeInnerSize = new FloatSize(nodeInnerSize.width, initialRowSum);
-
-            // Per CSS Grid spec step 7: Resolve percentage row base sizes and gap
-            // In the case of an indefinitely sized container, percentage gap resolves to zero during initial sizing
-            if (style.getGap().height.isPercent()) {
-                float newGapHeight = style.getGap().height.resolveOrZero(nodeInnerSize.height);
-                gap = new FloatSize(gap.width, newGapHeight);
-            }
+        // The container's size is now determined, so percentages resolve against its content box
+        // when track sizing is re-run (GR-11 / upstream #1243). Unlike the first pass, the content
+        // box is the min/max-clamped container content box. This replaces the old "step 7" clamp of
+        // percentage track base sizes: its results were always discarded by the re-run that follows
+        // (upstream #1244).
+        float containerBorderWidth = !Float.isNaN(styledBasedKnownDimensions.width)
+                                     ? styledBasedKnownDimensions.width
+                                     : initialColumnSum + contentBoxInsetWidth;
+        float containerBorderHeight = !Float.isNaN(styledBasedKnownDimensions.height)
+                                      ? styledBasedKnownDimensions.height
+                                      : initialRowSum + contentBoxInsetHeight;
+        containerBorderWidth = Math.max(TaffyMath.clamp(containerBorderWidth, minSize.width, maxSize.width),
+            paddingBorderSize.width);
+        containerBorderHeight = Math.max(TaffyMath.clamp(containerBorderHeight, minSize.height, maxSize.height),
+            paddingBorderSize.height);
+        nodeInnerSize = new FloatSize(
+            Math.max(0f, containerBorderWidth - contentBoxInsetWidth),
+            Math.max(0f, containerBorderHeight - contentBoxInsetHeight));
+        if (style.getGap().width.isPercent()) {
+            gap = new FloatSize(style.getGap().width.resolveOrZero(nodeInnerSize.width), gap.height);
         }
-
-        // CSS Grid spec step 7: Re-resolve percentage row base sizes
-        // Percentage tracks that were treated as auto during initial sizing need to be clamped to their resolved sizes
-        if (parentHeightIndefinite) {
-            // Check if any row has percentage sizing that needs re-resolution
-            for (int i = 0; i < rowSizes.size() && i < expandedRows.size(); i++) {
-                TrackSizingFunction track = expandedRows.get(i);
-                if (track != null && track.isFixed() && track.getFixedValue() != null && track.getFixedValue().isPercent()) {
-                    float resolvedMin = track.getFixedValue().resolveOrZero(nodeInnerSize.height);
-                    float resolvedMax = track.getFixedValue().resolveOrZero(nodeInnerSize.height);
-                    float currentSize = rowSizes.getFloat(i);
-                    // Clamp base_size to [min, max] as in Rust's maybe_clamp
-                    float newSize = Math.max(resolvedMin, Math.min(currentSize, resolvedMax));
-                    rowSizes.set(i, newSize);
-                }
-            }
+        if (style.getGap().height.isPercent()) {
+            gap = new FloatSize(gap.width, style.getGap().height.resolveOrZero(nodeInnerSize.height));
         }
 
         // === Rust-style Re-run Logic (CSS Grid spec 11.8) ===
@@ -1073,6 +1017,25 @@ public class GridComputer {
             }
         }
 
+        // Row sizing must be re-run (once), independently of column sizing (GR-11 / upstream #1244):
+        //   - The grid container's height is indefinite and there are percentage rows/gaps
+        //   - Column sizing was re-run and an item crossing an intrinsic row changed its contribution
+        boolean rerunRowSizing = parentHeightIndefinite && (hasPercentageRow || hasPercentageRowGutter);
+
+        if (rerunRowSizing) {
+            // Clear the intrinsic height caches: the percentage-row re-run re-measures every item
+            // (upstream #1244; the caches are cleared before the column re-run so that the column
+            // re-run's contribution check is skipped).
+            for (GridItem item : items) {
+                item.inlineContributionInputCache = null;
+                item.blockContributionInputCache = null;
+                item.minContentContributionHeight = null;
+                item.maxContentContributionHeight = null;
+                item.minimumContributionHeight = null;
+                item.clearKnownDimensionsCache();
+            }
+        }
+
         if (rerunColumnSizing) {
             // Re-run column sizing with known row sizes
             columnSizes = calculateColumnSizesWithRowSizes(style, nodeInnerSize, innerMinSize.width, innerMaxSize.width,
@@ -1080,13 +1043,9 @@ public class GridComputer {
             // Re-apply auto-fit collapse after re-run
             collapseEmptyAutoFitColumns(columnSizes, style, items, nodeInnerSize, gap.width, colCounts);
 
-            // Row sizing must be re-run (once) if:
-            //   - The grid container's height was initially indefinite and there are any rows with percentage track sizing functions
-            //   - Any grid item crossing an intrinsically sized track's min content contribution height has changed
-
-            boolean rerunRowSizing;
-            rerunRowSizing = parentHeightIndefinite && (hasPercentageRow || hasPercentageRowGutter);
-
+            // The column widths may have changed, so the items' intrinsic height contributions need
+            // to be recomputed. This is skipped when row sizing is being re-run anyway, because its
+            // caches have already been cleared above.
             final FloatList finalColumnSizes = columnSizes;
 
             if (!rerunRowSizing) {
@@ -1154,23 +1113,13 @@ public class GridComputer {
                 }
                 intrinsicRowContributionChanged = minContentContributionChanged;
                 rerunRowSizing = minContentContributionChanged;
-            } else {
-                // Clear intrinsic height caches
-                for (GridItem item : items) {
-                    item.inlineContributionInputCache = null;
-                    item.blockContributionInputCache = null;
-                    item.minContentContributionHeight = null;
-                    item.maxContentContributionHeight = null;
-                    item.minimumContributionHeight = null;
-                    item.clearKnownDimensionsCache();
-                }
             }
+        }
 
-            if (rerunRowSizing) {
-                // Re-run row sizing with known column sizes
-                rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
-                    availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
-            }
+        if (rerunRowSizing) {
+            // Re-run row sizing with known column sizes
+            rowSizes = calculateRowSizes(style, nodeInnerSize, innerMinSize.height, innerMaxSize.height,
+                availableGridSpace, gap, numRows, items, columnSizes, colCounts, rowCounts, expandedRows);
         }
 
         // Calculate container size based on tracks.
@@ -1190,6 +1139,14 @@ public class GridComputer {
                 if (colSize > 0) finalNonCollapsedColumns++;
             }
             contentWidth = finalColumnSum + gap.width * Math.max(0, finalNonCollapsedColumns - 1);
+            // Keep the downstream alignment/positioning pass in sync with the recomputed container.
+            float recomputedBorderWidth = !Float.isNaN(styledBasedKnownDimensions.width)
+                                          ? styledBasedKnownDimensions.width
+                                          : contentWidth + contentBoxInsetWidth;
+            recomputedBorderWidth = Math.max(TaffyMath.clamp(recomputedBorderWidth, minSize.width, maxSize.width),
+                paddingBorderSize.width);
+            nodeInnerSize = new FloatSize(Math.max(0f, recomputedBorderWidth - contentBoxInsetWidth),
+                nodeInnerSize.height);
         }
 
         if (intrinsicRowContributionChanged && !hasPercentageRow) {
@@ -1198,6 +1155,13 @@ public class GridComputer {
                 finalRowSum += rowSize;
             }
             contentHeight = finalRowSum + gap.height * Math.max(0, rowSizes.size() - 1);
+            float recomputedBorderHeight = !Float.isNaN(styledBasedKnownDimensions.height)
+                                           ? styledBasedKnownDimensions.height
+                                           : contentHeight + contentBoxInsetHeight;
+            recomputedBorderHeight = Math.max(TaffyMath.clamp(recomputedBorderHeight, minSize.height, maxSize.height),
+                paddingBorderSize.height);
+            nodeInnerSize = new FloatSize(nodeInnerSize.width,
+                Math.max(0f, recomputedBorderHeight - contentBoxInsetHeight));
         }
 
         // If no items, return container size based on template

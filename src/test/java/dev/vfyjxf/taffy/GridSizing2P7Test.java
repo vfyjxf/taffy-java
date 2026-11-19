@@ -148,12 +148,97 @@ class GridSizing2P7Test {
     }
 
     // ------------------------------------------------------------------
+    // GR-11: percentage track re-run uses the container size
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("GR-11: percentage tracks re-run when the container size is indefinite")
+    class PercentageRerun {
+
+        @Test
+        @DisplayName("fit_content_percentage_indefinite_container_max_content_available_space")
+        void fitContentPercentColumnMaxContentAvailableSpace() {
+            assertFitContentPercentColumn(TaffySize.maxContent());
+        }
+
+        @Test
+        @DisplayName("fit_content_percentage_indefinite_container_definite_available_space")
+        void fitContentPercentColumnDefiniteAvailableSpace() {
+            assertFitContentPercentColumn(new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.maxContent()));
+        }
+
+        /**
+         * A shrink-to-fit grid with a {@code fit-content(50%)} column. The first pass treats the
+         * percentage as unresolvable and sizes the column to the text's max-content width (60px);
+         * the container becomes 60px wide and the re-run resolves the fit-content limit against that
+         * content box (30px), which clamps the item. The container keeps its first-pass width.
+         */
+        private void assertFitContentPercentColumn(TaffySize<AvailableSpace> availableSpace) {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.fitContent(LengthPercentage.percent(0.5f)));
+            grid.gridTemplateRows = List.of(TrackSizingFunction.fixed(40f));
+            NodeId item = tree.newLeafWithMeasure(new TaffyStyle(),
+                ahemTextMeasure("HH\u200BHH\u200BHH"));
+            NodeId root = tree.newWithChildren(grid, item);
+
+            tree.computeLayout(root, availableSpace);
+
+            assertEquals(60f, tree.getLayout(root).size().width, EPSILON, "container width");
+            assertEquals(30f, tree.getLayout(item).size().width, EPSILON, "item width");
+        }
+
+        @Test
+        @DisplayName("percentage_rows_indefinite_container_max_content_available_space")
+        void percentRowsShrinkwrapMaxContentAvailableSpace() {
+            assertPercentRowsShrinkwrap(TaffySize.maxContent());
+        }
+
+        @Test
+        @DisplayName("percentage_rows_indefinite_container_definite_available_space")
+        void percentRowsShrinkwrapDefiniteAvailableSpace() {
+            assertPercentRowsShrinkwrap(new TaffySize<>(AvailableSpace.definite(200f), AvailableSpace.definite(500f)));
+        }
+
+        /**
+         * Mirrors WPT {@code grid-percent-rows-filled-shrinkwrap-001}: an auto-height grid with
+         * rows {@code auto 20% auto}. The percentage row is treated as auto in the first pass, the
+         * content box becomes 100px tall, and the row re-run resolves the percentage against it
+         * (20px) while the auto rows absorb the remaining space (40px each).
+         */
+        private void assertPercentRowsShrinkwrap(TaffySize<AvailableSpace> availableSpace) {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle grid = grid();
+            grid.gridTemplateColumns = List.of(TrackSizingFunction.auto());
+            grid.gridTemplateRows = List.of(TrackSizingFunction.auto(),
+                TrackSizingFunction.percent(0.2f), TrackSizingFunction.auto());
+            NodeId first = tree.newLeaf(sized(20f, 20f));
+            NodeId second = tree.newLeaf(sized(20f, 60f));
+            NodeId third = tree.newLeaf(sized(20f, 20f));
+            NodeId root = tree.newWithChildren(grid, first, second, third);
+
+            tree.computeLayout(root, availableSpace);
+
+            assertEquals(100f, tree.getLayout(root).size().height, EPSILON, "container height");
+            assertEquals(0f, tree.getLayout(first).location().y, EPSILON, "first item y");
+            assertEquals(40f, tree.getLayout(second).location().y, EPSILON, "second item y");
+            assertEquals(60f, tree.getLayout(third).location().y, EPSILON, "third item y");
+        }
+    }
+
+    // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
 
     private static TaffyStyle grid() {
         TaffyStyle style = new TaffyStyle();
         style.display = TaffyDisplay.GRID;
+        return style;
+    }
+
+    private static TaffyStyle sized(float width, float height) {
+        TaffyStyle style = new TaffyStyle();
+        style.size = new TaffySize<>(TaffyDimension.length(width), TaffyDimension.length(height));
         return style;
     }
 
@@ -170,6 +255,72 @@ class GridSizing2P7Test {
         style.gridRow = new TaffyLine<>(GridPlacement.line(rowStart),
             rowSpan == 1 ? GridPlacement.auto() : GridPlacement.span(rowSpan));
         return style;
+    }
+
+    /**
+     * Ahem-style text measure used by the generated grid tests: 10x10 per character, zero-width
+     * spaces are wrapping opportunities (min-content = longest segment, max-content = one line).
+     * Horizontal writing mode only (the GR-11 fixtures do not need the vertical variant).
+     */
+    private static dev.vfyjxf.taffy.util.MeasureFunc ahemTextMeasure(String text) {
+        final String trimmed = text == null ? "" : text.trim();
+        return (knownDimensions, availableSpace) -> {
+            if (!Float.isNaN(knownDimensions.width) && !Float.isNaN(knownDimensions.height)) {
+                return new dev.vfyjxf.taffy.geometry.FloatSize(knownDimensions.width, knownDimensions.height);
+            }
+            final char ZWS = '\u200B';
+            final float GLYPH_WIDTH = 10.0f;
+            final float GLYPH_HEIGHT = 10.0f;
+
+            String[] parts = trimmed.isEmpty() ? new String[0] : trimmed.split(String.valueOf(ZWS), -1);
+            if (parts.length == 0) {
+                return new dev.vfyjxf.taffy.geometry.FloatSize(0f, 0f);
+            }
+
+            int minLineLength = 0;
+            int maxLineLength = 0;
+            for (String part : parts) {
+                minLineLength = Math.max(minLineLength, part.length());
+                maxLineLength += part.length();
+            }
+
+            float inlineSize;
+            if (!Float.isNaN(knownDimensions.width)) {
+                inlineSize = knownDimensions.width;
+            } else if (availableSpace.width.isMinContent()) {
+                inlineSize = minLineLength * GLYPH_WIDTH;
+            } else if (availableSpace.width.isMaxContent()) {
+                inlineSize = maxLineLength * GLYPH_WIDTH;
+            } else if (availableSpace.width.isDefinite()) {
+                inlineSize = Math.min(availableSpace.width.getValue(), maxLineLength * GLYPH_WIDTH);
+            } else {
+                inlineSize = maxLineLength * GLYPH_WIDTH;
+            }
+            inlineSize = Math.max(inlineSize, minLineLength * GLYPH_WIDTH);
+
+            float blockSize;
+            if (!Float.isNaN(knownDimensions.height)) {
+                blockSize = knownDimensions.height;
+            } else {
+                int inlineLineLength = (int) Math.floor(inlineSize / GLYPH_WIDTH);
+                int lineCount = 1;
+                int currentLineLength = 0;
+                for (String part : parts) {
+                    int len = part.length();
+                    if (currentLineLength + len > inlineLineLength) {
+                        if (currentLineLength > 0) lineCount += 1;
+                        currentLineLength = len;
+                    } else {
+                        currentLineLength += len;
+                    }
+                }
+                blockSize = lineCount * GLYPH_HEIGHT;
+            }
+
+            return new dev.vfyjxf.taffy.geometry.FloatSize(
+                !Float.isNaN(knownDimensions.width) ? knownDimensions.width : inlineSize,
+                !Float.isNaN(knownDimensions.height) ? knownDimensions.height : blockSize);
+        };
     }
 
     private static void assertSize(Layout layout, float width, float height, String message) {
