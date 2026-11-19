@@ -73,6 +73,34 @@ public final class TaffyStyle {
      */
     public float scrollbarWidth = 0;
 
+    // === Float Properties ===
+
+    /**
+     * Should the box be floated, and to which side?
+     *
+     * <p>The field is named {@code float_} because {@code float} is a Java keyword, and the
+     * style type is named {@link TaffyFloat} because a top-level {@code Float} in this package
+     * would shadow {@link java.lang.Float} (see {@link TaffyFloat} for details). Upstream
+     * taffy calls the field {@code float} and the type {@code Float} (upstream #866).</p>
+     *
+     * <p><b>1.2 scope.</b> {@code BlockComputer} does not read this field yet; float placement
+     * and block formatting-context integration land in the following FT batches. Setting it is
+     * additive and has no effect on layout in this release.</p>
+     *
+     * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/float">MDN - float</a>
+     */
+    public TaffyFloat float_ = TaffyFloat.NONE;
+
+    /**
+     * Should the box clear floats?
+     *
+     * <p><b>1.2 scope.</b> {@code BlockComputer} does not read this field yet; clearance lands
+     * in the following FT batches, together with float placement.</p>
+     *
+     * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/clear">MDN - clear</a>
+     */
+    public Clear clear = Clear.NONE;
+
     // === Position Properties ===
 
     /**
@@ -458,6 +486,8 @@ public final class TaffyStyle {
         copy.boxSizing = this.boxSizing;
         copy.overflow = this.overflow.copy();
         copy.scrollbarWidth = this.scrollbarWidth;
+        copy.float_ = this.float_;
+        copy.clear = this.clear;
         copy.position = this.position;
         copy.inset = this.inset.copy();
         copy.size = this.size.copy();
@@ -554,6 +584,17 @@ public final class TaffyStyle {
     public TaffyPoint<Overflow> getOverflow() {return overflow;}
 
     public float getScrollbarWidth() {return scrollbarWidth;}
+
+    /**
+     * Returns the CSS {@code float} value of this style. The field backing it is named
+     * {@code float_} because {@code float} is a Java keyword.
+     */
+    public TaffyFloat getFloat() {return float_;}
+
+    /**
+     * Returns the CSS {@code clear} value of this style.
+     */
+    public Clear getClear() {return clear;}
 
     public TaffyPosition getPosition() {return position;}
 
