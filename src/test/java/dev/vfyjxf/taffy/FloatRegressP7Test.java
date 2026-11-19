@@ -1,10 +1,14 @@
 package dev.vfyjxf.taffy;
 
+import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.Clear;
+import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyFloat;
+import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
@@ -152,5 +156,62 @@ public class FloatRegressP7Test {
         assertLocation(tree.getLayout(floatA), 0f, 43f, "float A");
         assertLocation(tree.getLayout(floatB), 0f, 85f, "float B");
         assertLocation(tree.getLayout(floatC), 302f, 85f, "float C");
+    }
+
+    // === #1305: RTL relative inset precedence ===
+
+    @Test
+    @DisplayName("#1305: RTL relatively positioned float prefers right over left")
+    void rtlFloatRelativeInsetPrefersRight() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle floatStyle = floated(TaffyFloat.LEFT, 50f, 20f, Clear.NONE);
+        floatStyle.position = TaffyPosition.RELATIVE;
+        floatStyle.inset = TaffyRect.ltrb(
+            LengthPercentageAuto.length(10f),
+            LengthPercentageAuto.length(5f),
+            LengthPercentageAuto.length(20f),
+            LengthPercentageAuto.length(30f)
+        );
+        NodeId floatNode = tree.newLeaf(floatStyle);
+
+        TaffyStyle rootStyle = sized(200f, Float.NaN);
+        rootStyle.direction = TaffyDirection.RTL;
+        NodeId root = tree.newWithChildren(rootStyle, floatNode);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // float placement puts a left float at x=0; RTL right inset wins over left, top wins
+        // over bottom.
+        assertLocation(tree.getLayout(floatNode), -20f, 5f, "float");
+    }
+
+    @Test
+    @DisplayName("#1305: in-flow relative insets use the same LTR/RTL precedence")
+    void inFlowRelativeInsetPrecedence() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle childStyle = sized(50f, 10f);
+        childStyle.position = TaffyPosition.RELATIVE;
+        childStyle.inset = TaffyRect.ltrb(
+            LengthPercentageAuto.length(10f),
+            LengthPercentageAuto.length(5f),
+            LengthPercentageAuto.length(20f),
+            LengthPercentageAuto.length(30f)
+        );
+        NodeId child = tree.newLeaf(childStyle);
+
+        TaffyStyle ltrStyle = sized(200f, Float.NaN);
+        NodeId ltrRoot = tree.newWithChildren(ltrStyle, child);
+        tree.computeLayout(ltrRoot, TaffySize.maxContent());
+        assertLocation(tree.getLayout(child), 10f, 5f, "LTR child");
+
+        TaffyStyle rtlStyle = sized(200f, Float.NaN);
+        rtlStyle.direction = TaffyDirection.RTL;
+        rtlStyle.size = new TaffySize<>(TaffyDimension.length(200f), TaffyDimension.AUTO);
+        NodeId rtlRoot = tree.newWithChildren(rtlStyle, child);
+        tree.computeLayout(rtlRoot, TaffySize.maxContent());
+        // RTL default aligns the 50px child at x=150; right inset 20 wins over left inset 10.
+        assertLocation(tree.getLayout(child), 130f, 5f, "RTL child");
     }
 }
