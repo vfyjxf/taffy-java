@@ -1682,7 +1682,7 @@ public class GridComputer {
             item.computedSize = new FloatSize(0f, 0f);
             item.location = new FloatPoint(0f, 0f);
 
-            if (item.position != TaffyPosition.ABSOLUTE) {
+            if (!item.position.isOutOfFlow()) {
                 items.add(item);
             }
         }
@@ -2127,7 +2127,7 @@ public class GridComputer {
         // Build a set of columns that contain items
         boolean[] columnOccupied = new boolean[columnSizes.size()];
         for (GridItem item : items) {
-            if (item.position == TaffyPosition.ABSOLUTE) {
+            if (item.position.isOutOfFlow()) {
                 continue;
             }
             int colStart = getItemColumnWithCounts(item, 0, columnSizes.size(), colCounts);
@@ -5152,7 +5152,7 @@ public class GridComputer {
 
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
-            if (childStyle.getPosition() != TaffyPosition.ABSOLUTE) continue;
+            if (!childStyle.getPosition().isOutOfFlow()) continue;
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
 
             // Resolve grid placement for absolute positioned items
@@ -5195,6 +5195,10 @@ public class GridComputer {
                 itemPadding.top + itemPadding.bottom + itemBorder.top + itemBorder.bottom
             );
 
+            // An `auto` size of an absolutely positioned *replaced* element resolves to its
+            // intrinsic size instead of being stretched between its insets (upstream #1203).
+            boolean isReplaced = childStyle.getItemIsReplaced();
+
             Float aspectRatio = childStyle.getAspectRatio();
             FloatSize boxSizingAdj = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
                                      ? paddingBorderSum
@@ -5212,9 +5216,11 @@ public class GridComputer {
 
             FloatSize knownDimensions = maybeClamp(styleSize, minSz, maxSz);
 
-            // Size from inset (when both left/right or top/bottom are set)
-            // Per CSS spec, width from inset is applied first
-            if (Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
+            // Size from inset (when both left/right or top/bottom are set).
+            // Per CSS spec, width from inset is applied first. A replaced element is not
+            // stretched between its insets: its auto size resolves to its intrinsic size
+            // instead (upstream #1203).
+            if (!isReplaced && Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
                 knownDimensions = new FloatSize(
                     Math.max(0, areaWidth - left - right - margin.left - margin.right),
                     knownDimensions.height
@@ -5231,7 +5237,7 @@ public class GridComputer {
             }
 
             // Only apply height from inset if height is still not determined (after aspect_ratio)
-            if (Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
+            if (!isReplaced && Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
                 knownDimensions = new FloatSize(
                     knownDimensions.width,
                     Math.max(0, areaHeight - top - bottom - margin.top - margin.bottom)

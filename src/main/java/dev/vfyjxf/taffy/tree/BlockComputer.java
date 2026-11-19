@@ -189,7 +189,7 @@ public class BlockComputer {
             !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
-            style.getPosition() == TaffyPosition.RELATIVE &&
+            !style.getPosition().isOutOfFlow() &&
             padding.top == 0 &&
             border.top == 0;
 
@@ -198,7 +198,7 @@ public class BlockComputer {
             !establishesNewBlockFormattingContext &&
             !style.getOverflow().x.isScrollContainer() &&
             !style.getOverflow().y.isScrollContainer() &&
-            style.getPosition() == TaffyPosition.RELATIVE &&
+            !style.getPosition().isOutOfFlow() &&
             padding.bottom == 0 &&
             border.bottom == 0;
 
@@ -218,7 +218,7 @@ public class BlockComputer {
             !style.isBlock() ||
             style.getOverflow().x.isScrollContainer() ||
             style.getOverflow().y.isScrollContainer() ||
-            style.getPosition() == TaffyPosition.ABSOLUTE ||
+            style.getPosition().isOutOfFlow() ||
             (!Float.isNaN(style.getAspectRatio())) ||
             padding.top > 0 ||
             padding.bottom > 0 ||
@@ -419,7 +419,7 @@ public class BlockComputer {
                         shifted.location().y += groupOffset;
                         item.finalLayout = shifted;
                     }
-                    if (item.position == TaffyPosition.ABSOLUTE) {
+                    if (item.position.isOutOfFlow()) {
                         item.staticPosition.y += groupOffset;
                     }
                 }
@@ -794,7 +794,7 @@ public class BlockComputer {
         float maxChildWidth = 0f;
 
         for (BlockItem item : items) {
-            if (item.position == TaffyPosition.ABSOLUTE) continue;
+            if (item.position.isOutOfFlow()) continue;
 
             FloatSize knownDimensions = maybeClamp(item.size, item.minSize, item.maxSize);
 
@@ -883,7 +883,7 @@ public class BlockComputer {
         boolean isRtl = direction != null && direction.isRtl();
 
         for (BlockItem item : items) {
-            if (item.position == TaffyPosition.ABSOLUTE) {
+            if (item.position.isOutOfFlow()) {
                 // In RTL, static position starts from right
                 float staticX = isRtl
                     ? (containerOuterWidth - contentBoxInset.right)
@@ -1023,15 +1023,24 @@ public class BlockComputer {
                 Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
             );
 
-            // Resolve item inset. Horizontal insets resolve against the containing block width;
-            // vertical insets against its percentage resolution height (not a hard-coded zero
-            // basis, which made e.g. `top: 50%` a no-op). BK-08 / upstream #1122 (f1a03062).
-            float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
-            float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
-            float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
-            float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
-            float insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
-            float insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
+            // Resolve item inset. Only `position: relative` applies its inset as a correction
+            // offset. Static and sticky boxes are laid out in normal flow without a relative
+            // offset (a sticky offset depends on the scroll position and is the caller's job),
+            // and fixed is out of flow, so it is positioned by the absolute pass instead.
+            // Upstream #1140.
+            // Horizontal insets resolve against the containing block width; vertical insets
+            // against its percentage resolution height (not a hard-coded zero basis, which made
+            // e.g. `top: 50%` a no-op). BK-08 / upstream #1122 (f1a03062).
+            float insetOffsetX = 0f;
+            float insetOffsetY = 0f;
+            if (item.position == TaffyPosition.RELATIVE) {
+                float insetLeft = item.inset.left.maybeResolve(containerInnerWidth);
+                float insetRight = item.inset.right.maybeResolve(containerInnerWidth);
+                float insetTop = item.inset.top.maybeResolve(childPercentageResolutionHeight);
+                float insetBottom = item.inset.bottom.maybeResolve(childPercentageResolutionHeight);
+                insetOffsetX = !Float.isNaN(insetLeft) ? insetLeft : (!Float.isNaN(insetRight) ? -insetRight : 0f);
+                insetOffsetY = !Float.isNaN(insetTop) ? insetTop : (!Float.isNaN(insetBottom) ? -insetBottom : 0f);
+            }
 
             // Compute y margin offset with margin collapse.
             //
@@ -1254,10 +1263,18 @@ public class BlockComputer {
         FloatSize contentSize = FloatSize.zero();
 
         for (BlockItem item : items) {
-            if (item.position != TaffyPosition.ABSOLUTE) continue;
+            if (!item.position.isOutOfFlow()) continue;
 
             TaffyStyle childStyle = tree.getStyle(item.nodeId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
+
+            // An `auto` size of an absolutely positioned *replaced* element resolves to its
+            // intrinsic size instead of being stretched between its insets
+            // (https://www.w3.org/TR/CSS22/visudet.html#abs-replaced-width and
+            // #abs-replaced-height). Upstream #1203 (b52be36a); #1256 later clarified that this
+            // uses the replaced flag (not the broader compressible-replaced one), matching the
+            // ST-05 split.
+            boolean isReplaced = childStyle.getItemIsReplaced();
 
             Float aspectRatio = childStyle.getAspectRatio();
 
@@ -1299,15 +1316,16 @@ public class BlockComputer {
             float nonAutoMarginTop = Float.isNaN(marginOpt.top) ? 0f : marginOpt.top;
             float nonAutoMarginBottom = Float.isNaN(marginOpt.bottom) ? 0f : marginOpt.bottom;
 
-            // Fill in width from left/right if not set
-            if (Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
+            // Fill in width from left/right if not set. A replaced element is not stretched:
+            // its auto width resolves to its intrinsic size instead (upstream #1203).
+            if (!isReplaced && Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
                 float newWidth = areaWidth - nonAutoMarginLeft - nonAutoMarginRight - left - right;
                 knownDimensions = new FloatSize(Math.max(newWidth, 0f), knownDimensions.height);
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
 
-            // Fill in height from top/bottom if not set
-            if (Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
+            // Fill in height from top/bottom if not set (not for replaced elements, upstream #1203).
+            if (!isReplaced && Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
                 float newHeight = areaHeight - nonAutoMarginTop - nonAutoMarginBottom - top - bottom;
                 knownDimensions = new FloatSize(knownDimensions.width, Math.max(newHeight, 0f));
                 knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
@@ -1364,15 +1382,19 @@ public class BlockComputer {
                 Float.isNaN(bottom) ? 0f : nonAutoMarginBottom
             );
 
-            // Calculate auto margin space
-            // Auto margins for absolutely positioned elements only resolve if inset is set
-            float absoluteAutoMarginSpaceX = Float.isNaN(right) ? finalSize.width : areaWidth - right - (!Float.isNaN(left) ? left : 0f);
-            float absoluteAutoMarginSpaceY = Float.isNaN(bottom) ? finalSize.height : areaHeight - bottom - (!Float.isNaN(top) ? top : 0f);
-
-            float freeSpaceX = absoluteAutoMarginSpaceX - finalSize.width
-                               - nonAutoMargin.left - nonAutoMargin.right;
-            float freeSpaceY = absoluteAutoMarginSpaceY - finalSize.height
-                               - nonAutoMargin.top - nonAutoMargin.bottom;
+            // Auto margins only absorb free space in an axis where *both* insets are non-auto.
+            // With one (or no) inset the axis is over-constrained, so an auto margin resolves to
+            // zero instead of inflating towards the one set inset. The free space is measured
+            // against the positioning area, and a margin only counts when its own inset is set
+            // (nonAutoMargin). Upstream #1202 (3307c7e0).
+            float freeSpaceX = !Float.isNaN(left) && !Float.isNaN(right)
+                               ? areaWidth - left - right - finalSize.width
+                                 - nonAutoMargin.left - nonAutoMargin.right
+                               : 0f;
+            float freeSpaceY = !Float.isNaN(top) && !Float.isNaN(bottom)
+                               ? areaHeight - top - bottom - finalSize.height
+                                 - nonAutoMargin.top - nonAutoMargin.bottom
+                               : 0f;
 
             // Calculate auto margin size against the free space left by the *used* (clamped) size.
             // BK-07 / upstream #1096.

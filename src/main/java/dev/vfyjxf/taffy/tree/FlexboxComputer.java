@@ -544,7 +544,7 @@ public class FlexboxComputer {
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE ||
-                childStyle.getPosition() == TaffyPosition.ABSOLUTE) {
+                childStyle.getPosition().isOutOfFlow()) {
                 order++;
                 continue;
             }
@@ -666,13 +666,22 @@ public class FlexboxComputer {
                 childStyle.getMargin().bottom.isAuto()
             );
 
-            TaffyRect<LengthPercentageAuto> insetStyle = childStyle.getInset();
-            item.inset = new FloatRect(
-                insetStyle.left.maybeResolve(nodeInnerSize.width),
-                insetStyle.right.maybeResolve(nodeInnerSize.width),
-                insetStyle.top.maybeResolve(nodeInnerSize.height),
-                insetStyle.bottom.maybeResolve(nodeInnerSize.height)
-            );
+            // Only `position: relative` applies its inset as a correction offset. Static and
+            // sticky boxes are laid out in normal flow without one (a sticky offset depends on
+            // the scroll position and is the caller's job), and a fixed box is out of flow and
+            // never becomes a flex item. Upstream #1140 stores the equivalent empty inset
+            // (`Rect::NONE`) for every non-relative item.
+            if (childStyle.getPosition() == TaffyPosition.RELATIVE) {
+                TaffyRect<LengthPercentageAuto> insetStyle = childStyle.getInset();
+                item.inset = new FloatRect(
+                    insetStyle.left.maybeResolve(nodeInnerSize.width),
+                    insetStyle.right.maybeResolve(nodeInnerSize.width),
+                    insetStyle.top.maybeResolve(nodeInnerSize.height),
+                    insetStyle.bottom.maybeResolve(nodeInnerSize.height)
+                );
+            } else {
+                item.inset = new FloatRect(Float.NaN, Float.NaN, Float.NaN, Float.NaN);
+            }
 
             item.hypotheticalInnerSize = new FloatSize(0f, 0f);
             item.hypotheticalOuterSize = new FloatSize(0f, 0f);
@@ -3000,7 +3009,7 @@ public class FlexboxComputer {
 
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
-            if (childStyle.getPosition() != TaffyPosition.ABSOLUTE) continue;
+            if (!childStyle.getPosition().isOutOfFlow()) continue;
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
 
             // Area available for positioning (container size minus border and scrollbar gutter)
@@ -3021,6 +3030,10 @@ public class FlexboxComputer {
                 isNaN(marginOption.top) ? 0f : marginOption.top,
                 isNaN(marginOption.bottom) ? 0f : marginOption.bottom
             );
+
+            // An `auto` size of an absolutely positioned *replaced* element resolves to its
+            // intrinsic size instead of being stretched between its insets (upstream #1203).
+            boolean isReplaced = childStyle.getItemIsReplaced();
 
             // Compute size
             Float aspectRatio = childStyle.getAspectRatio();
@@ -3050,8 +3063,9 @@ public class FlexboxComputer {
 
             FloatSize knownDimensions = maybeClamp(styleSize, minSz, maxSz);
 
-            // Fill from insets if not set
-            if (isNaN(knownDimensions.width) && !isNaN(left) && !isNaN(right)) {
+            // Fill from insets if not set. A replaced element is not stretched: its auto size
+            // resolves to its intrinsic size instead (upstream #1203).
+            if (!isReplaced && isNaN(knownDimensions.width) && !isNaN(left) && !isNaN(right)) {
                 float newWidth = TaffyMath.maybeSub(TaffyMath.maybeSub(insetRelativeWidth, marginOption.left), marginOption.right);
                 knownDimensions = new FloatSize(
                     Math.max(!isNaN(newWidth) ? newWidth - left - right : 0f, 0f),
@@ -3059,7 +3073,7 @@ public class FlexboxComputer {
                 );
                 knownDimensions = maybeClamp(maybeApplyAspectRatio(knownDimensions, aspectRatio), minSz, maxSz);
             }
-            if (isNaN(knownDimensions.height) && !isNaN(top) && !isNaN(bottom)) {
+            if (!isReplaced && isNaN(knownDimensions.height) && !isNaN(top) && !isNaN(bottom)) {
                 float newHeight = TaffyMath.maybeSub(TaffyMath.maybeSub(insetRelativeHeight, marginOption.top), marginOption.bottom);
                 knownDimensions = new FloatSize(
                     knownDimensions.width,
@@ -3107,10 +3121,20 @@ public class FlexboxComputer {
                 measuredOutput
             );
 
-            // Calculate free space and expand auto margins
+            // Auto margins only absorb free space in an axis where *both* insets are non-auto;
+            // with one (or no) inset the axis is over-constrained and they resolve to 0.
+            // The free space is measured against the positioning area (the container's border box
+            // less border and scrollbar gutter), and a margin only counts when its own inset is
+            // set. Upstream #1202 (3307c7e0).
+            float nonAutoXMarginSum = (isNaN(left) ? 0f : margin.left) + (isNaN(right) ? 0f : margin.right);
+            float nonAutoYMarginSum = (isNaN(top) ? 0f : margin.top) + (isNaN(bottom) ? 0f : margin.bottom);
             FloatSize freeSpace = new FloatSize(
-                Math.max(0f, containerSize.width - finalSize.width - margin.left - margin.right),
-                Math.max(0f, containerSize.height - finalSize.height - margin.top - margin.bottom)
+                !isNaN(left) && !isNaN(right)
+                ? Math.max(0f, insetRelativeWidth - left - right - finalSize.width - nonAutoXMarginSum)
+                : 0f,
+                !isNaN(top) && !isNaN(bottom)
+                ? Math.max(0f, insetRelativeHeight - top - bottom - finalSize.height - nonAutoYMarginSum)
+                : 0f
             );
 
             // Resolve auto margins
