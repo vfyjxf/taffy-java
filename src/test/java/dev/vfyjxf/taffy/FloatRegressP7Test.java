@@ -130,4 +130,27 @@ public class FloatRegressP7Test {
         assertSize(childLayout, 145f, 10f, "bfc child");
         assertSize(tree.getLayout(root), 200f, 120f, "root");
     }
+
+    // === #988: CSS2 rule 5 and fractional segment subdivision ===
+
+    @Test
+    @DisplayName("#988: a right float is not higher than earlier left floats at fractional y")
+    void fractionalOffsetsRespectFloatRule5() {
+        TaffyTree tree = new TaffyTree();
+
+        NodeId spacer = tree.newLeaf(sized(400f, 43.2f));
+        NodeId floatA = tree.newLeaf(floated(TaffyFloat.LEFT, 258f, 42f, Clear.NONE));
+        NodeId floatB = tree.newLeaf(floated(TaffyFloat.LEFT, 298f, 42f, Clear.NONE));
+        NodeId floatC = tree.newLeaf(floated(TaffyFloat.RIGHT, 98f, 42f, Clear.NONE));
+
+        TaffyStyle rootStyle = sized(400f, Float.NaN);
+        NodeId root = tree.newWithChildren(rootStyle, spacer, floatA, floatB, floatC);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // Values from upstream's hand-written regression (rounded to whole pixels there).
+        assertLocation(tree.getLayout(floatA), 0f, 43f, "float A");
+        assertLocation(tree.getLayout(floatB), 0f, 85f, "float B");
+        assertLocation(tree.getLayout(floatC), 302f, 85f, "float C");
+    }
 }

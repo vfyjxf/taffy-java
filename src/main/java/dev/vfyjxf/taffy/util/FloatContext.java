@@ -762,7 +762,7 @@ public final class FloatContext {
         int hwm = switch (clear) {
             case LEFT -> Math.max(floatStart, lastPlacedFloats[0][1] + 1);
             case RIGHT -> Math.max(floatStart, lastPlacedFloats[1][1] + 1);
-            case BOTH -> Math.max(floatStart, Math.max(lastPlacedFloats[0][1], lastPlacedFloats[1][1]) + 1);
+            case BOTH -> Math.max(lastPlacedFloats[0][1], lastPlacedFloats[1][1]) + 1;
             case NONE -> floatStart;
         };
 
