@@ -3,6 +3,7 @@ package dev.vfyjxf.taffy;
 import dev.vfyjxf.taffy.style.Clear;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.util.BfcSlot;
+import dev.vfyjxf.taffy.util.BlockContext;
 import dev.vfyjxf.taffy.util.FloatContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -529,5 +530,102 @@ public class FloatPlacementP7Test {
         assertThrows(IllegalArgumentException.class,
                      () -> context.findBfcSlot(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                                TaffyDirection.LTR, Clear.NONE, -2));
+    }
+
+    // === BlockContext wrappers ===
+
+    private static BlockContext childContext(FloatContext floatContext) {
+        BlockContext root = BlockContext.root(floatContext);
+        BlockContext child = root.subContext(30.0f, 10.0f, 20.0f);
+        child.applyContentBoxInset(5.0f, 5.0f);
+        child.setWidth(200.0f);
+        return child;
+    }
+
+    @Test
+    @DisplayName("BlockContext.placeFloatedBox uses content insets and returns local coordinates")
+    void blockContextPlacementUsesLocalCoordinates() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext child = childContext(floatContext);
+
+        FloatContext.FloatPlacement placement =
+            child.placeFloatedBox(50.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        assertTrue(placement.placed());
+        assertEquals(5.0f, placement.x(), EPSILON); // absolute 15 - border inset 10
+        assertEquals(0.0f, placement.y(), EPSILON); // absolute 30 - y offset 30
+        assertTrue(child.hasFloats());
+        assertEquals(65.0f, floatContext.regionAt(35.0f).leftInset(), EPSILON);
+        assertEquals(25.0f, floatContext.regionAt(35.0f).rightInset(), EPSILON);
+        assertEquals(20.0f, child.clearedThreshold(Clear.LEFT), EPSILON);
+        assertEquals(20.0f, child.floatedContentHeightContribution(), EPSILON);
+        assertEquals(30.0f, child.floatedContentHeightIncludingBottomInset(10.0f), EPSILON);
+    }
+
+    @Test
+    @DisplayName("BlockContext.findBfcSlot translates the slot back to local coordinates")
+    void blockContextBfcSlotUsesLocalCoordinates() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext child = childContext(floatContext);
+        child.placeFloatedBox(50.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BfcSlot slot = child.findBfcSlot(
+            0.0f, 0.0f, 0.0f, 0.0f, TaffyDirection.LTR, Clear.NONE);
+        assertEquals(1, slot.segmentId());
+        assertEquals(55.0f, slot.x(), EPSILON); // absolute 65 - border inset 10
+        assertEquals(0.0f, slot.y(), EPSILON);
+        assertEquals(135.0f, slot.borderWidth(), EPSILON);
+        assertEquals(135.0f, slot.stretchWidth(), EPSILON);
+
+        BfcSlot margined = child.findBfcSlot(
+            0.0f, 0.0f, 10.0f, 20.0f, TaffyDirection.LTR, Clear.NONE);
+        assertEquals(55.0f, margined.x(), EPSILON);
+        assertEquals(115.0f, margined.borderWidth(), EPSILON);
+        assertEquals(115.0f, margined.stretchWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("nested BlockContexts share the BFC float state")
+    void blockContextsShareFloatState() {
+        FloatContext floatContext = new FloatContext();
+        BlockContext root = BlockContext.root(floatContext);
+        BlockContext child = root.subContext(30.0f, 10.0f, 20.0f);
+        child.applyContentBoxInset(5.0f, 5.0f);
+        child.setWidth(200.0f);
+        child.placeFloatedBox(50.0f, 20.0f, 0.0f, FloatContext.Direction.LEFT, Clear.NONE);
+
+        BlockContext sibling = root.subContext(10.0f, 0.0f, 0.0f);
+        assertTrue(sibling.hasFloats());
+        assertTrue(sibling.hasActiveFloats(0.0f));
+        assertEquals(40.0f, sibling.clearedThreshold(Clear.LEFT), EPSILON);
+
+        FloatContext.ContentSlot content = sibling.findContentSlot(30.0f, Clear.NONE);
+        assertEquals(30.0f, content.y(), EPSILON);
+        assertEquals(65.0f, content.x(), EPSILON);
+        assertEquals(110.0f, content.width(), EPSILON);
+
+        BfcSlot bfc = sibling.findBfcSlot(
+            30.0f, 0.0f, 0.0f, 0.0f, TaffyDirection.LTR, Clear.NONE);
+        assertEquals(30.0f, bfc.y(), EPSILON);
+        assertEquals(65.0f, bfc.x(), EPSILON);
+        assertEquals(135.0f, bfc.borderWidth(), EPSILON);
+    }
+
+    @Test
+    @DisplayName("floated content contribution merges from child to parent with bottom inset")
+    void floatedContentContributionMerges() {
+        BlockContext root = BlockContext.root();
+        assertEquals(0.0f, root.floatedContentHeightContribution(), EPSILON);
+        assertEquals(7.0f, root.floatedContentHeightIncludingBottomInset(7.0f), EPSILON);
+
+        BlockContext child = root.subContext(20.0f, 0.0f, 0.0f);
+        child.setWidth(200.0f);
+        child.placeFloatedBox(50.0f, 20.0f, 10.0f, FloatContext.Direction.LEFT, Clear.NONE);
+        assertEquals(30.0f, child.floatedContentHeightContribution(), EPSILON);
+        assertEquals(35.0f, child.floatedContentHeightIncludingBottomInset(5.0f), EPSILON);
+
+        root.addChildFloatedContentHeightContribution(child.floatedContentHeightContribution());
+        assertEquals(30.0f, root.floatedContentHeightContribution(), EPSILON);
+        assertEquals(40.0f, root.floatedContentHeightIncludingBottomInset(10.0f), EPSILON);
     }
 }
