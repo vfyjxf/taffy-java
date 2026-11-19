@@ -12,7 +12,7 @@ P0-a, P0-b, P1 and P2 are complete. P3 is mostly complete.
 
 | Batch | Scope | Status | Expected API impact |
 | --- | --- | --- | --- |
-| P3 residual | BK-14 (block `align-content`), grid baseline A3-A6 / #1322-#1323 | remaining | behavior only |
+| P3 residual | BK-14 (block `align-content`), grid baseline A3-A6 / #1322-#1323 | done (tag `p3-complete`) | behavior only |
 | **P4** | SO-01..SO-05 scrollable overflow | not started | behavior; fills the new `ScrollableOverflow` component |
 | **P5** | ST-02/03/04/08, FL-15..20, BK-16/19 (sizing keywords, safe/self alignment) | not started | more enum constants (minor source break); opt-in keyword mode |
 | **P6** | OF-01..07, ST-06, FL-22/23, GR-19, TS-05 (position/OOF/direction) | not started | `TaffyPosition` STATIC/FIXED/STICKY (source break); abspos semantics |

@@ -122,7 +122,10 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `display: flow-root` no longer collapses its margins with its children;
   compressible replaced boxes cap their min-content width per #1401 (form-control
   `%max` no longer collapses to zero there); fixed-size leaves consult their
-  measure callback for baselines.
+  measure callback for baselines; block containers apply `align-content`; grid
+  baseline participation excludes auto block margins and cyclic block sizes, and
+  the grid container baseline comes from the final layout without the relative
+  offset.
 - This batch does not change default layout options.
 
 ### API
