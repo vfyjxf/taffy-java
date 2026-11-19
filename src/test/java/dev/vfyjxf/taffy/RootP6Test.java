@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <ul>
  *   <li>an in-flow root's margin box sits at {@code (margin.left, margin.top)} (or at the right
  *       edge in a definite RTL viewport), and a {@code position: relative} root is then offset by
- *       its insets;</li>
+ *       its insets (ST-06 / upstream #906);</li>
  *   <li>a {@code position: absolute}/{@code fixed} root is sized and positioned by the
  *       out-of-flow rules against the ICB (inset stretch, shrink-to-fit, auto margins);</li>
  *   <li>an out-of-flow child whose containing block is the ICB is positioned against the
@@ -565,6 +565,62 @@ class RootP6Test {
         assertNode(tree, root, 10f, 10f, 100f, 50f, "static root");
     }
 
+    // === ST-06 / #906: RTL root placement and inset direction ===
+
+    @Test
+    @DisplayName("ST-06: legacy RTL root numbers are unchanged")
+    void legacyRtlRootNumbersAreUnchanged() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle rootStyle = sizedBlock(300f, 100f);
+        rootStyle.direction = TaffyDirection.RTL;
+        rootStyle.margin = margin(0f, 20f, 0f, 0f);
+        NodeId root = tree.newLeaf(rootStyle);
+
+        compute(tree, root, 500f, 400f);
+
+        // 500 - 300 - margin.right(20) = 180, exactly as before the root ICB work.
+        assertNode(tree, root, 180f, 0f, 300f, 100f, "RTL root");
+    }
+
+    @Test
+    @DisplayName("ST-06: an RTL root's margin box is right-aligned and uses margin.top")
+    void rtlRootUsesRightAndTopMargins() {
+        TaffyTree tree = new TaffyTree();
+        TaffyStyle rootStyle = sizedBlock(200f, 100f);
+        rootStyle.direction = TaffyDirection.RTL;
+        rootStyle.margin = margin(7f, 5f, 11f, 13f);
+        NodeId root = tree.newLeaf(rootStyle);
+
+        compute(tree, root, 300f, 150f);
+
+        // 300 - 200 - margin.right(5) = 95; y = margin.top = 11.
+        assertNode(tree, root, 95f, 11f, 200f, 100f, "RTL root");
+    }
+
+    /**
+     * ST-06 / upstream #906: when both inline insets are set on a relatively positioned root, the
+     * physical {@code right} inset wins in RTL and {@code left} wins in LTR.
+     */
+    @Test
+    @DisplayName("ST-06: a relative root resolves its inline inset from the direction's start side")
+    void relativeRootInsetDirection() {
+        for (TaffyDirection direction : DIRECTIONS) {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle rootStyle = sizedBlock(100f, 50f);
+            rootStyle.direction = direction;
+            rootStyle.position = TaffyPosition.RELATIVE;
+            rootStyle.margin = margin(10f, 10f, 10f, 10f);
+            rootStyle.inset = inset(px(25f), px(20f), px(5f), px(15f));
+            NodeId root = tree.newLeaf(rootStyle);
+
+            compute(tree, root, 400f, 300f);
+
+            float expectedX = direction.isRtl()
+                ? 400f - 100f - 10f - 20f  // right edge, then -right
+                : 10f + 25f;               // margin.left, then +left
+            assertNode(tree, root, expectedX, 15f, 100f, 50f, direction + " root");
+        }
+    }
 
     // === Containing-block boundary: fixed vs absolute under a positioned root ===
 

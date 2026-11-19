@@ -204,7 +204,8 @@ public class LayoutComputer {
         // Set the root layout. The root's margin box is placed at the origin of the initial
         // containing block: x = margin.left (or, for a definite RTL viewport, aligned to the right
         // edge: availableWidth - size.width - margin.right), y = margin.top. Child locations stay
-        // parent-relative and are not affected by this. OF-07 / upstream #1205.
+        // parent-relative and are not affected by this. OF-07 / upstream #1205; the RTL right-edge
+        // formula follows ST-06 / upstream #906.
         float rootX;
         if (direction.isRtl() && availableSpace.width.isDefinite()) {
             rootX = availableSpace.width.getValue() - output.size().width - margin.right;
@@ -213,8 +214,9 @@ public class LayoutComputer {
         }
         float rootY = margin.top;
 
-        // A relatively positioned root is offset by its insets, resolved against the ICB. Static
-        // and sticky roots are not offset by their insets.
+        // A relatively positioned root is offset by its insets, resolved against the ICB. The
+        // physical inset consulted first is the block's inline-start side: right in RTL, left in
+        // LTR (ST-06 / upstream #906). Static and sticky roots are not offset by their insets.
         if (style.getPosition() == TaffyPosition.RELATIVE) {
             float icbWidth = availableSpace.width.isDefinite() ? availableSpace.width.getValue() : Float.NaN;
             float icbHeight = availableSpace.height.isDefinite() ? availableSpace.height.getValue() : Float.NaN;
@@ -223,7 +225,11 @@ public class LayoutComputer {
             float right = inset.right.maybeResolve(icbWidth);
             float top = inset.top.maybeResolve(icbHeight);
             float bottom = inset.bottom.maybeResolve(icbHeight);
-            rootX += Float.isNaN(left) ? (Float.isNaN(right) ? 0f : -right) : left;
+            if (direction.isRtl()) {
+                rootX += Float.isNaN(right) ? (Float.isNaN(left) ? 0f : left) : -right;
+            } else {
+                rootX += Float.isNaN(left) ? (Float.isNaN(right) ? 0f : -right) : left;
+            }
             rootY += Float.isNaN(top) ? (Float.isNaN(bottom) ? 0f : -bottom) : top;
         }
 
