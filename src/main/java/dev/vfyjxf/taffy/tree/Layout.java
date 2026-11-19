@@ -15,9 +15,11 @@ import dev.vfyjxf.taffy.geometry.FloatSize;
  *                           Legacy 1.x component kept for compatibility; 2.0 removes it in favour of
  *                           {@link #scrollableOverflow()}.
  * @param scrollableOverflow The scrollable overflow rectangle of the node (T1/T2 additive component).
- *                           Always {@link ScrollableOverflow#ZERO} in 1.2: no layout algorithm populates
- *                           it yet, and {@link #scrollWidth()}/{@link #scrollHeight()} still derive from
- *                           {@code contentSize}. P4 wires the algorithms; 2.0 removes {@code contentSize}.
+ *                           The leaf path computes it in P4 (SO-01/SO-02) and {@code RoundLayout}
+ *                           rounds it; a block, flex or grid layout built by an algorithm still
+ *                           carries {@link ScrollableOverflow#ZERO} until that algorithm's SO-01
+ *                           wiring lands. {@link #scrollWidth()}/{@link #scrollHeight()} still derive
+ *                           from {@code contentSize} until then; 2.0 removes {@code contentSize}.
  * @param scrollbarSize      The size of the scrollbars in each dimension. If there is no scrollbar then the size will be zero.
  * @param border             The size of the borders of the node
  * @param padding            The size of the padding of the node
@@ -143,25 +145,35 @@ public record Layout(
     }
 
     /**
-     * Return the scroll width of the node.
+     * Return the maximum horizontal scroll offset of the node.
      *
-     * <p>Still the legacy 1.x formula based on {@link #contentSize()}; the scrollable-overflow
-     * based formula belongs to P4/SO-01.</p>
+     * <p>The reachable extent of the content is the content extent less the width of the padding
+     * box, floored at zero, so it must not depend on which edge a border sits on: both
+     * {@code border.left} and {@code border.right} are added (P4/SO-03, upstream #1007).</p>
+     *
+     * <p><b>1.2 status:</b> still the legacy {@link #contentSize()} formula. The scrollable-overflow
+     * rectangle already existing in {@link #scrollableOverflow()} replaces it once the block, flex
+     * and grid algorithms populate that rectangle (SO-01); the reversed scroll origins are only
+     * expressible through that rectangle, so the two models are not mixed here.</p>
      */
     public float scrollWidth() {
         return Math.max(0, contentSize.width + Math.min(scrollbarSize.width, size.width)
-                           - size.width + border.right);
+                           - size.width + border.left + border.right);
     }
 
     /**
-     * Return the scroll height of the node.
+     * Return the maximum vertical scroll offset of the node.
      *
-     * <p>Still the legacy 1.x formula based on {@link #contentSize()}; the scrollable-overflow
-     * based formula belongs to P4/SO-01.</p>
+     * <p>The reachable extent of the content is the content extent less the height of the padding
+     * box, floored at zero, so it must not depend on which edge a border sits on: both
+     * {@code border.top} and {@code border.bottom} are added (P4/SO-03, upstream #1007).</p>
+     *
+     * <p><b>1.2 status:</b> still the legacy {@link #contentSize()} formula; see
+     * {@link #scrollWidth()} for the pending scrollable-overflow switch.</p>
      */
     public float scrollHeight() {
         return Math.max(0, contentSize.height + Math.min(scrollbarSize.height, size.height)
-                           - size.height + border.bottom);
+                           - size.height + border.top + border.bottom);
     }
 
     // === Getter methods ===

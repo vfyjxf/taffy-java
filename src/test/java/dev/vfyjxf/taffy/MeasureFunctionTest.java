@@ -125,9 +125,11 @@ public class MeasureFunctionTest {
         Layout layout = tree.getLayout(node);
         assertEquals(100.0f, layout.size().width, EPSILON, "content 70 + padding 20 + border 10");
         assertEquals(50.0f, layout.size().height, EPSILON, "content 20 + padding 20 + border 10");
-        // The legacy contentSize component keeps its historical formula (measured + padding only).
-        assertEquals(90.0f, layout.contentSize().width, EPSILON);
-        assertEquals(40.0f, layout.contentSize().height, EPSILON);
+        // SO-05 / upstream #1117: a leaf's content size is the start padding + measured content,
+        // and only a scroll container also adds the end padding. This leaf is not a scroll
+        // container, so the end sides (right/bottom) are not counted: 10 + 70 and 10 + 20.
+        assertEquals(80.0f, layout.contentSize().width, EPSILON);
+        assertEquals(30.0f, layout.contentSize().height, EPSILON);
     }
 
     @Test

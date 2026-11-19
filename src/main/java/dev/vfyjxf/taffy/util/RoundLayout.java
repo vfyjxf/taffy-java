@@ -6,6 +6,7 @@ import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.tree.Layout;
 import dev.vfyjxf.taffy.tree.NodeId;
+import dev.vfyjxf.taffy.tree.ScrollableOverflow;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 
 import java.util.ArrayDeque;
@@ -96,6 +97,7 @@ public final class RoundLayout {
                 new FloatPoint(roundedX, roundedY),
                 new FloatSize(roundedWidth, roundedHeight),
                 new FloatSize(roundedContentWidth, roundedContentHeight),
+                roundOverflow(layout.scrollableOverflow()),
                 roundedScrollbarSize,
                 roundRect(layout.border()),
                 roundRect(layout.padding()),
@@ -160,6 +162,7 @@ public final class RoundLayout {
             new FloatPoint(roundedX, roundedY),
             new FloatSize(roundedWidth, roundedHeight),
             new FloatSize(roundedContentWidth, roundedContentHeight),
+            roundOverflow(layout.scrollableOverflow()),
             roundedScrollbarSize,
             roundRect(layout.border()),
             roundRect(layout.padding()),
@@ -171,6 +174,18 @@ public final class RoundLayout {
         for (NodeId childId : tree.getChildren(nodeId)) {
             roundLayoutRecursive(tree, childId, absoluteX, absoluteY);
         }
+    }
+
+    /**
+     * Rounds each scrollable-overflow edge, keeping the reversed-origin flags.
+     *
+     * <p>The rectangle is carried through rounding instead of being reset: a rebuilt {@link Layout}
+     * that used the compatibility constructor would silently drop the overflow computed by the leaf
+     * path (SO-01). {@link ScrollableOverflow#round()} rounds ties away from zero like the rest of
+     * this class and preserves the sign of {@code -0.0} edges.</p>
+     */
+    private static ScrollableOverflow roundOverflow(ScrollableOverflow overflow) {
+        return overflow == null ? ScrollableOverflow.ZERO : overflow.round();
     }
 
     /**

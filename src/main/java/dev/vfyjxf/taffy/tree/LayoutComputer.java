@@ -18,6 +18,7 @@ import dev.vfyjxf.taffy.util.MeasureFunc;
 import dev.vfyjxf.taffy.util.MeasureFuncAdapter;
 import dev.vfyjxf.taffy.util.MeasureFunction;
 import dev.vfyjxf.taffy.util.Resolve;
+import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
 import java.util.List;
@@ -165,6 +166,7 @@ public class LayoutComputer {
             new FloatPoint(rootX, 0f),
             output.size(),
             output.contentSize(),
+            output.scrollableOverflow(),
             scrollbarSize,
             border,
             padding,
@@ -676,22 +678,44 @@ public class LayoutComputer {
                                      && size.height == 0
                                      && measuredHeight == 0;
 
+        // A leaf includes its own start padding in the content size (the content starts after it),
+        // but its end padding only when it is a scroll container: a non-scroll box does not extend
+        // its scrollable overflow region with padding that comes after the content. In RTL the
+        // inline start/end sides are the physical right/left ones. SO-05 / upstream #1117.
+        boolean scrollContainer = ScrollableOverflowUtil.isScrollContainer(overflow);
+        boolean isRtl = resolveDirection(node).isRtl();
+        float startPadding = isRtl ? padding.right : padding.left;
+        float endPadding = isRtl ? padding.left : padding.right;
+        float measuredContentWidth = Float.isNaN(measuredSize.width) ? 0f : measuredSize.width;
+        float measuredContentHeight = Float.isNaN(measuredSize.height) ? 0f : measuredSize.height;
+        FloatSize measuredContentSize = new FloatSize(measuredContentWidth, measuredContentHeight);
+        FloatSize contentSize = new FloatSize(
+            startPadding + measuredContentWidth + (scrollContainer ? endPadding : 0f),
+            padding.top + measuredContentHeight + (scrollContainer ? padding.bottom : 0f)
+        );
+
         // Baselines and scrollable overflow reported by a MeasureFunction are propagated to the
         // final output (S1). A legacy MeasureFunc goes through MeasureFuncAdapter, which leaves
         // both empty, exactly like the pre-1.2 leaf path. The legacy firstBaselines field is kept
         // in sync with the new Baselines.first() value so old and new consumers observe the same
         // baseline.
         Baselines baselines = measuredOutput != null ? measuredOutput.baselines() : Baselines.NONE;
-        ScrollableOverflow scrollableOverflow = measuredOutput != null
+        ScrollableOverflow reportedOverflow = measuredOutput != null
                                                 ? measuredOutput.scrollableOverflow()
                                                 : ScrollableOverflow.ZERO;
+        // An explicitly reported (non-empty) rectangle keeps the S1 measure contract and wins over
+        // the computed leaf rectangle; an absent one is derived from the measured content size
+        // (SO-01/SO-02 leaf rule: client-frame origin, start padding, end padding only for scroll
+        // containers, RTL mirrored).
+        ScrollableOverflow scrollableOverflow =
+            reportedOverflow != null && !reportedOverflow.equals(ScrollableOverflow.ZERO)
+            ? reportedOverflow
+            : ScrollableOverflowUtil.leafScrollableOverflow(
+                size, border, padding, scrollbarWidth, overflow, measuredContentSize, isRtl);
 
         return new LayoutOutput(
             size,
-            new FloatSize(
-                (Float.isNaN(measuredSize.width) ? 0f : measuredSize.width) + padding.left + padding.right,
-                (Float.isNaN(measuredSize.height) ? 0f : measuredSize.height) + padding.top + padding.bottom
-            ),
+            contentSize,
             scrollableOverflow,
             baselines.first(),
             baselines,

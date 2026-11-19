@@ -11,8 +11,9 @@ import dev.vfyjxf.taffy.geometry.FloatSize;
  *                                  for compatibility; 2.0 removes it in favour of
  *                                  {@link #scrollableOverflow()}.
  * @param scrollableOverflow        The scrollable overflow rectangle of the node (T1/T2 additive
- *                                  component). Always {@link ScrollableOverflow#ZERO} in 1.2: the
- *                                  layout algorithms do not populate it yet (P4/SO-01).
+ *                                  component). The leaf path computes it in P4 (SO-01/SO-02);
+ *                                  block, flex and grid outputs stay {@link ScrollableOverflow#ZERO}
+ *                                  until their SO-01 wiring lands.
  * @param firstBaselines            The first baseline of the node in each dimension, if any.
  *                                  Legacy 1.x component kept for compatibility; 2.0 removes it in
  *                                  favour of {@link #baselines()}.
