@@ -3532,6 +3532,9 @@ public class GridComputer {
                 // under a definite available space, where a cyclic percentage min-size contributes
                 // zero and scroll containers contribute no content size (GR-12 / upstream #1257).
                 float minimumContributionSize = 0f;
+                // Whether this track holds at least one span-1 item: only then does its max track
+                // sizing function fix a growth limit (upstream's span-1 planned increase).
+                boolean hasSpanOneItem = false;
 
                 for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
                     GridItem item = items.get(itemIdx);
@@ -3540,6 +3543,7 @@ public class GridComputer {
 
                     // Only consider items that occupy this track with span of 1
                     if (col == i && span == 1) {
+                        hasSpanOneItem = true;
                         // Estimate the height available for this item based on row tracks. This is the
                         // item's grid area: during intrinsic sizing its percentages resolve against the
                         // grid area, not the grid container (GR-06 / upstream #960).
@@ -3647,6 +3651,13 @@ public class GridComputer {
                         size = Math.min(maxContentSize, Math.max(minContentSize, limit));
                     } else {
                         size = maxContentSize;
+                    }
+                    // Upstream's fit_content_limited_growth_limit for a fit-content() track; as
+                    // upstream only applies a span-1 planned increase when it is positive, an empty
+                    // span-1 item leaves the growth limit infinite.
+                    if (hasSpanOneItem && size > 0f
+                        && !gridWidthSpace.isMinContent() && !gridWidthSpace.isMaxContent()) {
+                        growthLimits.set(i, size);
                     }
                 } else if (track != null && track.isMinmax()) {
                     // For minmax, the growth limit is determined by the max function
@@ -4008,6 +4019,16 @@ public class GridComputer {
             }
         }
 
+        // 11.5 steps 4-5 (GR-02 T14 / upstream #1245, 3defa72e): a spanning item's min-content and
+        // max-content contributions also raise the *growth limits* of the tracks it spans. A track
+        // only receives this space while its growth limit is still infinite or it was marked
+        // infinitely growable by the previous step, and never past its fit-content() argument; the
+        // space left over is then distributed beyond the limits (which fit-content() still caps).
+        FloatList columnFitContentLimits = fitContentLimitsOf(resolvedColumnTracks, numColumns, nodeInnerSize.width);
+        distributeSpanningItemGrowthLimits(items, resolvedColumnTracks, sizes, growthLimits, columnFitContentLimits,
+            numColumns, numRows, colCounts, gap, nodeInnerSize, templateRows, autoRows, knownRowSizes,
+            availableGridSpace.width.isDefinite());
+
         // Step 4: After span>1 distribution, update growth_limits for auto tracks
         // Per CSS Grid spec: "If at this point any track's growth limit is now less than its base size,
         // increase its growth limit to match its base size."
@@ -4150,7 +4171,9 @@ public class GridComputer {
             // 1. maximise_tracks: distribute space up to growth_limit (for all containers with available space)
             // 2. stretch_auto_tracks: additional stretch for auto tracks (only when container has DEFINITE SIZE)
             if (freeSpace > 0) {
-                // Find tracks that can grow (auto, minmax with room to grow)
+                // 11.6 Maximise Tracks: the free space is distributed to the tracks this port grows
+                // (auto, implicit and minmax tracks with room), plus fit-content() tracks up to
+                // their argument (upstream maximise_tracks); each track stops at its growth limit.
                 IntList growableTrackIndices = new IntArrayList();
 
                 for (int i = 0; i < sizes.size(); i++) {
@@ -4165,16 +4188,22 @@ public class GridComputer {
                     // Track can grow if:
                     // 1. It's an auto track (explicit auto or implicit auto)
                     // 2. It's a minmax track with room to grow
+                    // 3. It's a fit-content() track below its argument (upstream's fit-content cap)
                     boolean canGrow = false;
                     if (track != null && track.isAuto()) {
                         canGrow = true;
                     } else if (track == null) {
                         canGrow = true;  // Implicit auto track (no grid-auto-columns entry)
                     } else if (track != null && track.isMinmax()) {
-                        // minmax track - check if it has a growth limit set and room to grow
                         if (!Float.isNaN(currentSize) && !Float.isNaN(limit) && currentSize < limit) {
                             canGrow = true;
                         }
+                    } else if (track != null && track.isFitContent()) {
+                        // Only a fit-content() track whose growth limit a content contribution
+                        // actually raised may absorb free space (upstream's INF growth limit becomes
+                        // the base size before the maximise step).
+                        canGrow = !Float.isNaN(currentSize) && !Float.isNaN(limit) && limit != Float.MAX_VALUE
+                                  && currentSize < fitContentLimitAt(columnFitContentLimits, i);
                     }
 
                     if (canGrow) {
@@ -4192,7 +4221,7 @@ public class GridComputer {
                         for (int j = 0; j < growableTrackIndices.size(); j++) {
                             int i = growableTrackIndices.getInt(j);
                             float currentSize = sizes.getFloat(i);
-                            float limit = growthLimits.getFloat(i);
+                            float limit = Math.min(growthLimits.getFloat(i), fitContentLimitAt(columnFitContentLimits, i));
                             if (!Float.isNaN(currentSize) && !Float.isNaN(limit) && currentSize < limit - 0.001f) {
                                 growableTracks.add(i);
                             }
@@ -4209,7 +4238,7 @@ public class GridComputer {
                         for (int j = 0; j < growableTracks.size(); j++) {
                             int i = growableTracks.getInt(j);
                             float currentSize = sizes.getFloat(i);
-                            float limit = growthLimits.getFloat(i);
+                            float limit = Math.min(growthLimits.getFloat(i), fitContentLimitAt(columnFitContentLimits, i));
                             if (!Float.isNaN(currentSize) && !Float.isNaN(limit)) {
                                 float maxGrow = limit - currentSize;
                                 float toAdd = Math.min(extra, maxGrow);
@@ -6622,6 +6651,270 @@ public class GridComputer {
             remaining -= distributed;
 
             // Prevent infinite loop if we can't distribute anything
+            if (distributed < 0.001f) {
+                break;
+            }
+        }
+
+        return remaining;
+    }
+
+    /**
+     * The resolved {@code fit-content()} limit of every track of one axis (upstream's cached
+     * {@code GridTrack::fit_content_limit}, #1247): {@code NaN} for a track whose max track sizing
+     * function is not {@code fit-content()}. A percentage (or otherwise unresolvable) argument stays
+     * infinite while the axis' inner size is indefinite, as upstream treats it.
+     */
+    private static FloatList fitContentLimitsOf(List<TrackSizingFunction> tracks, int numTracks, float innerAxisSize) {
+        FloatList limits = new FloatArrayList(Math.max(1, numTracks));
+        for (int i = 0; i < numTracks; i++) {
+            limits.add(NaN);
+        }
+        for (int i = 0; i < numTracks; i++) {
+            TrackSizingFunction maxFunction = trackMaxFunction(tracks.get(i));
+            if (maxFunction == null || !maxFunction.isFitContent()) {
+                continue;
+            }
+            limits.set(i, fitContentLimitOf(maxFunction, innerAxisSize));
+        }
+        return limits;
+    }
+
+    /** One fit-content() track's limit, or {@link Float#MAX_VALUE} when it cannot be resolved. */
+    private static float fitContentLimitOf(TrackSizingFunction maxFunction, float innerAxisSize) {
+        LengthPercentage limitArgument = maxFunction.getFitContentArgument();
+        if (limitArgument == null) {
+            return Float.MAX_VALUE;
+        }
+        if (limitArgument.isPercent()) {
+            float resolved = Float.isNaN(innerAxisSize) ? NaN : limitArgument.maybeResolve(innerAxisSize);
+            return Float.isNaN(resolved) ? Float.MAX_VALUE : resolved;
+        }
+        return limitArgument.resolveOrZero(innerAxisSize);
+    }
+
+    /** The fit-content() limit of one track ({@link Float#MAX_VALUE} when it has none). */
+    private static float fitContentLimitAt(FloatList fitContentLimits, int track) {
+        if (fitContentLimits == null || track < 0 || track >= fitContentLimits.size()) {
+            return Float.MAX_VALUE;
+        }
+        float limit = fitContentLimits.getFloat(track);
+        return Float.isNaN(limit) ? Float.MAX_VALUE : limit;
+    }
+
+    /** Whether the track's max track sizing function is intrinsic (auto, min/max-content, fit-content). */
+    private static boolean trackMaxIsIntrinsic(TrackSizingFunction track) {
+        TrackSizingFunction max = trackMaxFunction(track);
+        return max == null || max.isIntrinsic();
+    }
+
+    /**
+     * Whether the track's max track sizing function is treated as max-content (upstream
+     * {@code is_max_content_alike}: {@code auto}, {@code max-content} and {@code fit-content()}, per
+     * CSS Grid's "treat auto and fit-content() as max-content").
+     */
+    private static boolean trackMaxIsMaxContentAlike(TrackSizingFunction track) {
+        TrackSizingFunction max = trackMaxFunction(track);
+        return max == null || max.isAuto() || max.isMaxContent() || max.isFitContent();
+    }
+
+    /** Whether the track's max track sizing function is a percentage. */
+    private static boolean trackMaxUsesPercentage(TrackSizingFunction track) {
+        TrackSizingFunction max = trackMaxFunction(track);
+        return max != null && max.usesPercentage();
+    }
+
+    /**
+     * Whether this port tracks the track's growth limit while distributing spanning items' intrinsic
+     * contributions: an {@code auto} or {@code fit-content()} max is tracked; the min-/max-content
+     * ones keep the base-size distribution this port already performs for them (their growth limit
+     * stays infinite there, so the two paths cannot disagree).
+     */
+    private static boolean trackHasTrackedGrowthLimit(TrackSizingFunction track) {
+        TrackSizingFunction max = trackMaxFunction(track);
+        return max == null || max.isAuto() || max.isFitContent();
+    }
+
+    /**
+     * Distribute the spanning items' min-content and max-content contributions to the growth limits
+     * of the tracks they span (CSS Grid 11.5 steps 4-5; upstream
+     * {@code distribute_item_space_to_growth_limit}, GR-02 T14 / #1245 {@code 3defa72e}).
+     *
+     * <p>Step 4 ({@code intrinsic maximums}) distributes each item's min-content contribution to the
+     * growth limits of the tracks whose max track sizing function is intrinsic. Step 5
+     * ({@code max-content maximums}) then distributes the max-content contribution to the tracks
+     * whose max track sizing function is treated as max-content. In both steps only a track whose
+     * growth limit is still infinite, or that received an increase in the previous step (upstream's
+     * {@code infinitely_growable}), can grow, and its growth is capped by its {@code fit-content()}
+     * argument. Any space that is left over is distributed beyond the limits, where the
+     * {@code fit-content()} argument still caps the growth.</p>
+     *
+     * <p>Only run for a definite axis: the indefinite (min-/max-content constrained) axis is sized by
+     * the base-size distributions above, and upstream's indefinite path additionally applies the
+     * limited min-content contribution rule that this port does not port, so the two steps must be
+     * enabled per axis once that rule is in place.</p>
+     */
+    private void distributeSpanningItemGrowthLimits(
+        List<GridItem> items,
+        List<TrackSizingFunction> tracks,
+        FloatList sizes,
+        FloatList growthLimits,
+        FloatList fitContentLimits,
+        int numTracks,
+        int numRows,
+        TrackCounts colCounts,
+        FloatSize gap,
+        FloatSize nodeInnerSize,
+        List<TrackSizingFunction> templateRows,
+        List<TrackSizingFunction> autoRows,
+        FloatList knownRowSizes,
+        boolean definiteAvailableSpace) {
+
+        if (numTracks <= 1 || !definiteAvailableSpace) {
+            return;
+        }
+
+        boolean[] infinitelyGrowable = new boolean[numTracks];
+        float[] effective = new float[numTracks];
+        float[] planned = new float[numTracks];
+
+        for (int step = 0; step < 2; step++) {
+            boolean maxContentMaximums = step == 1;
+
+            for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+                GridItem item = items.get(itemIdx);
+                int start = getItemColumnWithCounts(item, itemIdx, numTracks, colCounts);
+                int span = item.columnSpan;
+                if (span <= 1 || start < 0 || start + span > numTracks) {
+                    continue;
+                }
+                int end = start + span;
+
+                IntList affectedTracks = new IntArrayList();
+                for (int c = start; c < end; c++) {
+                    TrackSizingFunction track = tracks.get(c);
+                    boolean matches = maxContentMaximums
+                                      ? trackMaxIsMaxContentAlike(track) && trackHasTrackedGrowthLimit(track)
+                                      : trackMaxIsIntrinsic(track) && trackHasTrackedGrowthLimit(track);
+                    if (matches) {
+                        affectedTracks.add(c);
+                    }
+                }
+                if (affectedTracks.isEmpty()) {
+                    continue;
+                }
+
+                float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows, numRows,
+                    nodeInnerSize.height, gap, knownRowSizes);
+                FloatSize itemGridAreaSize = new FloatSize(
+                    definiteGridAreaExtent(sizes, tracks, start, span, nodeInnerSize.width), estimatedRowHeight);
+                FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(itemGridAreaSize.width);
+                float space;
+                FloatSize preferredSize = item.clampedPreferredSize(itemGridAreaSize);
+                if (!Float.isNaN(preferredSize.width)) {
+                    space = preferredSize.width + marginAxisSums.width;
+                } else if (maxContentMaximums) {
+                    space = item.getMaxContentContributionWidthCached(layoutComputer, itemGridAreaSize);
+                } else {
+                    space = item.getMinContentContributionWidthCached(layoutComputer, itemGridAreaSize);
+                }
+                if (!(space > 0f)) {
+                    continue;
+                }
+
+                float spannedSize = 0f;
+                for (int c = start; c < end; c++) {
+                    float growthLimit = growthLimits.getFloat(c);
+                    effective[c] = growthLimit == Float.MAX_VALUE ? sizes.getFloat(c) : growthLimit;
+                    spannedSize += effective[c];
+                    if (c + 1 < end) {
+                        spannedSize += gap.width;
+                    }
+                }
+                float extraSpace = space - spannedSize;
+                if (!(extraSpace > 0f)) {
+                    for (int c = start; c < end; c++) {
+                        effective[c] = 0f;
+                    }
+                    continue;
+                }
+
+                IntList growableTracks = new IntArrayList();
+                for (int k = 0; k < affectedTracks.size(); k++) {
+                    int c = affectedTracks.getInt(k);
+                    if (infinitelyGrowable[c] || growthLimits.getFloat(c) == Float.MAX_VALUE) {
+                        growableTracks.add(c);
+                    }
+                }
+                extraSpace = distributeGrowthLimitSpace(extraSpace, growableTracks, effective, fitContentLimits);
+                if (extraSpace > 0f) {
+                    distributeGrowthLimitSpace(extraSpace, affectedTracks, effective, fitContentLimits);
+                }
+
+                for (int c = start; c < end; c++) {
+                    float growthLimit = growthLimits.getFloat(c);
+                    float original = growthLimit == Float.MAX_VALUE ? sizes.getFloat(c) : growthLimit;
+                    float increase = effective[c] - original;
+                    if (increase > planned[c]) {
+                        planned[c] = increase;
+                    }
+                    effective[c] = 0f;
+                }
+            }
+
+            for (int c = 0; c < numTracks; c++) {
+                if (planned[c] > 0f) {
+                    float growthLimit = growthLimits.getFloat(c);
+                    growthLimits.set(c, growthLimit == Float.MAX_VALUE
+                                        ? sizes.getFloat(c) + planned[c] : growthLimit + planned[c]);
+                    infinitelyGrowable[c] = !maxContentMaximums;
+                } else {
+                    infinitelyGrowable[c] = false;
+                }
+                planned[c] = 0f;
+            }
+        }
+    }
+
+    /**
+     * The "distribute space up to limits" loop of the growth-limit distribution (upstream
+     * {@code distribute_space_up_to_limits}): space is spread evenly over the still-growable tracks of
+     * {@code targetTracks}, never past a track's {@code fit-content()} limit (no limit when the axis
+     * has none). Returns the space that could not be distributed.
+     */
+    private static float distributeGrowthLimitSpace(float spaceToDistribute, IntList targetTracks,
+                                                    float[] effectiveSizes, FloatList fitContentLimits) {
+        float remaining = spaceToDistribute;
+        int maxIterations = targetTracks.size() + 1;
+
+        for (int iteration = 0; iteration < maxIterations && remaining > 0.001f; iteration++) {
+            int growableCount = 0;
+            for (int k = 0; k < targetTracks.size(); k++) {
+                int c = targetTracks.getInt(k);
+                if (effectiveSizes[c] < fitContentLimitAt(fitContentLimits, c) - 0.001f) {
+                    growableCount++;
+                }
+            }
+            if (growableCount == 0) {
+                break;
+            }
+
+            float extraPerTrack = remaining / growableCount;
+            float distributed = 0f;
+            for (int k = 0; k < targetTracks.size(); k++) {
+                int c = targetTracks.getInt(k);
+                float limit = fitContentLimitAt(fitContentLimits, c);
+                if (effectiveSizes[c] >= limit - 0.001f) {
+                    continue;
+                }
+                float increase = Math.min(extraPerTrack, limit - effectiveSizes[c]);
+                if (increase > 0f) {
+                    effectiveSizes[c] += increase;
+                    distributed += increase;
+                }
+            }
+
+            remaining -= distributed;
             if (distributed < 0.001f) {
                 break;
             }
