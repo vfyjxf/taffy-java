@@ -156,7 +156,10 @@ public class GridComputer {
         AlignItems justifySelf;
 
         // Baseline alignment
-        float baseline = NaN;       // The item's first baseline (horizontal)
+        // The item's first baseline (horizontal), measured from the top of its border box
+        // (upstream #1322). Set from the item's intrinsic layout when resolving baseline alignment
+        // during track sizing, then from its final layout.
+        float baseline = NaN;
         float baselineShim;   // Shim for baseline alignment that acts like an extra top margin
 
         // Computed values
@@ -228,6 +231,17 @@ public class GridComputer {
             return alignSelf == AlignItems.BASELINE
                 && !hasAutoBlockMargin()
                 && !hasCyclicBlockSizeDependency();
+        }
+
+        /**
+         * The item's baseline as measured from the top of its margin box. Baseline alignment aligns
+         * items by this value; {@link #baseline} itself is border-box relative (upstream #1322).
+         *
+         * @param innerNodeWidth the container's inner width, used to resolve a percentage top margin
+         */
+        float marginBoxBaseline(float innerNodeWidth) {
+            float top = rawMargin != null ? Resolve.resolveLpaOrZero(rawMargin.top, innerNodeWidth) : 0f;
+            return (Float.isNaN(baseline) ? 0f : baseline) + top;
         }
 
         /**
@@ -1195,11 +1209,16 @@ public class GridComputer {
     /**
      * Calculate the first baseline of the grid container.
      * <p>
+     * The baseline is taken from the final layout of the first item of the first row (upstream
+     * #1322): during track sizing an item's baseline is only measured from its intrinsic layout,
+     * and an item that does not participate in baseline alignment has none at all, so using the
+     * measured value made the container report the item's bottom edge instead of its real first
+     * baseline.
+     * <p>
      * Only items participating in baseline alignment can provide the container's baseline
      * (upstream #1125 / 3dbf2e46): if the row's first item does not participate, the row's first
-     * participating item is used, and the row's first item is the fallback. The value itself is
-     * still the one measured during track sizing; taking it from the item's final layout is a
-     * separate upstream fix (#1322).
+     * participating item is used, and the row's first item is the fallback. A scroll container's
+     * baseline is clamped to its border box by the final-layout pass (#1108).
      */
     private float calculateContainerBaseline(List<GridItem> items) {
         if (items.isEmpty()) {
@@ -1229,7 +1248,8 @@ public class GridComputer {
             chosenItem = firstItemInRow;
         }
 
-        // Calculate baseline: y_position + baseline (or height if baseline is null)
+        // Calculate baseline: y_position + border-box baseline
+        // (or the border-box height when the item reports none)
         float height = (chosenItem.computedSize != null && !Float.isNaN(chosenItem.computedSize.height))
                        ? chosenItem.computedSize.height : 0f;
         float baseline = (!Float.isNaN(chosenItem.baseline)) ? chosenItem.baseline : height;
@@ -3851,7 +3871,11 @@ public class GridComputer {
      * dependency on its row (3dbf2e46). Items that do not participate are neither measured nor
      * shimmed, and do not contribute their baseline to the row (upstream only measures the
      * participants). Items are grouped by row; a row with one or zero participants is a no-op.
-     * The baseline_shim acts as an extra top margin during track sizing and final positioning.
+     * <p>
+     * The stored baseline is relative to the top of the item's border box (upstream #1322); the top
+     * margin is added only when items are aligned with each other (via
+     * {@link GridItem#marginBoxBaseline(float)}). The baseline_shim acts as an extra top margin
+     * during track sizing and final positioning.
      */
     private void resolveItemBaselines(List<GridItem> items, FloatSize innerNodeSize) {
         // Determine if the grid has any item participating in baseline alignment
@@ -3926,24 +3950,23 @@ public class GridComputer {
                 float baselineValue = BaselineHelper.childFirstBaseline(
                     output, item.overflow.y.isScrollContainer());
 
-                float marginTop = item.margin != null ? item.margin.top : 0f;
-
-                // baseline = first_baseline.y or height, plus margin.top
-                item.baseline = (!Float.isNaN(baselineValue) ? baselineValue : height) + marginTop;
+                // The baseline is stored relative to the top of the item's border box; the top
+                // margin is added only where items are aligned with each other (upstream #1322).
+                item.baseline = !Float.isNaN(baselineValue) ? baselineValue : height;
             }
 
-            // Compute the max baseline of the items in the row participating in baseline alignment
-            float rowMaxBaseline = 0f;
+            // Items are aligned by the distance from the top of their margin box to their baseline
+            float rowMaxBaseline = -Float.MAX_VALUE;
             for (GridItem item : rowItems) {
                 if (item.participatesInBaselineAlignment()) {
-                    rowMaxBaseline = Math.max(rowMaxBaseline, item.baseline);
+                    rowMaxBaseline = Math.max(rowMaxBaseline, item.marginBoxBaseline(innerNodeSize.width));
                 }
             }
 
             // Compute the baseline shim for each item in the row participating in baseline alignment
             for (GridItem item : rowItems) {
                 if (item.participatesInBaselineAlignment()) {
-                    item.baselineShim = rowMaxBaseline - item.baseline;
+                    item.baselineShim = rowMaxBaseline - item.marginBoxBaseline(innerNodeSize.width);
                     // The baseline shim is part of the item's margin sums, which feed into its known
                     // dimensions, so any cached known dimensions are stale after this point
                     // (upstream #1226 clears known_dimensions_cache here for the same reason).
@@ -4802,7 +4825,7 @@ public class GridComputer {
             item.margin = new FloatRect(marginLeft, marginRight, marginTop, marginBottom);
 
             // Perform final child layout with known dimensions to trigger recursive layout
-            layoutComputer.performChildLayout(
+            LayoutOutput finalOutput = layoutComputer.performChildLayout(
                 item.nodeId,
                 new FloatSize(width, height),  // known dimensions
                 new FloatSize(trackWidth, trackHeight),  // parent inner size
@@ -4810,6 +4833,13 @@ public class GridComputer {
                 SizingMode.INHERENT_SIZE,
                 new TaffyLine<>(false, false)
             );
+
+            // The container's baseline is taken from the item's final layout rather than from the
+            // measurement done during track sizing (upstream #1322). Scroll containers are clamped
+            // to their border box by the shared helper (upstream #1108/#1323); an item without a
+            // baseline leaves NaN here and the container baseline falls back to its height.
+            item.baseline = BaselineHelper.childFirstBaseline(
+                finalOutput, item.overflow.y.isScrollContainer());
         }
     }
 

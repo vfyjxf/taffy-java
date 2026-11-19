@@ -33,7 +33,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *   <li><b>A4</b> {@code 3dbf2e46}: an item whose block size depends on the size of an intrinsic or
  *       flexible row (percentage height) does not participate, avoiding the cyclic dependency
  *       between the baseline shim and the row size. Upstream has no generated fixture for this.</li>
+ *   <li><b>A5</b> {@code e77a7a8d} (#1322): {@code item.baseline} stores the border-box baseline,
+ *       the top margin is only added when items are aligned with each other, and the container
+ *       baseline is taken from the first row's item's final layout
+ *       ({@code gridflex_container_baseline_from_baseline_item_with_margin_top},
+ *       {@code gridflex_container_baseline_from_non_baseline_item_{start,center,end}}).</li>
  * </ul>
+ *
+ * <p>Expectations are the values Chrome reported in the upstream XML fixtures
+ * ({@code tests/xml/grid/...}, {@code tests/xml/gridflex/...}):
+ * {@code ref y=11/21/31} for the non-baseline container-baseline cases, {@code ref y=30} for the
+ * top-margin case, {@code ref y=10} for the relative-offset case.</p>
  */
 public class GridBaselineP3Test {
 
@@ -251,10 +261,113 @@ public class GridBaselineP3Test {
         assertNode(tree, itemB, 100f, 30f, 100f, 20f, "item B (shim 30)");
     }
 
+    // ==================================================================
+    // A5 / #1322: container baseline from the first item's final layout,
+    // item.baseline stores the border-box baseline
+    // ==================================================================
 
+    @Test
+    @DisplayName("A5: a top margin on the baseline item is counted once (gridflex_container_baseline_from_baseline_item_with_margin_top)")
+    void a5ContainerBaselineCountsTopMarginOnce() {
+        TaffyTree tree = new TaffyTree();
 
+        TaffyStyle gridStyle = grid(Float.NaN, Float.NaN);
+        gridStyle.alignItems = AlignItems.BASELINE;
+        gridStyle.gridTemplateColumns = fixedTracks(50f, 50f);
 
+        TaffyStyle item1Style = grid(50f, 30f);
+        item1Style.margin = new TaffyRect<>(
+            LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO,
+            LengthPercentageAuto.length(10f), LengthPercentageAuto.ZERO
+        );
+        NodeId item1Content = tree.newLeaf(block(20f, 20f));
+        NodeId item1 = tree.newWithChildren(item1Style, item1Content);
 
+        NodeId item2 = tree.newLeaf(block(50f, 40f));
+
+        NodeId gridNode = tree.newWithChildren(gridStyle, item1, item2);
+        NodeId reference = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexBaseline(200f, 100f), gridNode, reference);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // The row is 50px (item 1's 30 + 10 margin + 10 shim). The grid baseline is item 1's final
+        // y (20) plus its border-box baseline (20) = 40, so the 10px reference item sits at 30.
+        assertNode(tree, gridNode, 0f, 0f, 100f, 50f, "grid");
+        assertNode(tree, item1, 0f, 20f, 50f, 30f, "baseline item with top margin");
+        assertNode(tree, item2, 50f, 0f, 50f, 40f, "second item");
+        assertNode(tree, reference, 100f, 30f, 10f, 10f, "reference item");
+    }
+
+    @Test
+    @DisplayName("A5: container baseline from a non-baseline item's final layout (start)")
+    void a5ContainerBaselineFromNonBaselineItemStart() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle gridStyle = grid(100f, 50f);
+        gridStyle.alignItems = AlignItems.START;
+
+        TaffyStyle itemStyle = grid(26f, 30f);
+        NodeId itemContent = tree.newLeaf(block(26f, 21f));
+        NodeId item = tree.newWithChildren(itemStyle, itemContent);
+
+        NodeId gridNode = tree.newWithChildren(gridStyle, item);
+        NodeId reference = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexBaseline(120f, 100f), gridNode, reference);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // The grid's baseline is its first item's border-box baseline (0 + 21) = 21, so the 10px
+        // reference item sits at 11 (the pre-fix code used the item's bottom edge, giving 20).
+        assertNode(tree, item, 0f, 0f, 26f, 30f, "grid item");
+        assertNode(tree, reference, 100f, 11f, 10f, 10f, "reference item");
+    }
+
+    @Test
+    @DisplayName("A5: container baseline from a non-baseline item's final layout (center)")
+    void a5ContainerBaselineFromNonBaselineItemCenter() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle gridStyle = grid(100f, 50f);
+        gridStyle.alignItems = AlignItems.CENTER;
+
+        TaffyStyle itemStyle = grid(26f, 30f);
+        NodeId itemContent = tree.newLeaf(block(26f, 21f));
+        NodeId item = tree.newWithChildren(itemStyle, itemContent);
+
+        NodeId gridNode = tree.newWithChildren(gridStyle, item);
+        NodeId reference = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexBaseline(120f, 100f), gridNode, reference);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // Item at (50 - 30) / 2 = 10, baseline 10 + 21 = 31, reference at 21.
+        assertNode(tree, item, 0f, 10f, 26f, 30f, "grid item");
+        assertNode(tree, reference, 100f, 21f, 10f, 10f, "reference item");
+    }
+
+    @Test
+    @DisplayName("A5: container baseline from a non-baseline item's final layout (end)")
+    void a5ContainerBaselineFromNonBaselineItemEnd() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle gridStyle = grid(100f, 50f);
+        gridStyle.alignItems = AlignItems.END;
+
+        TaffyStyle itemStyle = grid(26f, 30f);
+        NodeId itemContent = tree.newLeaf(block(26f, 21f));
+        NodeId item = tree.newWithChildren(itemStyle, itemContent);
+
+        NodeId gridNode = tree.newWithChildren(gridStyle, item);
+        NodeId reference = tree.newLeaf(block(10f, 10f));
+        NodeId root = tree.newWithChildren(flexBaseline(120f, 100f), gridNode, reference);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        // Item at 50 - 30 = 20, baseline 20 + 21 = 41, reference at 31.
+        assertNode(tree, item, 0f, 20f, 26f, 30f, "grid item");
+        assertNode(tree, reference, 100f, 31f, 10f, 10f, "reference item");
+    }
 
 
 }
