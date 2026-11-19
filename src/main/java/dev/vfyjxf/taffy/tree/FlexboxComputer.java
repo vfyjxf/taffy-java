@@ -586,12 +586,11 @@ public class FlexboxComputer {
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
 
-            // Handle width/height: stretch - in flexbox context, stretch on main axis 
-            // behaves like flex-grow: 1 (filling available space)
-            TaffyDimension mainDim = isRow ? childStyle.getSize().width : childStyle.getSize().height;
-            boolean mainIsStretch = mainDim != null && mainDim.isStretch();
-
-            item.flexGrow = mainIsStretch && childStyle.getFlexGrow() == 0f ? 1f : childStyle.getFlexGrow();
+            // ST-01/FL-17: a main-axis 'stretch' is resolved to an exact flex base size in
+            // determineFlexBaseSize, so it must not also be mapped to flex-grow: 1 here
+            // (upstream has no such mapping; it inflated the item when a sibling's negative
+            // margin left free space in the line).
+            item.flexGrow = childStyle.getFlexGrow();
             item.flexShrink = childStyle.getFlexShrink();
 
             // ST-04 (#1254): an explicit `align-self: normal` overrides the container's

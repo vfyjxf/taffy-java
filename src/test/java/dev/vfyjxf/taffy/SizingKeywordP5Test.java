@@ -549,6 +549,38 @@ public class SizingKeywordP5Test {
         }
 
         @Test
+        @DisplayName("main-axis stretch does not hijack flex-grow (upstream has no such hack)")
+        void mainStretchDoesNotHijackFlexGrow() {
+            TaffyTree tree = new TaffyTree();
+            TaffyStyle containerStyle = new TaffyStyle();
+            containerStyle.display = TaffyDisplay.FLEX;
+            containerStyle.flexDirection = FlexDirection.ROW;
+            containerStyle.alignItems = AlignItems.START;
+            containerStyle.size = new TaffySize<>(TaffyDimension.length(300f), TaffyDimension.length(100f));
+            NodeId container = tree.newLeaf(containerStyle);
+
+            TaffyStyle stretchStyle = new TaffyStyle();
+            stretchStyle.size = new TaffySize<>(TaffyDimension.stretch(), TaffyDimension.length(20f));
+            NodeId stretchItem = tree.newLeaf(stretchStyle);
+            tree.addChild(container, stretchItem);
+
+            // A zero-width item with a -200px left margin leaves 200px of free space. The legacy
+            // stretch -> flex-grow: 1 hack would hand that free space to the stretch item (500px);
+            // upstream keeps the stretch item at exactly its 300px stretch size.
+            TaffyStyle offsetStyle = new TaffyStyle();
+            offsetStyle.size = new TaffySize<>(TaffyDimension.length(0f), TaffyDimension.length(20f));
+            offsetStyle.margin = new TaffyRect<>(
+                    LengthPercentageAuto.length(-200f), LengthPercentageAuto.ZERO,
+                    LengthPercentageAuto.ZERO, LengthPercentageAuto.ZERO);
+            NodeId offsetItem = tree.newLeaf(offsetStyle);
+            tree.addChild(container, offsetItem);
+
+            tree.computeLayout(container, TaffySize.maxContent());
+
+            assertEquals(300f, tree.getLayout(stretchItem).size().width, EPSILON);
+        }
+
+        @Test
         @DisplayName("legacy percentage flex-basis values are unchanged")
         void percentFlexBasisUnchanged() {
             RecordingMeasure measure = new RecordingMeasure(40f, 100f, 20f, 60f);
