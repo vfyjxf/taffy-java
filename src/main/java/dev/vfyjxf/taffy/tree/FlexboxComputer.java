@@ -3182,10 +3182,22 @@ public class FlexboxComputer {
                 contentBoxInset, resolvedMargin, justifyContent, isRow, isWrapReverse
             );
 
+            // FL-22 (#958): a `safe` cross-axis self-alignment falls back to logical start when the
+            // item's outer cross size (used size plus resolved margins) overflows the static-position
+            // alignment container, which is the container's content box.
+            float crossContainerSize = isRow ? containerSize.height : containerSize.width;
+            float crossContentBoxInsetSum = isRow
+                                            ? contentBoxInset.top + contentBoxInset.bottom
+                                            : contentBoxInset.left + contentBoxInset.right;
+            float crossOuterSize = (isRow ? finalSize.height : finalSize.width)
+                                   + (isRow ? resolvedMargin.top + resolvedMargin.bottom
+                                            : resolvedMargin.left + resolvedMargin.right);
+            boolean crossOverflows = crossOuterSize > crossContainerSize - crossContentBoxInsetSum;
+
             // Calculate cross-axis offset
             float offsetCross = computeAbsoluteCrossOffset(
                 startCross, endCross, finalSize, containerSize, border, scrollbarGutter,
-                contentBoxInset, resolvedMargin, alignSelfEnum, isRow, isWrapReverse
+                contentBoxInset, resolvedMargin, alignSelfEnum, isRow, isWrapReverse, crossOverflows
             );
 
             // Convert to x, y
@@ -3358,7 +3370,8 @@ public class FlexboxComputer {
     private float computeAbsoluteCrossOffset(float startCross, float endCross, FloatSize finalSize,
                                              FloatSize containerSize, FloatRect border, FloatSize scrollbarGutter,
                                              FloatRect contentBoxInset, FloatRect resolvedMargin,
-                                             AlignSelf alignSelf, boolean isRow, boolean isWrapReverse) {
+                                             AlignSelf alignSelf, boolean isRow, boolean isWrapReverse,
+                                             boolean overflows) {
         float containerCross = isRow ? containerSize.height : containerSize.width;
         float finalCross = isRow ? finalSize.height : finalSize.width;
         float borderCrossStart = isRow ? border.top : border.left;
@@ -3382,7 +3395,12 @@ public class FlexboxComputer {
             // existing flex-start-like fallback: upstream resolves the "normal" fallback to
             // flex-start rather than start, and the generated wrap-reverse abspos fixtures rely
             // on it. Writing-mode/RTL refinements are tracked separately (P6).
-            return switch (alignSelf) {
+            //
+            // FL-22 (#958): resolve the `safe` overflow-position modifier first. A safe keyword
+            // whose item overflows the content box falls back to logical START; otherwise the
+            // modifier is dropped and the bare keyword is used.
+            AlignSelf crossKeyword = AlignmentHelper.resolveSelfSafety(alignSelf, overflows);
+            return switch (crossKeyword) {
                 case START -> contentBoxCrossStart + marginCrossStart;
                 case END -> containerCross - contentBoxCrossEnd - finalCross - marginCrossEnd;
                 case AUTO, BASELINE, STRETCH, FLEX_START -> {
