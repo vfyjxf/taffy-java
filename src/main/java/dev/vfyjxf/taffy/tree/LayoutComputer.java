@@ -5,9 +5,12 @@ import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffyPoint;
+import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
+import dev.vfyjxf.taffy.style.BoxGenerationMode;
 import dev.vfyjxf.taffy.style.BoxSizing;
+import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.Overflow;
@@ -65,8 +68,59 @@ public class LayoutComputer {
 
     /**
      * Computes layout starting from the root node.
+     *
+     * <p>The root's containing block is the <em>initial containing block</em> (ICB): a rectangle
+     * the size of the viewport ({@code availableSpace}) anchored at the canvas origin (upstream
+     * #1204/#1205). The root's own {@code position}/{@code inset}/{@code margin} styles resolve
+     * against it instead of leaving the root pinned at {@code (0, 0)} (OF-07 / ST-06):</p>
+     *
+     * <ul>
+     *   <li>An in-flow (or {@code position: relative}) root's margin box is placed at the ICB
+     *       origin: {@code x = margin.left} ({@code availableWidth - size.width - margin.right}
+     *       for a definite RTL viewport) and {@code y = margin.top}. A {@code relative} root then
+     *       shifts by its insets, resolved against the ICB and in the block's inline direction:
+     *       the physical {@code right} inset wins over {@code left} in RTL (ST-06 / upstream
+     *       #906).</li>
+     *   <li>A {@code position: absolute}/{@code fixed} root whose ICB is definite in both axes is
+     *       sized and positioned by the out-of-flow rules (inset stretch, shrink-to-fit, auto
+     *       margins) with the ICB as its containing block. An indefinite ICB leaves no rectangle
+     *       to resolve against, so such a root is laid out in flow exactly like upstream.</li>
+     *   <li>After the root itself, out-of-flow children whose containing block is the ICB (always
+     *       {@code fixed}; {@code absolute} when the root is not positioned) are positioned
+     *       against the viewport. The 1.2 line has no out-of-flow hoisting (OF-01), so this final
+     *       pass covers the root's direct children only: a {@code fixed} box deeper in the tree is
+     *       still positioned against its parent's positioning area (residual TS-05). The root's
+     *       {@code contentSize}/{@code scrollableOverflow} are not recomputed, because the
+     *       block/flex/grid algorithms fold the out-of-flow contributions in.</li>
+     * </ul>
      */
     public void computeLayout(NodeId root, TaffySize<AvailableSpace> availableSpace) {
+        TaffyStyle style = tree.getStyle(root);
+        TaffyPosition position = style.getPosition();
+        TaffyDirection direction = resolveDirection(root);
+
+        // The ICB only exists when the viewport is definite in both axes.
+        boolean icbIsDefinite = availableSpace.width.isDefinite() && availableSpace.height.isDefinite();
+        if (position.isOutOfFlow() && icbIsDefinite) {
+            computeOutOfFlowRootLayout(root, direction, availableSpace);
+        } else {
+            computeInFlowRootLayout(root, direction, availableSpace);
+        }
+
+        positionRootLevelOutOfFlowChildren(root, direction, availableSpace);
+    }
+
+    /**
+     * Lays out a root that participates in the normal flow (or one whose ICB is indefinite) and
+     * stores its layout.
+     *
+     * <p>This is the historical root path; the only placement change is that the root is placed
+     * by its margin (and, for {@code position: relative}, by its insets) against the initial
+     * containing block instead of being pinned at {@code (0, 0)} (OF-07 / ST-06, upstream
+     * #1205/#906).</p>
+     */
+    private void computeInFlowRootLayout(NodeId root, TaffyDirection direction,
+                                         TaffySize<AvailableSpace> availableSpace) {
         FloatSize knownDimensions = new FloatSize(Float.NaN, Float.NaN);
 
         TaffyStyle style = tree.getStyle(root);
@@ -147,23 +201,41 @@ public class LayoutComputer {
             style.getOverflow().x == Overflow.SCROLL ? style.getScrollbarWidth() : 0f
         );
 
-        // Set the root layout.
-        // PA-03: in RTL the root's margin box is aligned to the right edge of the available space:
-        //   x = available_width - size.width - margin.right
-        // which matches the upstream root RTL branch (taffy compute/mod.rs).
-        // Non-RTL, or an indefinite available width, keeps the historical origin (0, 0): the rest of the
-        // upstream root placement (margin box at the origin, i.e. x = margin.left / y = margin.top, plus
-        // relative inset offsets) belongs to ST-06/P6 and is still pending here.
-        // Child locations stay parent-relative and are not affected by this.
-        TaffyDirection direction = resolveDirection(root);
-        float rootX = 0f;
-        if (direction == TaffyDirection.RTL && availableSpace.width.isDefinite()) {
+        // Set the root layout. The root's margin box is placed at the origin of the initial
+        // containing block: x = margin.left (or, for a definite RTL viewport, aligned to the right
+        // edge: availableWidth - size.width - margin.right), y = margin.top. Child locations stay
+        // parent-relative and are not affected by this. OF-07 / upstream #1205; the RTL right-edge
+        // formula follows ST-06 / upstream #906.
+        float rootX;
+        if (direction.isRtl() && availableSpace.width.isDefinite()) {
             rootX = availableSpace.width.getValue() - output.size().width - margin.right;
+        } else {
+            rootX = margin.left;
+        }
+        float rootY = margin.top;
+
+        // A relatively positioned root is offset by its insets, resolved against the ICB. The
+        // physical inset consulted first is the block's inline-start side: right in RTL, left in
+        // LTR (ST-06 / upstream #906). Static and sticky roots are not offset by their insets.
+        if (style.getPosition() == TaffyPosition.RELATIVE) {
+            float icbWidth = availableSpace.width.isDefinite() ? availableSpace.width.getValue() : Float.NaN;
+            float icbHeight = availableSpace.height.isDefinite() ? availableSpace.height.getValue() : Float.NaN;
+            TaffyRect<LengthPercentageAuto> inset = style.getInset();
+            float left = inset.left.maybeResolve(icbWidth);
+            float right = inset.right.maybeResolve(icbWidth);
+            float top = inset.top.maybeResolve(icbHeight);
+            float bottom = inset.bottom.maybeResolve(icbHeight);
+            if (direction.isRtl()) {
+                rootX += Float.isNaN(right) ? (Float.isNaN(left) ? 0f : left) : -right;
+            } else {
+                rootX += Float.isNaN(left) ? (Float.isNaN(right) ? 0f : -right) : left;
+            }
+            rootY += Float.isNaN(top) ? (Float.isNaN(bottom) ? 0f : -bottom) : top;
         }
 
         Layout layout = new Layout(
             0,
-            new FloatPoint(rootX, 0f),
+            new FloatPoint(rootX, rootY),
             output.size(),
             output.contentSize(),
             output.scrollableOverflow(),
@@ -174,6 +246,419 @@ public class LayoutComputer {
         );
 
         tree.setUnroundedLayout(root, layout);
+    }
+
+    /**
+     * Lays out a {@code position: absolute}/{@code fixed} root against the initial containing
+     * block and stores its layout.
+     *
+     * <p>Mirrors upstream {@code layout_oof_box} (#1205): the root is sized from its style size
+     * and insets (a pair of insets stretches an {@code auto} axis; otherwise the box may shrink to
+     * fit its content), auto margins absorb the free space of a fully constrained axis, and the
+     * static position places the root's margin box at the ICB origin (at the right edge in an RTL
+     * viewport).</p>
+     */
+    private void computeOutOfFlowRootLayout(NodeId root, TaffyDirection direction,
+                                            TaffySize<AvailableSpace> availableSpace) {
+        TaffyStyle style = tree.getStyle(root);
+        float areaWidth = availableSpace.width.getValue();
+        float areaHeight = availableSpace.height.getValue();
+        FloatSize areaSize = new FloatSize(areaWidth, areaHeight);
+        OutOfFlowSizing sizing = resolveOutOfFlowSizing(style, areaWidth, areaHeight);
+        FloatSize knownDimensions = sizing.knownDimensions();
+
+        // The available space handed to the root's layout algorithm is the ICB, clamped exactly
+        // like every other out-of-flow box (upstream layout_oof_box).
+        TaffySize<AvailableSpace> definiteArea = outOfFlowAvailableSpace(sizing, areaWidth, areaHeight);
+
+        // An axis with neither a style size nor a pair of insets is sized by the root's own layout
+        // algorithm: measure it first, then lay the subtree out again with the definite final size
+        // (PA-05's two-pass pattern, which is how this port models upstream's definite pass).
+        LayoutOutput measuredOutput = performChildLayout(root, knownDimensions, areaSize, definiteArea,
+            SizingMode.INHERENT_SIZE, TaffyLine.FALSE);
+        FloatSize finalSize = clampOutOfFlowSize(new FloatSize(
+            Float.isNaN(knownDimensions.width) ? measuredOutput.size().width : knownDimensions.width,
+            Float.isNaN(knownDimensions.height) ? measuredOutput.size().height : knownDimensions.height
+        ), sizing);
+        LayoutOutput output = performDefiniteAbsoluteChildLayout(
+            root, knownDimensions, finalSize, areaSize, definiteArea, SizingMode.INHERENT_SIZE, measuredOutput);
+
+        FloatRect resolvedMargin = resolveOutOfFlowMargins(sizing.margin(),
+            sizing.left(), sizing.right(), sizing.top(), sizing.bottom(), areaWidth, areaHeight, finalSize);
+        // The root's static position places its margin box at the ICB origin: at the left edge in
+        // LTR and at the right edge in RTL (upstream compute_root_layout).
+        float staticX = direction.isRtl()
+                        ? areaWidth - finalSize.width - resolvedMargin.right
+                        : resolvedMargin.left;
+        FloatPoint offset = resolveOutOfFlowOffset(direction, areaWidth, areaHeight, finalSize,
+            sizing.left(), sizing.right(), sizing.top(), sizing.bottom(), resolvedMargin,
+            staticX, resolvedMargin.top);
+
+        FloatSize scrollbarSize = new FloatSize(
+            style.getOverflow().y == Overflow.SCROLL ? style.getScrollbarWidth() : 0f,
+            style.getOverflow().x == Overflow.SCROLL ? style.getScrollbarWidth() : 0f
+        );
+        Layout layout = new Layout(
+            0,
+            offset,
+            finalSize,
+            output.contentSize(),
+            output.scrollableOverflow(),
+            scrollbarSize,
+            sizing.border(),
+            sizing.padding(),
+            resolvedMargin
+        );
+        tree.setUnroundedLayout(root, layout);
+    }
+
+    /**
+     * Positions the root's direct out-of-flow children against the initial containing block.
+     *
+     * <p>CSS positions a {@code position: fixed} box against the viewport and a
+     * {@code position: absolute} box against the initial containing block when no ancestor is
+     * positioned. The 1.2 line has no out-of-flow hoisting (OF-01), so an out-of-flow child is laid
+     * out by the algorithm of its immediate parent; this pass redoes the final positioning of the
+     * root's direct out-of-flow children against the ICB, which is the observable part of the
+     * upstream root positioning pass (#1204/#1205) without hoisting.</p>
+     *
+     * <p>The positioning area follows upstream #1204: an axis with a definite viewport size uses
+     * the viewport (less the root's scrollbar gutter) and is offset by {@code -root.location}; an
+     * indefinite axis falls back to the root's padding box. The root's own layout, including its
+     * content size and scrollable overflow, is left untouched.</p>
+     */
+    private void positionRootLevelOutOfFlowChildren(NodeId root, TaffyDirection direction,
+                                                    TaffySize<AvailableSpace> availableSpace) {
+        TaffyStyle rootStyle = tree.getStyle(root);
+        // A hidden root lays out no boxes, and an indefinite viewport has no ICB in either axis.
+        if (rootStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) return;
+        if (tree.childCount(root) == 0) return;
+        if (!availableSpace.width.isDefinite() && !availableSpace.height.isDefinite()) return;
+
+        Layout rootLayout = tree.getUnroundedLayout(root);
+        if (rootLayout == null) return;
+
+        boolean rootIsPositioned = rootStyle.getPosition() != TaffyPosition.STATIC;
+        FloatSize scrollbar = rootLayout.scrollbarSize();
+        FloatRect border = rootLayout.border();
+
+        // The padding box is the fallback positioning area of an indefinite axis.
+        float rootPaddingBoxWidth = rootLayout.size().width - border.left - border.right - scrollbar.width;
+        float rootPaddingBoxHeight = rootLayout.size().height - border.top - border.bottom - scrollbar.height;
+
+        boolean definiteWidth = availableSpace.width.isDefinite();
+        boolean definiteHeight = availableSpace.height.isDefinite();
+        float areaWidth = definiteWidth
+                          ? Math.max(0f, availableSpace.width.getValue() - scrollbar.width)
+                          : rootPaddingBoxWidth;
+        float areaHeight = definiteHeight
+                           ? Math.max(0f, availableSpace.height.getValue() - scrollbar.height)
+                           : rootPaddingBoxHeight;
+        float areaX = definiteWidth ? -rootLayout.location().x : border.left;
+        float areaY = definiteHeight ? -rootLayout.location().y : border.top;
+
+        for (NodeId child : tree.getChildren(root)) {
+            TaffyStyle childStyle = tree.getStyle(child);
+            TaffyPosition childPosition = childStyle.getPosition();
+            if (!childPosition.isOutOfFlow()) continue;
+            if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) continue;
+            // `fixed` boxes are never claimed by an ancestor's positioning pass; `absolute` boxes
+            // are claimed by the root itself unless the root is statically positioned.
+            boolean usesInitialContainingBlock =
+                childPosition == TaffyPosition.FIXED
+                || (childPosition == TaffyPosition.ABSOLUTE && !rootIsPositioned);
+            if (!usesInitialContainingBlock) continue;
+            positionAgainstInitialContainingBlock(child, direction, areaWidth, areaHeight, areaX, areaY);
+        }
+    }
+
+    /**
+     * Re-positions one out-of-flow child of the root against the initial containing block.
+     *
+     * <p>Sizing follows {@code layout_oof_box}: style size, min/max, aspect ratio and box sizing
+     * first, then an {@code auto} axis stretched by a pair of insets. A style-defined axis that the
+     * ICB resolves differently from the parent's pass re-lays the subtree out (the cache is cleared
+     * first, because a cache hit returns the output without storing a new child layout), including
+     * PA-05's definite second pass for percentage sizes in the subtree. An axis that only the
+     * content can size keeps the parent's measured size: re-measuring it against the wider
+     * viewport would need the full hoisting model (residual TS-05).</p>
+     */
+    private void positionAgainstInitialContainingBlock(NodeId child, TaffyDirection direction,
+                                                       float areaWidth, float areaHeight,
+                                                       float areaX, float areaY) {
+        TaffyStyle style = tree.getStyle(child);
+        Layout existing = tree.getUnroundedLayout(child);
+        if (existing == null) return;
+
+        FloatSize areaSize = new FloatSize(areaWidth, areaHeight);
+        OutOfFlowSizing sizing = resolveOutOfFlowSizing(style, areaWidth, areaHeight);
+        FloatSize knownDimensions = sizing.knownDimensions();
+        TaffySize<AvailableSpace> availableSpace = outOfFlowAvailableSpace(sizing, areaWidth, areaHeight);
+
+        // Re-lay the subtree out only when the ICB resolves one of its style-defined axes to a
+        // different size than the parent's pass did (e.g. a percentage size or an inset-stretched
+        // auto axis). An axis that only the content can size keeps the parent's measurement:
+        // re-measuring it against the wider viewport needs the full hoisting model (residual TS-05).
+        boolean widthIsDefinite = !Float.isNaN(knownDimensions.width);
+        boolean heightIsDefinite = !Float.isNaN(knownDimensions.height);
+        FloatSize expected = clampOutOfFlowSize(knownDimensions, sizing);
+        boolean widthDiffers = widthIsDefinite && expected.width != existing.size().width;
+        boolean heightDiffers = heightIsDefinite && expected.height != existing.size().height;
+
+        FloatSize finalSize = existing.size();
+        LayoutOutput relaidOutput = null;
+        if (widthDiffers || heightDiffers) {
+            // The parent's cache entry was computed against the root's padding box; it may return
+            // an output whose stored child layout no longer matches, so clear the subtree first.
+            clearCacheRecursively(child);
+            LayoutOutput measured = performChildLayout(child, knownDimensions, areaSize, availableSpace,
+                SizingMode.INHERENT_SIZE, TaffyLine.FALSE);
+            FloatSize measuredSize = new FloatSize(
+                widthIsDefinite ? knownDimensions.width : measured.size().width,
+                heightIsDefinite ? knownDimensions.height : measured.size().height
+            );
+            finalSize = clampOutOfFlowSize(measuredSize, sizing);
+            // PA-05's definite second pass: percentage sizes in the subtree resolve against the
+            // final size instead of the indefinite measurement pass.
+            relaidOutput = performDefiniteAbsoluteChildLayout(child, knownDimensions, finalSize, areaSize,
+                availableSpace, SizingMode.INHERENT_SIZE, measured);
+            finalSize = relaidOutput.size();
+        }
+
+        FloatRect resolvedMargin = resolveOutOfFlowMargins(sizing.margin(),
+            sizing.left(), sizing.right(), sizing.top(), sizing.bottom(), areaWidth, areaHeight, finalSize);
+        // A static-position axis keeps where the parent's pass put the box (that position is
+        // already relative to the root); its old margin is swapped for the ICB-resolved one.
+        float staticX = existing.location().x - existing.margin().left + resolvedMargin.left;
+        float staticY = existing.location().y - existing.margin().top + resolvedMargin.top;
+        FloatPoint offset = resolveOutOfFlowOffset(direction, areaWidth, areaHeight, finalSize,
+            sizing.left(), sizing.right(), sizing.top(), sizing.bottom(), resolvedMargin, staticX, staticY);
+        float x = (Float.isNaN(sizing.left()) && Float.isNaN(sizing.right())) ? offset.x : offset.x + areaX;
+        float y = (Float.isNaN(sizing.top()) && Float.isNaN(sizing.bottom())) ? offset.y : offset.y + areaY;
+
+        FloatSize contentSize = relaidOutput != null ? relaidOutput.contentSize() : existing.contentSize();
+        ScrollableOverflow scrollableOverflow = relaidOutput != null
+                                                ? relaidOutput.scrollableOverflow()
+                                                : existing.scrollableOverflow();
+        FloatSize scrollbarSize = new FloatSize(
+            style.getOverflow().y == Overflow.SCROLL ? style.getScrollbarWidth() : 0f,
+            style.getOverflow().x == Overflow.SCROLL ? style.getScrollbarWidth() : 0f
+        );
+        Layout layout = new Layout(
+            existing.order(),
+            new FloatPoint(x, y),
+            finalSize,
+            contentSize,
+            scrollableOverflow,
+            scrollbarSize,
+            sizing.border(),
+            sizing.padding(),
+            resolvedMargin
+        );
+        tree.setUnroundedLayout(child, layout);
+    }
+
+    /**
+     * Resolved style inputs shared by the root out-of-flow path and the root-level ICB
+     * positioning pass.
+     *
+     * @param margin            resolved margins; {@code auto} stays NaN until the free space is known
+     * @param padding           resolved padding
+     * @param border            resolved border
+     * @param paddingBorderSize the padding + border sum, the minimum size of the box
+     * @param minSize           resolved min size, at least {@code paddingBorderSize}
+     * @param maxSize           resolved max size
+     * @param knownDimensions   the size derived from the style size and insets; NaN in an axis the
+     *                          box's own layout algorithm has to measure
+     * @param left              resolved left inset (NaN for {@code auto})
+     * @param right             resolved right inset (NaN for {@code auto})
+     * @param top               resolved top inset (NaN for {@code auto})
+     * @param bottom            resolved bottom inset (NaN for {@code auto})
+     */
+    private record OutOfFlowSizing(
+        FloatRect margin,
+        FloatRect padding,
+        FloatRect border,
+        FloatSize paddingBorderSize,
+        FloatSize minSize,
+        FloatSize maxSize,
+        FloatSize knownDimensions,
+        float left,
+        float right,
+        float top,
+        float bottom
+    ) {}
+
+    /**
+     * Resolves the style inputs of an out-of-flow box against its positioning area (upstream
+     * {@code layout_oof_box}): sizes resolve against the area, a pair of insets stretches an
+     * {@code auto} axis, and min/max are applied with padding + border as the lower bound.
+     */
+    private OutOfFlowSizing resolveOutOfFlowSizing(TaffyStyle style, float areaWidth, float areaHeight) {
+        FloatSize areaSize = new FloatSize(areaWidth, areaHeight);
+
+        // Margins resolve against the positioning area width and keep `auto` as NaN until the
+        // free space is known.
+        FloatRect margin = Resolve.maybeResolveRectLpa(style.getMargin(), areaWidth);
+        FloatRect padding = Resolve.resolveRectOrZero(style.getPadding(), areaWidth);
+        FloatRect border = Resolve.resolveRectOrZero(style.getBorder(), areaWidth);
+        FloatSize paddingBorderSize = new FloatSize(
+            padding.left + padding.right + border.left + border.right,
+            padding.top + padding.bottom + border.top + border.bottom
+        );
+        FloatSize boxSizingAdjustment = style.getBoxSizing() == BoxSizing.CONTENT_BOX
+                                        ? paddingBorderSize
+                                        : new FloatSize(0f, 0f);
+
+        float aspectRatio = style.getAspectRatio();
+        FloatSize styleSize = Resolve.maybeApplyAspectRatio(
+            Resolve.maybeResolveSize(style.getSize(), areaSize), aspectRatio);
+        styleSize = maybeAdd(styleSize, boxSizingAdjustment);
+        FloatSize minSize = Resolve.maybeApplyAspectRatio(
+            Resolve.maybeResolveSize(style.getMinSize(), areaSize), aspectRatio);
+        // A box is never smaller than its padding + border (upstream's or/maybe_max pair).
+        minSize = maybeMax(paddingBorderSize, maybeAdd(minSize, boxSizingAdjustment));
+        FloatSize maxSize = Resolve.maybeApplyAspectRatio(
+            Resolve.maybeResolveSize(style.getMaxSize(), areaSize), aspectRatio);
+        maxSize = maybeAdd(maxSize, boxSizingAdjustment);
+        FloatSize knownDimensions = maybeClamp(styleSize, minSize, maxSize);
+
+        TaffyRect<LengthPercentageAuto> inset = style.getInset();
+        float left = inset.left.maybeResolve(areaWidth);
+        float right = inset.right.maybeResolve(areaWidth);
+        float top = inset.top.maybeResolve(areaHeight);
+        float bottom = inset.bottom.maybeResolve(areaHeight);
+
+        // An absolutely positioned replaced element's `auto` size is not stretched between its
+        // insets (upstream #1203).
+        if (!style.getItemIsReplaced()) {
+            if (Float.isNaN(knownDimensions.width) && !Float.isNaN(left) && !Float.isNaN(right)) {
+                float fillWidth = TaffyMath.maybeSub(TaffyMath.maybeSub(areaWidth, margin.left), margin.right)
+                                  - left - right;
+                knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(
+                    new FloatSize(Math.max(fillWidth, 0f), knownDimensions.height), aspectRatio), minSize, maxSize);
+            }
+            if (Float.isNaN(knownDimensions.height) && !Float.isNaN(top) && !Float.isNaN(bottom)) {
+                float fillHeight = TaffyMath.maybeSub(TaffyMath.maybeSub(areaHeight, margin.top), margin.bottom)
+                                   - top - bottom;
+                knownDimensions = maybeClamp(Resolve.maybeApplyAspectRatio(
+                    new FloatSize(knownDimensions.width, Math.max(fillHeight, 0f)), aspectRatio), minSize, maxSize);
+            }
+        }
+
+        return new OutOfFlowSizing(margin, padding, border, paddingBorderSize, minSize, maxSize,
+            knownDimensions, left, right, top, bottom);
+    }
+
+    /**
+     * The available space handed to an out-of-flow box's layout algorithm: its positioning area,
+     * clamped by the box's own min/max exactly like upstream {@code layout_oof_box}.
+     */
+    private static TaffySize<AvailableSpace> outOfFlowAvailableSpace(OutOfFlowSizing sizing,
+                                                                     float areaWidth, float areaHeight) {
+        return new TaffySize<>(
+            AvailableSpace.definite(TaffyMath.clamp(areaWidth, sizing.minSize().width, sizing.maxSize().width)),
+            AvailableSpace.definite(TaffyMath.clamp(areaHeight, sizing.minSize().height, sizing.maxSize().height))
+        );
+    }
+
+    /**
+     * Clamps a used size by the box's min/max and raises it to its padding + border size.
+     */
+    private static FloatSize clampOutOfFlowSize(FloatSize size, OutOfFlowSizing sizing) {
+        FloatSize clamped = new FloatSize(
+            TaffyMath.maybeClamp(size.width, sizing.minSize().width, sizing.maxSize().width),
+            TaffyMath.maybeClamp(size.height, sizing.minSize().height, sizing.maxSize().height)
+        );
+        return new FloatSize(
+            Math.max(clamped.width, sizing.paddingBorderSize().width),
+            Math.max(clamped.height, sizing.paddingBorderSize().height)
+        );
+    }
+
+    /**
+     * Resolves the margins of an out-of-flow box whose positioning area is known.
+     *
+     * <p>An {@code auto} margin only absorbs free space in an axis where both insets are set; in
+     * the other axis it resolves to zero (upstream #1202). The free space is measured against the
+     * positioning area, and only a margin whose own inset is set counts, exactly like upstream
+     * {@code layout_oof_box}.</p>
+     */
+    private static FloatRect resolveOutOfFlowMargins(FloatRect margin, float left, float right,
+                                                     float top, float bottom, float areaWidth,
+                                                     float areaHeight, FloatSize finalSize) {
+        float nonAutoX = (Float.isNaN(left) ? 0f : nanToZero(margin.left))
+                         + (Float.isNaN(right) ? 0f : nanToZero(margin.right));
+        float nonAutoY = (Float.isNaN(top) ? 0f : nanToZero(margin.top))
+                         + (Float.isNaN(bottom) ? 0f : nanToZero(margin.bottom));
+        float freeSpaceX = !Float.isNaN(left) && !Float.isNaN(right)
+                           ? areaWidth - left - right - finalSize.width - nonAutoX
+                           : 0f;
+        float freeSpaceY = !Float.isNaN(top) && !Float.isNaN(bottom)
+                           ? areaHeight - top - bottom - finalSize.height - nonAutoY
+                           : 0f;
+        int autoCountX = (Float.isNaN(margin.left) ? 1 : 0) + (Float.isNaN(margin.right) ? 1 : 0);
+        int autoCountY = (Float.isNaN(margin.top) ? 1 : 0) + (Float.isNaN(margin.bottom) ? 1 : 0);
+        float autoX = autoMarginSize(freeSpaceX, autoCountX);
+        float autoY = autoMarginSize(freeSpaceY, autoCountY);
+        return new FloatRect(
+            Float.isNaN(margin.left) ? autoX : margin.left,
+            Float.isNaN(margin.right) ? autoX : margin.right,
+            Float.isNaN(margin.top) ? autoY : margin.top,
+            Float.isNaN(margin.bottom) ? autoY : margin.bottom
+        );
+    }
+
+    /**
+     * The share of the free space an {@code auto} margin absorbs in one axis (upstream
+     * {@code layout_oof_box}): two auto margins split it, but resolve to zero when the box fills
+     * the axis (a negative share is allowed for a single auto margin).
+     */
+    private static float autoMarginSize(float freeSpace, int autoMarginCount) {
+        if (autoMarginCount == 0) return 0f;
+        if (autoMarginCount == 2 && freeSpace <= 0f) return 0f;
+        return freeSpace / autoMarginCount;
+    }
+
+    private static float nanToZero(float value) {
+        return Float.isNaN(value) ? 0f : value;
+    }
+
+    /**
+     * Resolves the location of an out-of-flow box inside its positioning area, in the area's own
+     * coordinate space (the caller adds the area offset).
+     *
+     * <p>When both inline insets are set the block's {@code direction} decides which one wins in
+     * an over-constrained axis ({@code right} in RTL, {@code left} in LTR); a single inset
+     * positions the box on that side; with no inset the box stays at {@code staticX}. In the block
+     * axis {@code top} always wins over {@code bottom} (upstream {@code layout_oof_box}, #906).</p>
+     */
+    private static FloatPoint resolveOutOfFlowOffset(TaffyDirection direction, float areaWidth,
+                                                     float areaHeight, FloatSize finalSize,
+                                                     float left, float right, float top, float bottom,
+                                                     FloatRect resolvedMargin, float staticX,
+                                                     float staticY) {
+        float x;
+        if (!Float.isNaN(left) && !Float.isNaN(right)) {
+            x = direction.isRtl()
+                ? areaWidth - finalSize.width - right - resolvedMargin.right
+                : left + resolvedMargin.left;
+        } else if (!Float.isNaN(left)) {
+            x = left + resolvedMargin.left;
+        } else if (!Float.isNaN(right)) {
+            x = areaWidth - finalSize.width - right - resolvedMargin.right;
+        } else {
+            x = staticX;
+        }
+        float y;
+        if (!Float.isNaN(top)) {
+            y = top + resolvedMargin.top;
+        } else if (!Float.isNaN(bottom)) {
+            y = areaHeight - finalSize.height - bottom - resolvedMargin.bottom;
+        } else {
+            y = staticY;
+        }
+        return new FloatPoint(x, y);
     }
 
     /**
