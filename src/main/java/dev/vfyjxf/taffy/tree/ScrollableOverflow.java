@@ -13,17 +13,14 @@ import dev.vfyjxf.taffy.geometry.FloatRect;
  * {@code 0..scrollWidth} (or {@code 0..scrollHeight}); a reversed axis has range
  * {@code -scrollWidth..0} (or {@code -scrollHeight..0}).</p>
  *
- * <p><b>1.2 status (T1/BL-03, minimal additive type):</b> this is the smallest useful skeleton of
- * upstream #1118/#1372 (SO-01). The rectangle is carried as a {@link FloatRect} (defensively
- * copied on the way in and out) plus explicit {@code reversedX}/{@code reversedY} flags instead of
- * the upstream packed sign-bit
+ * <p><b>1.2 status (T1/BL-03, P4):</b> this is the additive upstream #1118/#1372 (SO-01) type. The
+ * rectangle is carried as a {@link FloatRect} (defensively copied on the way in and out) plus
+ * explicit {@code reversedX}/{@code reversedY} flags instead of the upstream packed sign-bit
  * encoding, so {@link #left()}/{@link #right()}/{@link #top()}/{@link #bottom()} already return
- * physical (unpacked) edges. Per-side accessors, {@link #transpose()} and {@link #round()} (which
- * preserves {@code -0.0}) are provided for the future algorithm wiring, but <b>nothing in block,
- * flex or grid produces or consumes this value in 1.2</b>: {@link Layout#scrollableOverflow()}
- * defaults to {@link #ZERO}, and {@code scrollWidth()}/{@code scrollHeight()} still use the legacy
- * {@link Layout#contentSize()} formula. P4 adds the packed/serde semantics, the scroll-origin
- * clipping rules and the algorithm integration; 2.0 removes {@code contentSize}.</p>
+ * physical (unpacked) edges. Leaf, block, flex and grid layouts populate it, {@code RoundLayout}
+ * rounds it, and {@code scrollWidth()}/{@code scrollHeight()} derive the reachable range from it
+ * (reversed origins use {@code -left}/{@code -top}). The legacy {@link Layout#contentSize()}
+ * formula survives only as the hand-built-layout compatibility path and is removed in 2.0.</p>
  *
  * <p>Instances are defensive value objects: the constructor copies the supplied rectangle and
  * {@link #rect()} returns a copy, so mutating the returned {@link FloatRect} can never change this
