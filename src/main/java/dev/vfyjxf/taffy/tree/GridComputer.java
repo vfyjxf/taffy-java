@@ -2784,17 +2784,27 @@ public class GridComputer {
             return usedSize;
         }
 
-        /** Start offset of one track relative to the start of the first track. */
-        float trackStart(FloatList trackSizes, int trackIndex, float adjustedGap) {
-            int end = Math.min(trackIndex, trackSizes.size());
+        /**
+         * The start offset of every track relative to the start of the first track, including the
+         * surviving gutters before it ({@code trackCount + 1} entries; the last one is the end of the
+         * last track). Building the offsets once per axis turns the per-item start-offset lookup of
+         * the placement pass into O(1) instead of an accumulation over every preceding track.
+         *
+         * @see GridComputer#trackStartAt(float[], int)
+         */
+        float[] trackStarts(FloatList trackSizes, float adjustedGap) {
+            int trackCount = trackSizes.size();
+            float[] starts = new float[trackCount + 1];
             float offset = 0f;
-            for (int i = 0; i < end; i++) {
+            for (int i = 0; i < trackCount; i++) {
+                starts[i] = offset;
                 offset += trackSizes.getFloat(i);
                 if (hasGapAfter(i)) {
                     offset += adjustedGap;
                 }
             }
-            return offset;
+            starts[trackCount] = offset;
+            return starts;
         }
 
         /** Extent of a span of tracks, including the surviving gutters between them. */
@@ -5967,6 +5977,11 @@ public class GridComputer {
         float adjustedGapX = calculateAdjustedGap(containerStyle.getJustifyContent(), freeSpaceWidth, nonCollapsedColumns, gap.width);
         float adjustedGapY = calculateAdjustedGap(containerStyle.getAlignContent(), freeSpaceHeight, nonCollapsedRows, gap.height);
 
+        // Precompute the start offset of every track (with its surviving gutters) once per axis, so
+        // positioning an item is an index lookup rather than a sum over all preceding tracks.
+        float[] columnStarts = columnGeometry.trackStarts(columnSizes, adjustedGapX);
+        float[] rowStarts = rowGeometry.trackStarts(rowSizes, adjustedGapY);
+
         for (int i = 0; i < items.size(); i++) {
             GridItem item = items.get(i);
 
@@ -5996,15 +6011,13 @@ public class GridComputer {
 
             // Track position with content alignment offset. For RTL, column indices are logical
             // (counting from inline-start), so the x-coordinate is mirrored.
-            float trackY = contentBoxInset.top + contentOffsetY
-                           + rowGeometry.trackStart(rowSizes, row, adjustedGapY);
+            float trackY = contentBoxInset.top + contentOffsetY + trackStartAt(rowStarts, row);
             float trackX;
             if (isRtl) {
                 trackX = contentBoxInset.left + (innerWidth - contentOffsetX
-                         - columnGeometry.trackStart(columnSizes, col, adjustedGapX) - trackWidth);
+                         - trackStartAt(columnStarts, col) - trackWidth);
             } else {
-                trackX = contentBoxInset.left + contentOffsetX
-                         + columnGeometry.trackStart(columnSizes, col, adjustedGapX);
+                trackX = contentBoxInset.left + contentOffsetX + trackStartAt(columnStarts, col);
             }
 
             // The grid area is the item's positioning rectangle and, for a grid item, also its
@@ -7415,6 +7428,17 @@ public class GridComputer {
             return new FloatSize(size.height * aspectRatio, size.height);
         }
         return size;
+    }
+
+    /**
+     * O(1) lookup in the offset table built by
+     * {@link AxisGeometry#trackStarts(FloatList, float)}, clamped exactly like the accumulation it
+     * replaces: an index at or before the first track is 0, an index past the last track is the end
+     * of the last track.
+     */
+    private static float trackStartAt(float[] trackStarts, int trackIndex) {
+        if (trackIndex <= 0 || trackStarts.length == 0) return 0f;
+        return trackIndex >= trackStarts.length ? trackStarts[trackStarts.length - 1] : trackStarts[trackIndex];
     }
 
     private static FloatSize maybeAdd(FloatSize size, FloatSize addition) {
