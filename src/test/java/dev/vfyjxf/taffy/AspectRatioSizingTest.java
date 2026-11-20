@@ -5,7 +5,9 @@ import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignItems;
 import dev.vfyjxf.taffy.style.BoxSizing;
 import dev.vfyjxf.taffy.style.FlexDirection;
+import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TrackSizingFunction;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
@@ -260,6 +262,183 @@ public class AspectRatioSizingTest {
         Layout l = layout(tree, node);
         assertEquals(100f, l.size().width, EPSILON, "width");
         assertEquals(100f, l.size().height, EPSILON, "height");
+    }
+
+    @Test
+    @DisplayName("grid: a definite block size keeps its own max-height instead of transferring it")
+    void gridMaxHeightDoesNotCapTheInlineSize() {
+        // width: 100px; max-height: 25px; aspect-ratio: 1/1 in a 100px column: the max-height
+        // clamps the ratio-derived height only; the inline size stays 100px
+        // (WPT grid-aspect-ratio-022).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle grid = grid(100f, 100f);
+        grid.gridTemplateColumns.add(TrackSizingFunction.fixed(100f));
+        grid.gridTemplateRows.add(TrackSizingFunction.fixed(25f));
+        TaffyStyle item = sized(100f, Float.NaN);
+        item.aspectRatio = 1f;
+        item.maxSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(25f));
+        NodeId node = tree.newLeaf(item);
+        NodeId gridNode = tree.newWithChildren(grid, node);
+        NodeId rootNode = tree.newWithChildren(root(), gridNode);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        Layout l = layout(tree, node);
+        assertEquals(100f, l.size().width, EPSILON, "width");
+        assertEquals(25f, l.size().height, EPSILON, "height");
+    }
+
+    @Test
+    @DisplayName("grid: a definite inline size keeps its own min-width instead of transferring it")
+    void gridMinWidthDoesNotGrowTheBlockSize() {
+        // height: 100px; min-width: 25px; aspect-ratio: 1/10 in a 100px-tall row: the min-width
+        // does not transfer into a 1000px min-height; the ratio-derived 10px width is floored by
+        // the min-width instead (WPT grid-aspect-ratio-024).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle grid = grid(100f, 100f);
+        grid.gridTemplateColumns.add(TrackSizingFunction.fixed(25f));
+        grid.gridTemplateRows.add(TrackSizingFunction.fixed(100f));
+        TaffyStyle item = sized(Float.NaN, 100f);
+        item.aspectRatio = 0.1f;
+        item.minSize = new TaffySize<>(TaffyDimension.length(25f), TaffyDimension.AUTO);
+        NodeId node = tree.newLeaf(item);
+        NodeId gridNode = tree.newWithChildren(grid, node);
+        NodeId rootNode = tree.newWithChildren(root(), gridNode);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        Layout l = layout(tree, node);
+        assertEquals(25f, l.size().width, EPSILON, "width");
+        assertEquals(100f, l.size().height, EPSILON, "height");
+    }
+
+    @Test
+    @DisplayName("grid: a ratio-derived block size is floored by the used rows")
+    void gridRatioDerivedBlockSizeFloorsByRows() {
+        // width: 100px; aspect-ratio: 2/1 with a 100px row: the transferred 50px height is a
+        // preferred size, so the container is 100px tall (WPT grid-aspect-ratio-039).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle grid = grid(100f, Float.NaN);
+        grid.aspectRatio = 2f;
+        grid.gridTemplateColumns.add(TrackSizingFunction.fixed(100f));
+        grid.gridTemplateRows.add(TrackSizingFunction.fixed(100f));
+        NodeId node = tree.newLeaf(sized(100f, 100f));
+        NodeId gridNode = tree.newWithChildren(grid, node);
+        NodeId rootNode = tree.newWithChildren(root(), gridNode);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        Layout l = layout(tree, gridNode);
+        assertEquals(100f, l.size().width, EPSILON, "width");
+        assertEquals(100f, l.size().height, EPSILON, "height");
+    }
+
+    @Test
+    @DisplayName("grid: max-height still caps a ratio-derived block size grown by the rows")
+    void gridMaxHeightCapsRatioDerivedBlockSize() {
+        // width: 100px; aspect-ratio: 2/1; max-height: 100px with a 200px row: the grown 200px
+        // height is capped at 100px (WPT grid-aspect-ratio-042).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle grid = grid(100f, Float.NaN);
+        grid.aspectRatio = 2f;
+        grid.maxSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100f));
+        grid.gridTemplateColumns.add(TrackSizingFunction.fixed(100f));
+        grid.gridTemplateRows.add(TrackSizingFunction.fixed(200f));
+        NodeId node = tree.newLeaf(sized(100f, 200f));
+        NodeId gridNode = tree.newWithChildren(grid, node);
+        NodeId rootNode = tree.newWithChildren(root(), gridNode);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        Layout l = layout(tree, gridNode);
+        assertEquals(100f, l.size().width, EPSILON, "width");
+        assertEquals(100f, l.size().height, EPSILON, "height");
+    }
+
+    @Test
+    @DisplayName("grid: min-content in a min-size transfers from a definite block size")
+    void gridIntrinsicKeywordMinSizeTransfersFromRatio() {
+        // width: 1%; min-width: min-content; height: 50px; aspect-ratio: 2/1 in a 100px auto
+        // column: the min-content inline size is the transferred 100px, so the item is 100px wide
+        // rather than the percentage 1px (WPT grid-aspect-ratio-016).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle grid = grid(100f, 100f);
+        grid.gridTemplateColumns.add(TrackSizingFunction.auto());
+        grid.gridTemplateRows.add(TrackSizingFunction.fixed(50f));
+        TaffyStyle item = sized(Float.NaN, 50f);
+        item.size = new TaffySize<>(TaffyDimension.percent(0.01f), TaffyDimension.length(50f));
+        item.aspectRatio = 2f;
+        item.minSize = new TaffySize<>(TaffyDimension.minContent(), TaffyDimension.AUTO);
+        NodeId node = tree.newLeaf(item);
+        NodeId gridNode = tree.newWithChildren(grid, node);
+        NodeId rootNode = tree.newWithChildren(root(), gridNode);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        Layout l = layout(tree, node);
+        assertEquals(100f, l.size().width, EPSILON, "width");
+        assertEquals(50f, l.size().height, EPSILON, "height");
+    }
+
+    @Test
+    @DisplayName("block: a fit-content parent contributes the content, not the transferred width")
+    void blockFitContentParentFloorsTransferredContribution() {
+        // width: fit-content parent around a height: 100px; aspect-ratio: 1/2 box holding a
+        // 100px-wide child: the box contributes 100px, so the parent is 100px wide
+        // (WPT block-aspect-ratio-056).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle fitContent = block();
+        fitContent.size = new TaffySize<>(TaffyDimension.fitContent(), TaffyDimension.AUTO);
+        TaffyStyle item = sized(Float.NaN, 100f);
+        item.aspectRatio = 0.5f;
+        NodeId child = tree.newLeaf(sized(100f, Float.NaN));
+        NodeId node = tree.newWithChildren(item, child);
+        NodeId parent = tree.newWithChildren(fitContent, node);
+        NodeId rootNode = tree.newWithChildren(root(), parent);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        assertEquals(100f, layout(tree, parent).size().width, EPSILON, "parent width");
+        assertEquals(100f, layout(tree, node).size().width, EPSILON, "width");
+    }
+
+    @Test
+    @DisplayName("block: a definite min-height transfers into the min-content contribution")
+    void blockMinHeightTransfersIntoContribution() {
+        // width: min-content parent around an aspect-ratio: 1/1 box with min-height: 100% of the
+        // parent's 100px height and a 50px-wide child: the box contributes 100px, so the parent
+        // is 100px wide (WPT block-aspect-ratio-024).
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        TaffyStyle minContent = block();
+        minContent.size = new TaffySize<>(TaffyDimension.minContent(), TaffyDimension.length(100f));
+        TaffyStyle item = block();
+        item.aspectRatio = 1f;
+        item.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.percent(1f));
+        NodeId child = tree.newLeaf(sized(50f, 0f));
+        NodeId node = tree.newWithChildren(item, child);
+        NodeId parent = tree.newWithChildren(minContent, node);
+        NodeId rootNode = tree.newWithChildren(root(), parent);
+
+        tree.computeLayout(rootNode, TaffySize.maxContent());
+
+        assertEquals(100f, layout(tree, parent).size().width, EPSILON, "parent width");
+    }
+
+    private static TaffyStyle grid(float width, float height) {
+        TaffyStyle style = new TaffyStyle();
+        style.display = TaffyDisplay.GRID;
+        style.size = new TaffySize<>(
+            Float.isNaN(width) ? TaffyDimension.AUTO : TaffyDimension.length(width),
+            Float.isNaN(height) ? TaffyDimension.AUTO : TaffyDimension.length(height));
+        style.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
+        return style;
     }
 
 }

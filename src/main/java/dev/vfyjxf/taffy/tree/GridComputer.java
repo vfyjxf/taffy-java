@@ -33,6 +33,7 @@ import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
+import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.floats.FloatList;
@@ -360,8 +361,10 @@ public class GridComputer {
 
         /** The item's specified min size resolved against the grid area, floored at padding + border. */
         FloatSize resolveMinSize(FloatSize gridAreaSize) {
-            FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio),
+            FloatSize min = maybeAdd(maybeApplyAspectRatioToMinMax(
+                Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio, specifiedSizeForTransfer(gridAreaSize)),
                 boxSizingAdjustment(gridAreaSize));
+            min = resolveTransferredIntrinsicKeyword(gridAreaSize, rawMinSize, min, true);
             FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
             return new FloatSize(
                 Math.max(!Float.isNaN(min.width) ? min.width : 0f, paddingBorder.width),
@@ -380,7 +383,8 @@ public class GridComputer {
                 !Float.isNaN(gridAreaSize.width) ? gridAreaSize.width : 0f,
                 !Float.isNaN(gridAreaSize.height) ? gridAreaSize.height : 0f
             );
-            FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, basis), aspectRatio),
+            FloatSize min = maybeAdd(maybeApplyAspectRatioToMinMax(
+                Resolve.maybeResolveSize(rawMinSize, basis), aspectRatio, specifiedSizeForTransfer(basis)),
                 boxSizingAdjustment(gridAreaSize));
             FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
             return new FloatSize(
@@ -391,8 +395,70 @@ public class GridComputer {
 
         /** The item's specified max size resolved against the grid area. */
         FloatSize resolveMaxSize(FloatSize gridAreaSize) {
-            return maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMaxSize, gridAreaSize), aspectRatio),
+            FloatSize max = maybeAdd(maybeApplyAspectRatioToMinMax(
+                Resolve.maybeResolveSize(rawMaxSize, gridAreaSize), aspectRatio, specifiedSizeForTransfer(gridAreaSize)),
                 boxSizingAdjustment(gridAreaSize));
+            return resolveTransferredIntrinsicKeyword(gridAreaSize, rawMaxSize, max, false);
+        }
+
+        /**
+         * Resolve an intrinsic-sizing keyword ({@code min-content} / {@code max-content}) in one of
+         * the item's min/max sizes.
+         *
+         * <p>Such a keyword asks for the box's intrinsic size in that axis, which for a box with a
+         * preferred aspect ratio and a definite size in the other axis is the transferred size
+         * (css-sizing-4's transferred size suggestion). Chrome gives a 50px-tall, ratio-2/1 box a
+         * 100px min-content inline size, so {@code width: 1%; min-width: min-content} uses 100px
+         * rather than falling back to {@code auto} (WPT grid-aspect-ratio-016). Without a definite
+         * opposite axis the keyword keeps behaving like {@code auto}.</p>
+         */
+        private FloatSize resolveTransferredIntrinsicKeyword(FloatSize gridAreaSize,
+                                                            TaffySize<TaffyDimension> raw,
+                                                            FloatSize resolved,
+                                                            boolean isMin) {
+            if (raw == null || raw.width == null || raw.height == null) return resolved;
+            if (!Resolve.isTransferableAspectRatio(aspectRatio)) return resolved;
+            SizingKeyword widthKeyword = SizingKeyword.parse(raw.width);
+            SizingKeyword heightKeyword = SizingKeyword.parse(raw.height);
+            boolean widthIsIntrinsicKeyword = widthKeyword != null && isIntrinsicKeyword(widthKeyword);
+            boolean heightIsIntrinsicKeyword = heightKeyword != null && isIntrinsicKeyword(heightKeyword);
+            if (!widthIsIntrinsicKeyword && !heightIsIntrinsicKeyword) return resolved;
+
+            FloatSize preferred = resolveSpecifiedSize(gridAreaSize);
+            FloatSize adjustment = boxSizingAdjustment(gridAreaSize);
+            FloatSize out = resolved;
+            if (widthIsIntrinsicKeyword && !Float.isNaN(preferred.height)) {
+                float contentHeight = preferred.height - adjustment.height;
+                float transferred = contentHeight * aspectRatio + adjustment.width;
+                out = new FloatSize(combineTransferred(out.width, transferred, isMin), out.height);
+            }
+            if (heightIsIntrinsicKeyword && !Float.isNaN(preferred.width)) {
+                float contentWidth = preferred.width - adjustment.width;
+                float transferred = contentWidth / aspectRatio + adjustment.height;
+                out = new FloatSize(out.width, combineTransferred(out.height, transferred, isMin));
+            }
+            return out;
+        }
+
+        private static boolean isIntrinsicKeyword(SizingKeyword keyword) {
+            return keyword.isMinContent() || keyword.isMaxContent();
+        }
+
+        /** Minimum constraints widen the allowed range, maximum constraints narrow it. */
+        private static float combineTransferred(float specified, float transferred, boolean isMin) {
+            if (Float.isNaN(specified)) return transferred;
+            return isMin ? Math.max(specified, transferred) : Math.min(specified, transferred);
+        }
+
+        /**
+         * The item's preferred size used as the gate for min/max aspect-ratio transfer: the ratio
+         * only transfers min/max constraints into an axis whose preferred size is auto
+         * ({@link Resolve#maybeApplyAspectRatioToMinMax}). This is the raw, <em>untransferred</em>
+         * specified size, because the transfer direction depends on which axis the style actually
+         * defines.
+         */
+        private FloatSize specifiedSizeForTransfer(FloatSize gridAreaSize) {
+            return Resolve.maybeResolveSize(rawSize, gridAreaSize);
         }
 
         /** The item's margins resolved against the grid area's inline size. */
@@ -763,6 +829,16 @@ public class GridComputer {
                 Resolve.maybeResolveSize(style.getSize(), parentSize), aspectRatio), boxSizingAdjustment),
             minSize, maxSize)
                                      : new FloatSize(NaN, NaN);
+
+        // Whether this container's block size was newly derived from its definite inline size
+        // through the preferred ratio. A derived block size is a *preferred* size, not a
+        // specified one: css-sizing-4's automatic minimum size still floors it by the content
+        // (the used grid rows), so the container has to be re-grown after track sizing.
+        boolean heightDerivedByAspectRatio = Float.isNaN(
+            Resolve.maybeResolveSize(style.getSize(), parentSize).height)
+            && !Float.isNaN(clampedStyleSize.height)
+            && !style.getOverflow().x.isScrollContainer()
+            && !style.getOverflow().y.isScrollContainer();
 
         // Compute styled based known dimensions
         FloatSize minMaxDefiniteSize = new FloatSize(
@@ -1270,6 +1346,11 @@ public class GridComputer {
                                     ? styledBasedKnownDimensions.height
                                     : contentHeight + contentBoxInset.top + contentBoxInset.bottom;
 
+            if (heightDerivedByAspectRatio) {
+                containerHeight = Math.max(containerHeight,
+                    contentHeight + contentBoxInset.top + contentBoxInset.bottom);
+            }
+
             containerWidth = TaffyMath.clamp(containerWidth, minSize.width, maxSize.width);
             containerHeight = TaffyMath.clamp(containerHeight, minSize.height, maxSize.height);
             containerWidth = Math.max(containerWidth, paddingBorderSize.width);
@@ -1362,6 +1443,16 @@ public class GridComputer {
         float containerHeight = !Float.isNaN(styledBasedKnownDimensions.height)
                                 ? styledBasedKnownDimensions.height
                                 : contentHeight + contentBoxInset.top + contentBoxInset.bottom;
+
+        // css-sizing-4 automatic minimum size in the block axis: a block size transferred from a
+        // definite inline size is a preferred size, so the content (here the used rows) floors it.
+        // A 100px-wide, ratio-2/1 grid holding a 100px row is 100px tall rather than the
+        // transferred 50px (WPT grid-aspect-ratio-039); an explicit max-height still caps the
+        // grown size (grid-aspect-ratio-042).
+        if (heightDerivedByAspectRatio) {
+            containerHeight = Math.max(containerHeight,
+                contentHeight + contentBoxInset.top + contentBoxInset.bottom);
+        }
 
         // Apply min/max
         containerWidth = TaffyMath.clamp(containerWidth, minSize.width, maxSize.width);
@@ -7275,6 +7366,17 @@ public class GridComputer {
             }
         }
         return 0;
+    }
+
+    /**
+     * Min/max counterpart of {@link #maybeApplyAspectRatio(FloatSize, Float)}: transfers min/max
+     * constraints between the axes, but only into an axis whose preferred size is auto.
+     *
+     * @see Resolve#maybeApplyAspectRatioToMinMax(FloatSize, float, FloatSize)
+     */
+    private static FloatSize maybeApplyAspectRatioToMinMax(FloatSize value, Float aspectRatio, FloatSize preferredSize) {
+        if (aspectRatio == null || Float.isNaN(aspectRatio)) return value;
+        return Resolve.maybeApplyAspectRatioToMinMax(value, aspectRatio, preferredSize);
     }
 
     private static FloatSize maybeApplyAspectRatio(FloatSize size, Float aspectRatio) {

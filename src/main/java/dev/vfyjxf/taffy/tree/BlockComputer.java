@@ -1028,13 +1028,38 @@ public class BlockComputer {
             if (item.position.isOutOfFlow()) continue;
 
             FloatSize knownDimensions = maybeClamp(item.size, item.minSize, item.maxSize);
-            boolean hasKnownWidth = !Float.isNaN(knownDimensions.width);
             float marginSum = resolveMarginSumOrZero(
                 item.margin, availableWidth.isDefinite() ? availableWidth.getValue() : NaN);
+
+            // An inline size derived from the block size through a preferred aspect ratio is not a
+            // specified width: the item still contributes its content, floored by the transferred
+            // size (css-sizing-4's automatic minimum size). A 100px-tall, ratio-1/2 box holding a
+            // 100px-wide child therefore contributes 100px, not the transferred 50px
+            // (WPT block-aspect-ratio-056/057).
+            float transferredWidth = NaN;
+            if (!Float.isNaN(knownDimensions.width) && item.widthFromAspectRatio) {
+                transferredWidth = knownDimensions.width;
+                knownDimensions = new FloatSize(NaN, knownDimensions.height);
+            }
+            // A definite block-axis min-size transfers through the ratio to floor an auto inline
+            // size (css-sizing-4's transferred size suggestion): a ratio-1/1 box whose min-height
+            // resolves to 100px contributes at least 100px of inline size even though its content
+            // is narrower (WPT block-aspect-ratio-024).
+            if (item.widthIsAuto && !Float.isNaN(item.aspectRatio) && !Float.isNaN(item.minSize.height)) {
+                float transferredMinWidth = item.minSize.height * item.aspectRatio;
+                // NaN means "no transferred constraint yet", so it must not win a max().
+                transferredWidth = Float.isNaN(transferredWidth)
+                                   ? transferredMinWidth
+                                   : Math.max(transferredWidth, transferredMinWidth);
+            }
+            boolean hasKnownWidth = !Float.isNaN(knownDimensions.width);
 
             float width;
             if (hasKnownWidth) {
                 width = knownDimensions.width;
+                if (!Float.isNaN(transferredWidth)) {
+                    width = Math.max(width, transferredWidth);
+                }
             } else {
                 AvailableSpace adjustedAvailable = subtractFromAvailable(availableWidth, marginSum);
 
@@ -1073,6 +1098,9 @@ public class BlockComputer {
                     }
                 }
                 width = measuredWidth + marginSum;
+                if (!Float.isNaN(transferredWidth)) {
+                    width = Math.max(width, transferredWidth + marginSum);
+                }
             }
             width = Math.max(width, item.paddingBorderSum.width);
 
