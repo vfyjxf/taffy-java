@@ -94,7 +94,10 @@ snapshot.
 - **P4 (done, tag `p4-complete`)**: leaf/block/flex/grid populate
   `ScrollableOverflow`; `scrollWidth()`/`scrollHeight()` derive the reachable
   range from it (including reversed origins); `ScrollableOverflowUtil` shared by
-  all three algorithms; SO-04 gentest assertions. The legacy `contentSize`
+  all three algorithms; SO-04 gentest assertions (the committed generated tests are
+  intentionally not regenerated yet, so `:gentest:checkGenerated` with the frozen
+  fixture tree reports only those added assertions; `:gentest:checkWpt` has no
+  committed WPT output in this repository). The legacy `contentSize`
   component remains until 2.0 and keeps its 1.x RTL divergence for flex/grid.
 - **Next**: P5 (sizing keywords, safe/self alignment) then P6/P7.
 
