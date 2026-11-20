@@ -337,7 +337,7 @@ public class WptSizingAspectRatioTest_5 {
         s2.flexWrap = FlexWrap.NO_WRAP;
         s2.flexGrow = 0.0f;
         s2.flexShrink = 1.0f;
-        s2.flexBasis = TaffyDimension.AUTO;
+        s2.flexBasis = TaffyDimension.content();
         s2.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100.0f));
         s2.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.AUTO);
         s2.aspectRatio = 1.0f;
@@ -430,7 +430,7 @@ public class WptSizingAspectRatioTest_5 {
         s2.flexWrap = FlexWrap.NO_WRAP;
         s2.flexGrow = 0.0f;
         s2.flexShrink = 1.0f;
-        s2.flexBasis = TaffyDimension.AUTO;
+        s2.flexBasis = TaffyDimension.content();
         s2.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
         s2.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(0.0f));
         s2.aspectRatio = 1.0f;
@@ -523,8 +523,8 @@ public class WptSizingAspectRatioTest_5 {
         s2.flexWrap = FlexWrap.NO_WRAP;
         s2.flexGrow = 0.0f;
         s2.flexShrink = 1.0f;
-        s2.flexBasis = TaffyDimension.AUTO;
-        s2.size = new TaffySize<>(TaffyDimension.length(20.0f), TaffyDimension.length(100.0f));
+        s2.flexBasis = TaffyDimension.content();
+        s2.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(100.0f));
         s2.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.AUTO);
         s2.aspectRatio = 1.0f;
         s2.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
@@ -616,8 +616,8 @@ public class WptSizingAspectRatioTest_5 {
         s2.flexWrap = FlexWrap.NO_WRAP;
         s2.flexGrow = 0.0f;
         s2.flexShrink = 1.0f;
-        s2.flexBasis = TaffyDimension.AUTO;
-        s2.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(20.0f));
+        s2.flexBasis = TaffyDimension.content();
+        s2.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.AUTO);
         s2.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.length(0.0f));
         s2.aspectRatio = 1.0f;
         s2.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
@@ -1927,7 +1927,7 @@ public class WptSizingAspectRatioTest_5 {
         s2.flexWrap = FlexWrap.NO_WRAP;
         s2.flexGrow = 0.0f;
         s2.flexShrink = 0.0f;
-        s2.flexBasis = TaffyDimension.AUTO;
+        s2.flexBasis = TaffyDimension.content();
         s2.size = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
         s2.minSize = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(0.0f));
         s2.aspectRatio = 1.0f;

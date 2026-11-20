@@ -145,10 +145,14 @@ return (function(){
         computed[p] = 'auto';
       }
     }
-    // flex-basis: content -> convert to auto + clear main-axis dimension
-    const fb = (original['flex-basis'] || '').trim().toLowerCase();
+    // flex-basis: content means "size the item from its content" and makes the
+    // main-axis size property irrelevant (css-flexbox-1 9.2 step B). Keep the
+    // keyword in the computed map so the Java side can emit
+    // TaffyDimension.content(); the Java side also drops an inline main size,
+    // which this map cannot express because the raw style attribute wins.
+    const fb = (original['flex-basis'] || computed['flex-basis'] || '').trim().toLowerCase();
     if (fb === 'content') {
-      computed['flex-basis'] = 'auto';
+      computed['flex-basis'] = 'content';
       // Determine parent's flex-direction to know main axis
       if (parentIndex >= 0) {
         const pfd = (nodes[parentIndex].computed['flex-direction'] || 'row').toLowerCase();
