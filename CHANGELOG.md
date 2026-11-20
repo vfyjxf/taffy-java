@@ -63,6 +63,19 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   over the extended enums were migrated with `default` (Q2 source-break noted above);
   the wildcard `GridTemplateAreas` ambiguity is left to the consumer to qualify.
 
+### P11 performance additions
+
+- `TaffyTree.roundLayout(NodeId)`: additive public entry point for the layout
+  rounding pass that `computeLayout` runs when rounding is enabled.
+  `RoundLayout.roundLayout(TaffyTree, NodeId)` delegates to it, so both entry
+  points share one implementation. The pass fetches each node's `NodeData` once
+  (unrounded layout plus the child list now stored on `NodeData`) and keeps its
+  traversal stack in `long[]`/`float[]` arrays instead of `Object[]` frames
+  with boxed `Float` coordinates. Rounded values, visit order, listener
+  notifications and dirty-flag propagation are unchanged; the deprecated
+  four-argument `RoundLayout.roundLayout(tree, node, x, y)` overload keeps its
+  original recursive implementation and semantics.
+
 ### P7 additions (float, grid details, contain)
 
 - CSS `float`/`clear` (style fields, `FloatContext`/`BlockContext`/`BfcSlot`),

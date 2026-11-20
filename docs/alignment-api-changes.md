@@ -71,6 +71,20 @@ golden scenarios has an old/new row in `compat-golden/ALLOWLIST.md`.
 Unrelated, pre-existing deprecations (`TaffyTree.hasUnconsumedLayout`,
 `RoundLayout.roundLayout(tree,node,x,y)`) are not part of this alignment work.
 
+### 2.4 Additive APIs introduced by performance work (P11)
+
+These are additions only: no existing signature, behavior or computed value changes, so
+`checkApiCompatibility` (which only rejects removals/visibility drops) and existing source
+keep working. `JarCompatibilityChecker` cannot see additions, hence this table.
+
+| Added member | Since | Why | Consumer impact |
+| --- | --- | --- | --- |
+| `TaffyTree.roundLayout(NodeId)` | 1.2.0 | The rounding pass of `computeLayout` used to live entirely in `RoundLayout` and walk the tree through public accessors (three lookups per node); exposing it on the tree lets one pass read the unrounded layout and the child list from a single `NodeData` fetch. `RoundLayout.roundLayout(TaffyTree, NodeId)` now delegates here and remains the utility entry point. | None: additional method; layout values, visit order, listener notifications and dirty-flag propagation are unchanged. Useful only to callers that want to re-run the rounding pass explicitly. |
+
+The deprecated four-argument `RoundLayout.roundLayout(tree, node, cumulativeX, cumulativeY)`
+still has the original recursive implementation: a non-zero initial cumulative offset changes
+how the subtree is rounded, so it cannot delegate to `TaffyTree.roundLayout(NodeId)`.
+
 ## 3. Deprecations planned but not yet annotated
 
 These APIs are already superseded but intentionally still plain (no `@Deprecated`) to

@@ -1,5 +1,7 @@
 package dev.vfyjxf.taffy.tree;
 
+import dev.vfyjxf.taffy.geometry.FloatPoint;
+import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
@@ -61,9 +63,6 @@ public class TaffyTree {
     /** New-style measure functions (S1, 1.2 additive) storage by node ID. */
     private final Long2ObjectOpenHashMap<MeasureFunction> nodeMeasureFunctions;
 
-    /** Children of each node */
-    private final Long2ObjectOpenHashMap<List<NodeId>> children;
-
     /** Parent of each node */
     private final Long2ObjectOpenHashMap<NodeId> parents;
 
@@ -89,7 +88,6 @@ public class TaffyTree {
         this.nodeContextData = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeMeasureContexts = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeMeasureFunctions = new Long2ObjectOpenHashMap<>(capacity);
-        this.children = new Long2ObjectOpenHashMap<>(capacity);
         this.parents = new Long2ObjectOpenHashMap<>(capacity);
     }
 
@@ -151,7 +149,6 @@ public class TaffyTree {
         NodeId nodeId = new NodeId(id);
         
         nodes.put(id, new NodeData(style));
-        children.put(id, new ArrayList<>());
         parents.put(id, null);
         
         return nodeId;
@@ -168,7 +165,6 @@ public class TaffyTree {
         data.setHasContext(true);
         nodes.put(id, data);
         nodeContextData.put(id, measureFunc);
-        children.put(id, new ArrayList<>());
         parents.put(id, null);
         
         return nodeId;
@@ -196,7 +192,6 @@ public class TaffyTree {
         if (measureFunc != null) {
             nodeMeasureFunctions.put(id, measureFunc);
         }
-        children.put(id, new ArrayList<>());
         parents.put(id, null);
 
         return nodeId;
@@ -209,15 +204,15 @@ public class TaffyTree {
         long id = nodeIdCounter.getAndIncrement();
         NodeId nodeId = new NodeId(id);
         
-        nodes.put(id, new NodeData(style));
-        
-        List<NodeId> childList = new ArrayList<>(childNodes.length);
+        NodeData data = new NodeData(style);
+        nodes.put(id, data);
+
+        List<NodeId> childList = data.getChildren();
         for (NodeId child : childNodes) {
             parents.put(child.getId(), nodeId);
             childList.add(child);
         }
-        
-        children.put(id, childList);
+
         parents.put(id, null);
         
         return nodeId;
@@ -241,7 +236,6 @@ public class TaffyTree {
         nodeContextData.clear();
         nodeMeasureContexts.clear();
         nodeMeasureFunctions.clear();
-        children.clear();
         parents.clear();
     }
 
@@ -254,9 +248,9 @@ public class TaffyTree {
         // Remove from parent's children list
         NodeId parent = parents.get(key);
         if (parent != null) {
-            List<NodeId> parentChildren = children.get(parent.getId());
-            if (parentChildren != null) {
-                parentChildren.removeIf(n -> n.equals(node));
+            NodeData parentData = nodes.get(parent.getId());
+            if (parentData != null) {
+                parentData.getChildren().removeIf(n -> n.equals(node));
             }
             // CR-04 (#1085): the parent's cached layout was computed with this child present, so it
             // must be invalidated exactly like removeChildAtIndex does.
@@ -264,14 +258,13 @@ public class TaffyTree {
         }
         
         // Remove parent references from this node's children
-        List<NodeId> nodeChildren = children.get(key);
-        if (nodeChildren != null) {
-            for (NodeId child : nodeChildren) {
+        NodeData data = nodes.get(key);
+        if (data != null) {
+            for (NodeId child : data.getChildren()) {
                 parents.put(child.getId(), null);
             }
         }
-        
-        children.remove(key);
+
         parents.remove(key);
         nodes.remove(key);
         detailedGridInfos.remove(key);
@@ -411,16 +404,17 @@ public class TaffyTree {
     public void addChild(NodeId parent, NodeId child) {
         long parentKey = parent.getId();
         long childKey = child.getId();
-        
-        if (!nodes.containsKey(parentKey)) {
+
+        NodeData parentData = nodes.get(parentKey);
+        if (parentData == null) {
             throw TaffyException.invalidParentNode(parent);
         }
         if (!nodes.containsKey(childKey)) {
             throw TaffyException.invalidChildNode(child);
         }
-        
+
         parents.put(childKey, parent);
-        children.get(parentKey).add(child);
+        parentData.getChildren().add(child);
         markDirty(parent);
     }
 
@@ -429,7 +423,8 @@ public class TaffyTree {
      */
     public void insertChildAtIndex(NodeId parent, int childIndex, NodeId child) {
         long parentKey = parent.getId();
-        List<NodeId> parentChildren = children.get(parentKey);
+        NodeData parentData = nodes.get(parentKey);
+        List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
             throw TaffyException.invalidParentNode(parent);
@@ -450,7 +445,8 @@ public class TaffyTree {
      */
     public void setChildren(NodeId parent, NodeId... newChildren) {
         long parentKey = parent.getId();
-        List<NodeId> parentChildList = children.get(parentKey);
+        NodeData parentData = nodes.get(parentKey);
+        List<NodeId> parentChildList = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildList == null) {
             throw TaffyException.invalidParentNode(parent);
@@ -480,7 +476,8 @@ public class TaffyTree {
      * Removes a child from a parent.
      */
     public void removeChild(NodeId parent, NodeId child) {
-        List<NodeId> parentChildren = children.get(parent.getId());
+        NodeData parentData = nodes.get(parent.getId());
+        List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         if (parentChildren == null) {
             throw TaffyException.invalidParentNode(parent);
         }
@@ -503,7 +500,8 @@ public class TaffyTree {
      */
     public NodeId removeChildAtIndex(NodeId parent, int childIndex) {
         long parentKey = parent.getId();
-        List<NodeId> parentChildren = children.get(parentKey);
+        NodeData parentData = nodes.get(parentKey);
+        List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
             throw TaffyException.invalidParentNode(parent);
@@ -526,7 +524,8 @@ public class TaffyTree {
      */
     public NodeId getChildAtIndex(NodeId parent, int childIndex) {
         long parentKey = parent.getId();
-        List<NodeId> parentChildren = children.get(parentKey);
+        NodeData parentData = nodes.get(parentKey);
+        List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
             throw TaffyException.invalidParentNode(parent);
@@ -545,7 +544,8 @@ public class TaffyTree {
      */
     public NodeId replaceChildAtIndex(NodeId parent, int childIndex, NodeId newChild) {
         long parentKey = parent.getId();
-        List<NodeId> parentChildren = children.get(parentKey);
+        NodeData parentData = nodes.get(parentKey);
+        List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
             throw TaffyException.invalidParentNode(parent);
@@ -570,16 +570,16 @@ public class TaffyTree {
      * Returns the number of children of a node.
      */
     public int childCount(NodeId parent) {
-        List<NodeId> parentChildren = children.get(parent.getId());
-        return parentChildren != null ? parentChildren.size() : 0;
+        NodeData data = nodes.get(parent.getId());
+        return data != null ? data.getChildren().size() : 0;
     }
 
     /**
      * Returns an unmodifiable list of children.
      */
     public List<NodeId> getChildren(NodeId parent) {
-        List<NodeId> parentChildren = children.get(parent.getId());
-        return parentChildren != null ? parentChildren : Collections.emptyList();
+        NodeData data = nodes.get(parent.getId());
+        return data != null ? data.getChildren() : Collections.emptyList();
     }
 
     /**
@@ -587,7 +587,8 @@ public class TaffyTree {
      * Only for internal use where the caller guarantees not to modify the list.
      */
     List<NodeId> getChildrenInternal(NodeId parent) {
-        return children.get(parent.getId());
+        NodeData data = nodes.get(parent.getId());
+        return data != null ? data.getChildren() : null;
     }
 
     /**
@@ -796,20 +797,21 @@ public class TaffyTree {
     /**
      * Marks a node as having a new layout and propagates dirty flag up to ancestors.
      * Also notifies the layout change listener if one is set.
+     *
+     * <p>The caller supplies the {@link NodeData} it already fetched, so the layout-writing paths
+     * ({@link #setLayout}, {@link #setUnroundedLayout}, {@link #roundLayout}) look a node up once
+     * instead of twice.</p>
      */
-    private void markNodeLayoutUpdated(NodeId node, Layout oldLayout, Layout newLayout) {
-        NodeData data = nodes.get(node.getId());
-        if (data == null) return;
-        
+    private void markNodeLayoutUpdated(NodeData data, long nodeKey, Layout oldLayout, Layout newLayout) {
         data.markNewLayout();
-        
+
         // Notify the layout change listener
         if (layoutChangeListener != null) {
-            layoutChangeListener.onLayoutChanged(node, oldLayout, newLayout);
+            layoutChangeListener.onLayoutChanged(NodeId.of(nodeKey), oldLayout, newLayout);
         }
-        
+
         // Propagate dirty descendant flag up to ancestors
-        NodeId parent = parents.get(node.getId());
+        NodeId parent = parents.get(nodeKey);
         while (parent != null) {
             NodeData parentData = nodes.get(parent.getId());
             if (parentData == null) break;
@@ -832,7 +834,7 @@ public class TaffyTree {
             data.setFinalLayout(layout);
             // When rounding is enabled, mark after setting final layout
             if (useRounding) {
-                markNodeLayoutUpdated(node, oldLayout, layout);
+                markNodeLayoutUpdated(data, node.getId(), oldLayout, layout);
             }
         }
     }
@@ -847,7 +849,7 @@ public class TaffyTree {
             data.setUnroundedLayout(layout);
             // When rounding is disabled, mark after setting unrounded layout
             if (!useRounding) {
-                markNodeLayoutUpdated(node, oldLayout, layout);
+                markNodeLayoutUpdated(data, node.getId(), oldLayout, layout);
             }
         }
     }
@@ -1005,8 +1007,151 @@ public class TaffyTree {
 
         // Round layouts if enabled
         if (useRounding) {
-            RoundLayout.roundLayout(this, rootNode);
+            roundLayout(rootNode);
         }
+    }
+
+    // === Layout Rounding ===
+
+    /**
+     * Rounds the computed layout of a subtree to whole pixels.
+     *
+     * <p>This is the rounding pass of {@link #computeLayout(NodeId, TaffySize)} exposed as an
+     * additive 1.2 entry point; {@link RoundLayout#roundLayout(TaffyTree, NodeId)} delegates here.
+     * The pass iterates depth-first with an explicit primitive stack (no recursion) and pushes
+     * each node's children in reverse order, so nodes are visited in pre-order exactly like the
+     * original utility implementation.</p>
+     *
+     * <p>Every visited node is read and written through a single {@link NodeData} lookup: the
+     * unrounded layout is rounded in cumulative (absolute) coordinates and stored as the final
+     * layout, with the same side effects as {@link #setLayout(NodeId, Layout)} (new-layout flag,
+     * ancestor dirty-descendant propagation and {@link LayoutChangeListener} notification; the
+     * last two only while rounding is enabled). Positions are rounded in absolute coordinates and
+     * converted back to parent-relative offsets, and sizes use the rounded absolute edges, which
+     * is what keeps fractional children on their parent's rounded edges (BK-13 / upstream #1189).
+     * Unknown nodes and nodes without an unrounded layout are skipped together with their
+     * subtree.</p>
+     *
+     * @param node the root of the subtree to round
+     */
+    public void roundLayout(NodeId node) {
+        // The stack stores the node id plus the cumulative (absolute) offset of the node, which is
+        // all the traversal state needed. Primitive arrays keep the per-edge cost to two float
+        // writes instead of an Object[] / Float boxing allocation.
+        int initialCapacity = Math.max(16, nodes.size());
+        long[] nodeIds = new long[initialCapacity];
+        float[] cumulativeXs = new float[initialCapacity];
+        float[] cumulativeYs = new float[initialCapacity];
+        nodeIds[0] = node.getId();
+        int stackSize = 1;
+
+        while (stackSize > 0) {
+            stackSize--;
+            long nodeKey = nodeIds[stackSize];
+            float cumulativeX = cumulativeXs[stackSize];
+            float cumulativeY = cumulativeYs[stackSize];
+
+            NodeData data = nodes.get(nodeKey);
+            if (data == null) continue;
+            Layout layout = data.getUnroundedLayout();
+            if (layout == null) continue;
+
+            FloatPoint location = layout.location();
+            FloatSize size = layout.size();
+
+            float nodeX = !Float.isNaN(location.x) ? location.x : 0f;
+            float nodeY = !Float.isNaN(location.y) ? location.y : 0f;
+            float nodeWidth = !Float.isNaN(size.width) ? size.width : 0f;
+            float nodeHeight = !Float.isNaN(size.height) ? size.height : 0f;
+
+            float absoluteX = cumulativeX + nodeX;
+            float absoluteY = cumulativeY + nodeY;
+
+            // Round the position in cumulative (absolute) coordinates, then convert back to a
+            // parent-relative offset: round(abs) - round(parent_abs). Rounding the relative
+            // offset directly made children of a parent at a fractional offset overlap or leave
+            // 1px gaps (BK-13 / upstream #1189).
+            float roundedX = round(absoluteX) - round(cumulativeX);
+            float roundedY = round(absoluteY) - round(cumulativeY);
+
+            // Round size based on accumulated absolute position
+            float roundedWidth = round(absoluteX + nodeWidth) - round(absoluteX);
+            float roundedHeight = round(absoluteY + nodeHeight) - round(absoluteY);
+
+            FloatSize contentSize = layout.contentSize();
+            float contentWidth = (contentSize != null && !Float.isNaN(contentSize.width)) ? contentSize.width : 0f;
+            float contentHeight = (contentSize != null && !Float.isNaN(contentSize.height)) ? contentSize.height : 0f;
+            float roundedContentWidth = round(absoluteX + contentWidth) - round(absoluteX);
+            float roundedContentHeight = round(absoluteY + contentHeight) - round(absoluteY);
+
+            FloatSize scrollbarSize = layout.scrollbarSize();
+            float scrollbarWidth = (scrollbarSize != null && !Float.isNaN(scrollbarSize.width)) ? scrollbarSize.width : 0f;
+            float scrollbarHeight = (scrollbarSize != null && !Float.isNaN(scrollbarSize.height)) ? scrollbarSize.height : 0f;
+            FloatSize roundedScrollbarSize = new FloatSize(round(scrollbarWidth), round(scrollbarHeight));
+
+            Layout roundedLayout = new Layout(
+                layout.order(),
+                new FloatPoint(roundedX, roundedY),
+                new FloatSize(roundedWidth, roundedHeight),
+                new FloatSize(roundedContentWidth, roundedContentHeight),
+                roundOverflow(layout.scrollableOverflow()),
+                roundedScrollbarSize,
+                roundRect(layout.border()),
+                roundRect(layout.padding()),
+                roundRect(layout.margin())
+            );
+
+            Layout oldLayout = data.getFinalLayout();
+            data.setFinalLayout(roundedLayout);
+            if (useRounding) {
+                markNodeLayoutUpdated(data, nodeKey, oldLayout, roundedLayout);
+            }
+
+            List<NodeId> childList = data.getChildren();
+            int childCount = childList.size();
+            int requiredCapacity = stackSize + childCount;
+            if (requiredCapacity > nodeIds.length) {
+                int newCapacity = Math.max(requiredCapacity, nodeIds.length * 2);
+                nodeIds = Arrays.copyOf(nodeIds, newCapacity);
+                cumulativeXs = Arrays.copyOf(cumulativeXs, newCapacity);
+                cumulativeYs = Arrays.copyOf(cumulativeYs, newCapacity);
+            }
+            // Push in reverse so the first child is popped first (pre-order, same as the old
+            // reverse-push loop over the child list).
+            for (int i = childCount - 1; i >= 0; i--) {
+                nodeIds[stackSize] = childList.get(i).getId();
+                cumulativeXs[stackSize] = absoluteX;
+                cumulativeYs[stackSize] = absoluteY;
+                stackSize++;
+            }
+        }
+    }
+
+    /**
+     * Round to nearest integer, with ties rounding away from zero (matches Rust's f32::round()).
+     * This differs from Java's Math.round() which rounds ties towards positive infinity.
+     */
+    private static float round(float value) {
+        if (value >= 0) {
+            return (float) Math.floor(value + 0.5);
+        } else {
+            return (float) Math.ceil(value - 0.5);
+        }
+    }
+
+    /** Rounds each scrollable-overflow edge, keeping the reversed-origin flags (SO-01). */
+    private static ScrollableOverflow roundOverflow(ScrollableOverflow overflow) {
+        return overflow == null ? ScrollableOverflow.ZERO : overflow.round();
+    }
+
+    /** Rounds a rect with {@link #round(float)}, mapping NaN edges to zero. */
+    private static FloatRect roundRect(FloatRect rect) {
+        return new FloatRect(
+            !Float.isNaN(rect.left) ? round(rect.left) : 0f,
+            !Float.isNaN(rect.right) ? round(rect.right) : 0f,
+            !Float.isNaN(rect.top) ? round(rect.top) : 0f,
+            !Float.isNaN(rect.bottom) ? round(rect.bottom) : 0f
+        );
     }
 
     // === Utility Methods ===
