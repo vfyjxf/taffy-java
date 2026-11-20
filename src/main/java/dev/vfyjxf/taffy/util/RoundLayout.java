@@ -47,7 +47,13 @@ public final class RoundLayout {
     }
 
     /**
-     * Rounds the layout recursively starting from the given node.
+     * Rounds the layout recursively starting from the given node, treating the supplied
+     * {@code cumulativeX}/{@code cumulativeY} as the node's parent offset.
+     *
+     * <p>Compatibility-only overload: its semantics differ from {@link #roundLayout(TaffyTree,
+     * NodeId)} when the initial offset is non-zero, so it keeps the original recursive
+     * implementation instead of delegating to the optimized pass.</p>
+     *
      * @deprecated Use {@link #roundLayout(TaffyTree, NodeId)} instead.
      */
     @Deprecated
