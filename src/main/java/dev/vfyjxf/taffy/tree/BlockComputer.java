@@ -56,6 +56,19 @@ public class BlockComputer {
     private static final FloatSize ZERO_SIZE = new FloatSize(0f, 0f);
 
     /**
+     * A shared all-zero rectangle, used by an item whose padding or border resolves to zero on
+     * every side. Only ever read: item geometry is never mutated after {@link #generateItemList}.
+     */
+    private static final FloatRect ZERO_RECT = new FloatRect(0f, 0f, 0f, 0f);
+
+    /**
+     * A shared fully-unresolved size (both axes {@link Float#NaN}), used by an item whose
+     * size/min-size/max-size cannot resolve in any basis ({@code auto} or an intrinsic keyword).
+     * Only ever read.
+     */
+    private static final FloatSize NONE_SIZE = new FloatSize(NaN, NaN);
+
+    /**
      * The pass-scoped item-list cache; see {@link ItemListCache}.
      */
     private static final ThreadLocal<ItemListCache> ITEM_LIST_CACHE =
@@ -1059,10 +1072,11 @@ public class BlockComputer {
         // not, the list is valid for every inner size of this pass (a measurement at one known
         // size and the final layout at another), which is the common case.
         boolean innerSizeIndependent = true;
-        List<BlockItem> items = new ArrayList<>();
+        List<NodeId> children = tree.getChildren(node);
+        List<BlockItem> items = new ArrayList<>(children.size());
 
         int order = 0;
-        for (NodeId childId : tree.getChildren(node)) {
+        for (NodeId childId : children) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
@@ -1078,25 +1092,23 @@ public class BlockComputer {
             item.order = order++;
 
             Float aspectRatio = childStyle.getAspectRatio();
-            FloatRect itemPadding = Resolve.resolveRectOrZero(childStyle.getPadding(), nodeInnerSize.width);
-            FloatRect itemBorder = Resolve.resolveRectOrZero(childStyle.getBorder(), nodeInnerSize.width);
+            TaffySize<TaffyDimension> childSize = childStyle.getSize();
+            FloatRect itemPadding = resolveZeroOrRect(childStyle.getPadding(), nodeInnerSize.width);
+            FloatRect itemBorder = resolveZeroOrRect(childStyle.getBorder(), nodeInnerSize.width);
             item.padding = itemPadding;
             item.border = itemBorder;
-            item.paddingBorderSum = new FloatSize(
-                itemPadding.left + itemPadding.right + itemBorder.left + itemBorder.right,
-                itemPadding.top + itemPadding.bottom + itemBorder.top + itemBorder.bottom
-            );
+            item.paddingBorderSum = paddingBorderSum(itemPadding, itemBorder);
 
             FloatSize boxSizingAdj = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
                                      ? item.paddingBorderSum
                                      : ZERO_SIZE;
 
-            FloatSize size2 = Resolve.maybeResolveSize(childStyle.getSize(), nodeInnerSize);
+            FloatSize size2 = resolveSizeOrNone(childSize, nodeInnerSize);
             // The item's min/max constraints are not transferred through its aspect ratio; see
             // the note in compute() (only the used size transfers between axes).
-            FloatSize size1 = Resolve.maybeResolveSize(childStyle.getMinSize(), nodeInnerSize);
+            FloatSize size1 = resolveSizeOrNone(childStyle.getMinSize(), nodeInnerSize);
             item.minSize = addBoxSizingAdjustment(size1, boxSizingAdj);
-            FloatSize size = Resolve.maybeResolveSize(childStyle.getMaxSize(), nodeInnerSize);
+            FloatSize size = resolveSizeOrNone(childStyle.getMaxSize(), nodeInnerSize);
             item.maxSize = addBoxSizingAdjustment(size, boxSizingAdj);
             // Clamp the item's specified size in its own axis by its own min/max first, then
             // transfer the remaining definite axis through the ratio (css-sizing-4). Deriving
@@ -1114,8 +1126,8 @@ public class BlockComputer {
             item.position = childStyle.getPosition();
             item.inset = childStyle.getInset();
             item.margin = childStyle.getMargin();
-            item.heightStyle = childStyle.getSize().height;
-            item.widthStyle = childStyle.getSize().width;
+            item.heightStyle = childSize.height;
+            item.widthStyle = childSize.width;
             item.aspectRatio = aspectRatio;
             item.staticPosition = FloatPoint.ZERO;
             item.canBeCollapsedThrough = false;
@@ -1134,13 +1146,13 @@ public class BlockComputer {
             // direction bypasses that.
             TaffyDirection childDirection = childStyle.getDirection();
             item.direction = childDirection.isInherit() ? containerDirection : childDirection;
-            item.widthIsAuto = childStyle.getSize().width.isAuto();
+            item.widthIsAuto = childSize.width.isAuto();
             // For compressible replaced items a percentage width/max-width resolves against a
             // zero-width containing block in the min-content contribution, so the item contributes
             // at most this cap. Upstream #1401 (4aca4f49).
             if (item.isCompressibleReplaced) {
                 FloatSize resolvedWidth = Resolve.maybeResolveSize(
-                    childStyle.getSize(), new FloatSize(0f, NaN));
+                    childSize, new FloatSize(0f, NaN));
                 FloatSize resolvedMaxWidth = Resolve.maybeResolveSize(
                     childStyle.getMaxSize(), new FloatSize(0f, NaN));
                 float width = resolvedWidth.width;
@@ -2788,6 +2800,58 @@ public class BlockComputer {
     }
 
     // Helper methods
+
+    /**
+     * Resolves a padding/border rectangle against the container's content-box width, returning the
+     * shared {@link #ZERO_RECT} when every side is a zero length.
+     *
+     * <p>A style without padding or border stores four shared zero lengths, so this is the common
+     * case and avoids one rectangle per item per side set.</p>
+     */
+    private static FloatRect resolveZeroOrRect(TaffyRect<LengthPercentage> rect, float contextWidth) {
+        if (isZeroLength(rect.left) && isZeroLength(rect.right)
+            && isZeroLength(rect.top) && isZeroLength(rect.bottom)) {
+            return ZERO_RECT;
+        }
+        return Resolve.resolveRectOrZero(rect, contextWidth);
+    }
+
+    private static boolean isZeroLength(LengthPercentage value) {
+        return value == LengthPercentage.ZERO || (value.isLength() && value.getValue() == 0f);
+    }
+
+    /**
+     * Sums an item's resolved padding and border, returning the shared {@link #ZERO_SIZE} when the
+     * result is zero on both axes (the common case, and the result is only ever read).
+     */
+    private static FloatSize paddingBorderSum(FloatRect padding, FloatRect border) {
+        float width = padding.left + padding.right + border.left + border.right;
+        float height = padding.top + padding.bottom + border.top + border.bottom;
+        return width == 0f && height == 0f ? ZERO_SIZE : new FloatSize(width, height);
+    }
+
+    /**
+     * Resolves an item's size/min-size/max-size against the container's content box, returning the
+     * shared {@link #NONE_SIZE} when neither axis can resolve in any basis.
+     *
+     * <p>{@code auto} and the intrinsic sizing keywords resolve to {@link Float#NaN} regardless of
+     * the basis ({@link TaffyDimension#maybeResolve}), which is the common case for a block child
+     * without an explicit size constraint; a percentage or {@code calc()} expression does depend on
+     * the basis and always allocates.</p>
+     */
+    private static FloatSize resolveSizeOrNone(TaffySize<TaffyDimension> size, FloatSize parentSize) {
+        if (resolvesToNothing(size.width) && resolvesToNothing(size.height)) {
+            return NONE_SIZE;
+        }
+        return Resolve.maybeResolveSize(size, parentSize);
+    }
+
+    private static boolean resolvesToNothing(TaffyDimension dimension) {
+        return switch (dimension.getType()) {
+            case AUTO, MIN_CONTENT, MAX_CONTENT, FIT_CONTENT, STRETCH, CONTENT -> true;
+            case LENGTH, PERCENT, CALC -> false;
+        };
+    }
 
     /**
      * Adds a box-sizing adjustment to a resolved size.

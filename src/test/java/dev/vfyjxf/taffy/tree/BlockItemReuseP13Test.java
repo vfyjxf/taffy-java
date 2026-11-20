@@ -277,6 +277,33 @@ public class BlockItemReuseP13Test {
         assertEquals(12f, tree.getLayout(block).size().height, EPSILON);
     }
 
+    /**
+     * A zero-padding item shares the internal zero rectangle with every other zero-padding item;
+     * the reported padding of a padded sibling (and of the shared one) must stay intact across
+     * passes, i.e. nothing may write through the shared geometry.
+     */
+    @Test
+    void sharedZeroGeometryIsNotWrittenThrough() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+
+        TaffyStyle paddedStyle = sizedLeaf(50f, 10f);
+        paddedStyle.padding = TaffyRect.all(LengthPercentage.length(5f));
+        paddedStyle.border = TaffyRect.all(LengthPercentage.length(2f));
+        NodeId padded = tree.newLeaf(paddedStyle);
+        NodeId plain = tree.newLeaf(sizedLeaf(50f, 10f));
+        NodeId block = tree.newWithChildren(paddedBlock(), new NodeId[]{padded, plain});
+        NodeId root = tree.newWithChildren(flexColumn(300f), new NodeId[]{block});
+
+        for (int pass = 0; pass < 3; pass++) {
+            tree.computeLayout(root, layoutSize(300f));
+            assertEquals(5f, tree.getLayout(padded).padding().left, EPSILON);
+            assertEquals(2f, tree.getLayout(padded).border().left, EPSILON);
+            assertEquals(0f, tree.getLayout(plain).padding().left, EPSILON);
+            assertEquals(0f, tree.getLayout(plain).border().left, EPSILON);
+        }
+    }
+
     /** A measured leaf with an auto size is laid out from its measure callback. */
     @Test
     void measuredLeafIsNotAffectedByTheItemListCache() {
