@@ -79,6 +79,32 @@ public class TaffyTree {
      */
     private long directionEpoch = 1L;
 
+    /**
+     * Monotonic counter of completed layout requests, used to keep the Yoga-style "a recompute
+     * marks the tree" contract while a request reuses every stored layout.
+     *
+     * <p>{@link #hasNewLayout(NodeId)} reports a node as having a new layout while this counter is
+     * newer than the generation the node was acknowledged at ({@link
+     * NodeData#getAcknowledgedLayoutGeneration()}). A real layout pass still writes layouts and
+     * marks the written nodes directly; the counter is what lets the tree-clean fast path report
+     * every node without walking the subtree to set flags. It is not a dirty flag: it never
+     * invalidates a cache or a layout.</p>
+     */
+    private long layoutGeneration = 0L;
+
+    /**
+     * Number of layout passes actually executed by {@link #computeLayoutInternal}. Requests
+     * answered by the tree-clean fast path do not count. Package-private: an internal diagnostic
+     * for tests and profiling, not part of the public API.
+     */
+    private long layoutPassCount = 0L;
+
+    /**
+     * The request signature of the most recent successful layout pass, or {@code null} when the
+     * stored layouts may no longer answer an identical request; see {@link #tryReuseLastLayout}.
+     */
+    private LayoutMemo lastLayout = null;
+
     /** Whether to round layout values */
     private boolean useRounding = true;
     
@@ -104,20 +130,57 @@ public class TaffyTree {
         this.parents = new Long2ObjectOpenHashMap<>(capacity);
     }
 
+    /**
+     * The signature of one successful layout request: which root was laid out, into which
+     * available space, with which rounding configuration and which default measure callbacks.
+     *
+     * <p>Together with a warm root layout cache this is what {@link #tryReuseLastLayout} requires
+     * before it answers a request without computing anything. The available space is snapshotted
+     * per axis (the {@link AvailableSpace} type is immutable), so a caller that mutates the
+     * {@link TaffySize} it passed in cannot corrupt the recorded signature.</p>
+     */
+    private static final class LayoutMemo {
+        private final long rootId;
+        private final AvailableSpace availableWidth;
+        private final AvailableSpace availableHeight;
+        private final boolean rounding;
+        private final MeasureFunc defaultMeasureFunc;
+        private final MeasureFunction defaultMeasureFunction;
+
+        private LayoutMemo(long rootId, AvailableSpace availableWidth, AvailableSpace availableHeight,
+                           boolean rounding, MeasureFunc defaultMeasureFunc,
+                           MeasureFunction defaultMeasureFunction) {
+            this.rootId = rootId;
+            this.availableWidth = availableWidth;
+            this.availableHeight = availableHeight;
+            this.rounding = rounding;
+            this.defaultMeasureFunc = defaultMeasureFunc;
+            this.defaultMeasureFunction = defaultMeasureFunction;
+        }
+    }
+
     // === Configuration ===
 
     /**
      * Enable rounding of layout values. Rounding is enabled by default.
      */
     public void enableRounding() {
-        this.useRounding = true;
+        if (!this.useRounding) {
+            this.useRounding = true;
+            // Rounding is part of the layout request signature, but the memo is dropped eagerly so
+            // that no later change to the comparison can resurrect a stale signature.
+            invalidateLayoutReuse();
+        }
     }
 
     /**
      * Disable rounding of layout values.
      */
     public void disableRounding() {
-        this.useRounding = false;
+        if (this.useRounding) {
+            this.useRounding = false;
+            invalidateLayoutReuse();
+        }
     }
 
     /**
@@ -161,7 +224,11 @@ public class TaffyTree {
         long id = nodeIdCounter.getAndIncrement();
         NodeId nodeId = new NodeId(id);
         
-        nodes.put(id, new NodeData(style));
+        NodeData data = new NodeData(style);
+        // A node that has never been laid out has no layout to report as new; recording the
+        // current generation keeps hasNewLayout false until the next layout request.
+        data.acknowledgeLayoutGeneration(layoutGeneration);
+        nodes.put(id, data);
         parents.put(id, null);
         
         return nodeId;
@@ -176,6 +243,7 @@ public class TaffyTree {
         
         NodeData data = new NodeData(style);
         data.setHasContext(true);
+        data.acknowledgeLayoutGeneration(layoutGeneration);
         nodes.put(id, data);
         nodeContextData.put(id, measureFunc);
         parents.put(id, null);
@@ -201,6 +269,7 @@ public class TaffyTree {
 
         NodeData data = new NodeData(style);
         data.setHasContext(measureFunc != null);
+        data.acknowledgeLayoutGeneration(layoutGeneration);
         nodes.put(id, data);
         if (measureFunc != null) {
             nodeMeasureFunctions.put(id, measureFunc);
@@ -218,6 +287,7 @@ public class TaffyTree {
         NodeId nodeId = new NodeId(id);
         
         NodeData data = new NodeData(style);
+        data.acknowledgeLayoutGeneration(layoutGeneration);
         nodes.put(id, data);
 
         List<NodeId> childList = data.getChildren();
@@ -251,6 +321,8 @@ public class TaffyTree {
         nodeMeasureFunctions.clear();
         parents.clear();
         invalidateResolvedDirections();
+        // The memoized request signature names a root that no longer exists.
+        invalidateLayoutReuse();
     }
 
     /**
@@ -776,7 +848,11 @@ public class TaffyTree {
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
-        return data.hasNewLayout();
+        // A node is "new" when its layout was written since it was acknowledged, or when a layout
+        // request completed after that acknowledgement. The second term is what keeps the
+        // Yoga-style "a recompute marks the tree" behavior for the tree-clean fast path, which
+        // reuses every stored layout and therefore writes no per-node flag.
+        return data.hasNewLayout() || layoutGeneration > data.getAcknowledgedLayoutGeneration();
     }
 
     /**
@@ -804,7 +880,10 @@ public class TaffyTree {
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
-        return data.needsVisit();
+        // See hasNewLayout: a completed request marks the whole tree for the walker even when it
+        // reused every stored layout and therefore wrote no per-node flag.
+        return data.hasNewLayout() || data.hasDirtyDescendant()
+            || layoutGeneration > data.getAcknowledgedLayoutGeneration();
     }
 
     /**
@@ -816,6 +895,7 @@ public class TaffyTree {
             throw TaffyException.invalidInputNode(node);
         }
         data.acknowledgeLayout();
+        data.acknowledgeLayoutGeneration(layoutGeneration);
     }
 
     /**
@@ -830,6 +910,7 @@ public class TaffyTree {
             throw TaffyException.invalidInputNode(node);
         }
         data.acknowledgeLayout();
+        data.acknowledgeLayoutGeneration(layoutGeneration);
         data.clearDirtyDescendant();
     }
 
@@ -875,6 +956,10 @@ public class TaffyTree {
             if (useRounding) {
                 markNodeLayoutUpdated(data, node.getId(), oldLayout, layout);
             }
+            // An explicit layout write is invisible to the dirty flags (it does not clear any
+            // cache), so a reused layout request must not skip the write's effect: a rounding pass
+            // would re-derive this node's final layout from its unrounded layout.
+            invalidateLayoutReuse();
         }
     }
 
@@ -890,6 +975,9 @@ public class TaffyTree {
             if (!useRounding) {
                 markNodeLayoutUpdated(data, node.getId(), oldLayout, layout);
             }
+            // See setLayout: an explicitly written layout is invisible to the dirty flags, while a
+            // rounding pass would re-derive the final layout from it.
+            invalidateLayoutReuse();
         }
     }
 
@@ -919,6 +1007,9 @@ public class TaffyTree {
         NodeData data = nodes.get(node.getId());
         if (data != null) {
             data.getCache().store(inputs, output);
+            // An injected entry is not a dirty-flag mutation, so the request signature recorded by
+            // the last pass can no longer be trusted to describe the stored layouts.
+            invalidateLayoutReuse();
         }
     }
 
@@ -948,6 +1039,8 @@ public class TaffyTree {
         NodeData data = nodes.get(node.getId());
         if (data != null) {
             data.getCache().store(knownDimensions, availableSpace, runMode, output);
+            // See the LayoutInput overload: an injected entry bypasses the dirty flags.
+            invalidateLayoutReuse();
         }
     }
 
@@ -1035,12 +1128,23 @@ public class TaffyTree {
 
     /**
      * Shared implementation of the layout entry points.
+     *
+     * <p>An identical request on a tree whose last layout is still valid is answered without
+     * computing anything: see {@link #tryReuseLastLayout}. Every other request runs the layout
+     * algorithm and, when rounding is enabled, the rounding pass, and then records its signature
+     * for the next request.</p>
      */
     private void computeLayoutInternal(NodeId rootNode, TaffySize<AvailableSpace> availableSpace,
                                        MeasureFunc defaultMeasureFunc,
                                        MeasureFunction defaultMeasureFunction) {
-        // This will be implemented by the compute module
-        // For now, delegate to the LayoutComputer
+        // A completed request makes every not-yet-acknowledged node report a new layout, including
+        // the nodes a fast-path hit does not touch.
+        layoutGeneration++;
+
+        if (tryReuseLastLayout(rootNode, availableSpace, defaultMeasureFunc, defaultMeasureFunction)) {
+            return;
+        }
+
         LayoutComputer computer = new LayoutComputer(this, defaultMeasureFunc, defaultMeasureFunction);
         computer.computeLayout(rootNode, availableSpace);
 
@@ -1048,6 +1152,108 @@ public class TaffyTree {
         if (useRounding) {
             roundLayout(rootNode);
         }
+        layoutPassCount++;
+
+        lastLayout = new LayoutMemo(
+            rootNode.getId(),
+            availableSpace.width,
+            availableSpace.height,
+            useRounding,
+            defaultMeasureFunc,
+            defaultMeasureFunction
+        );
+    }
+
+    /**
+     * Whether an identical layout request is already answered by the stored layouts, in which case
+     * {@link #computeLayoutInternal} returns without running the layout algorithm or the rounding
+     * pass.
+     *
+     * <p>This is the tree-clean fast path. It exists because the layout cache already answers an
+     * unchanged request for the root, but only after the whole root entry point has run and only
+     * for the algorithm: the rounding pass still walks every node and re-derives (and re-allocates)
+     * every final layout on every request, even when nothing can have changed. Returning before
+     * both passes keeps the result identical, since a request that reaches this method would have
+     * been a pure root-cache hit followed by a rounding pass over unchanged values.</p>
+     *
+     * <p>The conditions are:</p>
+     * <ul>
+     *   <li>the last successful request had the same root, the same available space (per axis, by
+     *       type and value), the same rounding configuration and the same default measure
+     *       callbacks (by identity — a different default callback may measure differently);</li>
+     *   <li>the root's layout cache is not empty. "Cache is empty" is this tree's dirty sentinel
+     *       ({@link #isDirty}): every style, child-list or measure-callback change clears the cache
+     *       of the changed node and of all of its ancestors, so a warm root cache means no input
+     *       of this subtree changed since the pass that filled it. A mutation outside the laid-out
+     *       subtree leaves the root cache warm and correctly does not force a recompute, exactly
+     *       like the root-cache hit it replaces. A hidden root ({@code display: none}) stores no
+     *       cache entry by design, so its requests always take the normal path;</li>
+     *   <li>no {@link LayoutChangeListener} is installed. The listener contract reports every
+     *       layout write, so with a listener the request takes the normal path and the listener
+     *       keeps observing the same notifications it always did;</li>
+     *   <li>no explicit layout or cache write happened since the pass (those do not clear a cache,
+     *       so they invalidate the memo directly; see {@link #invalidateLayoutReuse}).</li>
+     * </ul>
+     *
+     * <p>{@code hasNewLayout}/{@code needsVisit} keep reporting the request for every node: the
+     * tree-level generation is bumped by the caller, so flag queries do not need a subtree walk.</p>
+     */
+    private boolean tryReuseLastLayout(NodeId rootNode, TaffySize<AvailableSpace> availableSpace,
+                                       MeasureFunc defaultMeasureFunc,
+                                       MeasureFunction defaultMeasureFunction) {
+        LayoutMemo memo = lastLayout;
+        if (memo == null || layoutChangeListener != null || rootNode == null || availableSpace == null) {
+            return false;
+        }
+        if (memo.rootId != rootNode.getId()
+            || memo.rounding != useRounding
+            || memo.defaultMeasureFunc != defaultMeasureFunc
+            || memo.defaultMeasureFunction != defaultMeasureFunction) {
+            return false;
+        }
+        if (!sameAvailableSpace(memo.availableWidth, availableSpace.width)
+            || !sameAvailableSpace(memo.availableHeight, availableSpace.height)) {
+            return false;
+        }
+
+        NodeData rootData = nodes.get(memo.rootId);
+        return rootData != null && !rootData.getCache().isEmpty();
+    }
+
+    /**
+     * Compares one axis of an available space with a recorded one. {@link AvailableSpace} instances
+     * are immutable, and the min/max-content constraints are shared singletons, so this is a
+     * reference compare in the common case.
+     */
+    private static boolean sameAvailableSpace(AvailableSpace recorded, AvailableSpace requested) {
+        if (recorded == requested) {
+            return true;
+        }
+        if (recorded == null || requested == null) {
+            return false;
+        }
+        return recorded.equals(requested);
+    }
+
+    /**
+     * Drops the recorded layout request signature, so the next {@link #computeLayout(NodeId,
+     * TaffySize)} runs a real layout pass.
+     *
+     * <p>Called by the writes that bypass the dirty flags (an explicit layout or cache write, a
+     * rounding toggle, {@link #clear()}) and by {@link LayoutComputer#computeLayout} for any layout
+     * pass, including one a caller started directly through a {@link LayoutComputer}.</p>
+     */
+    void invalidateLayoutReuse() {
+        lastLayout = null;
+    }
+
+    /**
+     * Number of layout passes actually executed, i.e. requests that were not answered by the
+     * tree-clean fast path. Package-private: an internal diagnostic used by tests and profiling,
+     * not part of the public API.
+     */
+    long layoutPassCount() {
+        return layoutPassCount;
     }
 
     // === Layout Rounding ===

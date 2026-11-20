@@ -66,6 +66,19 @@ public class NodeData {
     private boolean hasNewLayout;
 
     /**
+     * The tree-wide layout generation at which {@link #hasNewLayout} was last acknowledged.
+     *
+     * <p>A layout request that reuses the stored layouts (the tree-clean fast path in
+     * {@code TaffyTree}) writes nothing, so no node would flip its {@link #hasNewLayout} flag;
+     * {@code TaffyTree.hasNewLayout(NodeId)} therefore also treats a node as having a new layout
+     * while the tree's generation is newer than the generation this node was acknowledged at.
+     * That keeps the Yoga-style "a recompute marks the tree" contract in O(1) instead of walking
+     * the subtree to re-set the flags. Internal layout state only: not exposed through the public
+     * API.</p>
+     */
+    private long acknowledgedLayoutGeneration;
+
+    /**
      * Whether any descendant of this node has a new layout.
      * This allows walking the tree from root and early-returning when no dirty descendants exist.
      */
@@ -169,6 +182,25 @@ public class NodeData {
      */
     public boolean needsVisit() {
         return hasNewLayout || hasDirtyDescendant;
+    }
+
+    /**
+     * Returns the layout generation at which this node was last acknowledged.
+     *
+     * <p>Package-private: the generation is compared against the owning tree's current generation
+     * by {@code TaffyTree.hasNewLayout(NodeId)}; it is not part of the public API.</p>
+     */
+    long getAcknowledgedLayoutGeneration() {
+        return acknowledgedLayoutGeneration;
+    }
+
+    /**
+     * Records that this node has been acknowledged for the given layout generation.
+     *
+     * <p>Package-private: see {@link #getAcknowledgedLayoutGeneration()}.</p>
+     */
+    void acknowledgeLayoutGeneration(long generation) {
+        this.acknowledgedLayoutGeneration = generation;
     }
 
     /**
