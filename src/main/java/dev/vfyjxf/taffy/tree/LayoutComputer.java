@@ -127,13 +127,25 @@ public class LayoutComputer {
 
         TaffyStyle style = tree.getStyle(root);
 
+        // A definite available space is the space available to a box's *border box*, and the
+        // owner of that space subtracts the box's margins before handing it over (upstream #1234:
+        // LayoutInput.available_space's contract). A node never subtracts its own margins again.
+        // The root has no parent, so it subtracts its own margins here, for every display type
+        // (upstream compute_in_flow_root_layout; block roots previously did it only for the
+        // stretched width, and flex/grid roots not at all). Auto margins contribute zero.
+        FloatSize parentSizeOptions = availableSpaceToOptionSize(availableSpace);
+        FloatRect rootMargin = Resolve.resolveRectLpaOrZero(style.getMargin(), parentSizeOptions.width);
+        TaffySize<AvailableSpace> rootAvailableSpace = new TaffySize<>(
+            availableSpace.width.maybeSub(rootMargin.left + rootMargin.right).maybeMax(0f),
+            availableSpace.height.maybeSub(rootMargin.top + rootMargin.bottom).maybeMax(0f)
+        );
+
         // For block-level nodes (including flow-root, which uses the block layout algorithm),
         // compute known dimensions based on style and available space
         if (isBlockLayout(style.getDisplay())) {
-            FloatSize parentSize = availableSpaceToOptionSize(availableSpace);
+            FloatSize parentSize = parentSizeOptions;
 
             Float aspectRatio = style.getAspectRatio();
-            FloatRect margin = Resolve.resolveRectLpaOrZero(style.getMargin(), parentSize.width);
             FloatRect padding = Resolve.resolveRectOrZero(style.getPadding(), parentSize.width);
             FloatRect border = Resolve.resolveRectOrZero(style.getBorder(), parentSize.width);
 
@@ -167,9 +179,9 @@ public class LayoutComputer {
                 ? minSize.height : Float.NaN
             );
 
-            // Block nodes stretch width to available space
-            float availableWidth = availableSpace.width.isDefinite()
-                                   ? TaffyMath.maybeSub(availableSpace.width.getValue(), margin.left + margin.right)
+            // Block nodes stretch width to available space (already net of the root's margins)
+            float availableWidth = rootAvailableSpace.width.isDefinite()
+                                   ? rootAvailableSpace.width.getValue()
                                    : Float.NaN;
             FloatSize availableSpaceBasedSize = new FloatSize(availableWidth, Float.NaN);
 
@@ -182,12 +194,14 @@ public class LayoutComputer {
             knownDimensions = maybeMax(knownDimensions, paddingBorderSize);
         }
 
-        // Compute layout recursively
+        // Compute layout recursively. The root's own layout algorithm receives the available
+        // space net of the root's margins (upstream #1234), while parent_size keeps the raw
+        // viewport for percentage resolution, exactly like upstream.
         LayoutOutput output = performChildLayout(
             root,
             knownDimensions,
-            availableSpaceToOptionSize(availableSpace),
-            availableSpace,
+            parentSizeOptions,
+            rootAvailableSpace,
             SizingMode.INHERENT_SIZE,
             new TaffyLine<>(false, false)
         );
@@ -1010,7 +1024,6 @@ public class LayoutComputer {
 
         // Resolve style sizes
         Float aspectRatio = style.getAspectRatio();
-        FloatRect margin = Resolve.resolveRectLpaOrZero(style.getMargin(), parentSize.width);
         FloatRect padding = Resolve.resolveRectOrZero(style.getPadding(), parentSize.width);
         FloatRect border = Resolve.resolveRectOrZero(style.getBorder(), parentSize.width);
 
@@ -1141,20 +1154,18 @@ public class LayoutComputer {
             );
         }
 
-        // Compute available content space following Rust's logic:
-        // 1. Start with available_space
-        // 2. Subtract margin (leaf's own margin reduces its available space)
-        // 3. Override with known_dimensions or node_size if present
-        // 4. Subtract content_box_inset for definite values
-        float marginHorizontal = margin.left + margin.right;
-        float marginVertical = margin.top + margin.bottom;
-
+        // Compute the available space handed to the measure callback (upstream leaf.rs):
+        // 1. Start with available_space, which is already the space available to this node's
+        //    *border box*: the owner of that space (the parent algorithm, or the root pass) has
+        //    subtracted this node's margins, so the leaf must not subtract them again (X2/C17,
+        //    upstream #1234). Subtracting here would double-count a parent's deduction.
+        // 2. Override with known_dimensions or node_size if present
+        // 3. Subtract content_box_inset for definite values
         TaffySize<AvailableSpace> contentAvailableSpace = new TaffySize<>(
             computeLeafAvailableSpace(
                 availableSpace.width,
                 knownDimensions.width,
                 styledBasedKnownDimensions.width,
-                marginHorizontal,
                 contentBoxInsetSize.width,
                 minSize.width,
                 maxSize.width
@@ -1163,7 +1174,6 @@ public class LayoutComputer {
                 availableSpace.height,
                 knownDimensions.height,
                 styledBasedKnownDimensions.height,
-                marginVertical,
                 contentBoxInsetSize.height,
                 minSize.height,
                 maxSize.height
@@ -1460,17 +1470,17 @@ public class LayoutComputer {
     }
 
     /**
-     * Compute available space for leaf node measurement following Rust's logic:
-     * 1. Start with outer available space
-     * 2. Subtract margin (leaf's own margin reduces its available space)
-     * 3. Override with known_dimensions or node_size if present
-     * 4. Subtract content_box_inset and clamp for definite values
+     * Compute available space for leaf node measurement following upstream leaf.rs:
+     * 1. Start with the outer available space, which is already net of this node's margins
+     *    (the parent subtracts a child's margins; a node never subtracts its own - X2/C17,
+     *    upstream #1234)
+     * 2. Override with known_dimensions or node_size if present
+     * 3. Subtract content_box_inset and clamp for definite values
      */
     private AvailableSpace computeLeafAvailableSpace(
         AvailableSpace outerAvailable,
         float knownDimension,
         float nodeSize,
-        float margin,
         float contentBoxInset,
         float minSize,
         float maxSize) {
@@ -1482,9 +1492,6 @@ public class LayoutComputer {
         } else {
             result = outerAvailable;
         }
-        
-        // Subtract margin
-        result = result.maybeSub(margin);
         
         // Override with known dimension or node size if present
         if (!Float.isNaN(knownDimension)) {
