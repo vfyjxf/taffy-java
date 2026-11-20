@@ -1237,6 +1237,15 @@ public class BlockComputer {
                                  : Math.min(measured.width, availableWidth);
                 }
                 floatWidth = TaffyMath.clamp(floatWidth, item.minSize.width, item.maxSize.width);
+                // A definite block-axis min-size transfers through the ratio to floor the
+                // shrink-to-fit inline size (block-aspect-ratio-025: an empty ratio-1 float
+                // with min-height: 100px is 100px wide).
+                if (Float.isNaN(item.size.width) && !Float.isNaN(item.aspectRatio)
+                        && !Float.isNaN(item.minSize.height)) {
+                    floatWidth = TaffyMath.clamp(
+                        Math.max(floatWidth, item.minSize.height * item.aspectRatio),
+                        item.minSize.width, item.maxSize.width);
+                }
 
                 LayoutOutput itemOutput = layoutComputer.performChildLayout(
                     item.nodeId,
@@ -1340,8 +1349,22 @@ public class BlockComputer {
                                          ? item.size.width
                                          : Math.max(slot.stretchWidth(), minAutoWidth);
                     desiredWidth = TaffyMath.clamp(desiredWidth, item.minSize.width, item.maxSize.width);
+                    // A box whose block size is derived from its inline size through an aspect
+                    // ratio must fit vertically in the slot too: otherwise a 100px-tall
+                    // ratio-1 box would be placed in a 50px-tall float slot and overlap the
+                    // float that starts below it (WPT floats-aspect-ratio-001). Retry with the
+                    // next segment, where the strip is narrower and the derived height smaller.
+                    float desiredHeight = !Float.isNaN(item.size.height)
+                                          ? item.size.height
+                                          : (!Float.isNaN(item.aspectRatio) && !Float.isNaN(desiredWidth)
+                                             ? desiredWidth / item.aspectRatio : NaN);
                     if (!slot.hasSegment()
-                        || desiredWidth <= slot.borderWidth() + FloatContext.FIT_TOLERANCE) {
+                        || (desiredWidth <= slot.borderWidth() + FloatContext.FIT_TOLERANCE
+                            && (Float.isNaN(desiredHeight)
+                                || desiredHeight <= slot.height() + FloatContext.FIT_TOLERANCE))) {
+                        break;
+                    }
+                    if (slot.segmentId() == FloatContext.NO_REGION) {
                         break;
                     }
                     afterSegment = slot.segmentId();
@@ -2011,10 +2034,15 @@ public class BlockComputer {
             boolean autoMinimumSizeApplies =
                 !childStyle.getOverflow().x.isScrollContainer()
                 && !childStyle.getOverflow().y.isScrollContainer();
+            // "auto" is the initial min-* value and enables the floor; an explicit
+            // min-width/min-height (even 0) disables it. Resolving to NaN cannot tell the two
+            // apart, so the style's own axis value is what decides (WPT abspos-017/018).
+            boolean autoMinWidth = childStyle.getMinSize().width.isAuto();
+            boolean autoMinHeight = childStyle.getMinSize().height.isAuto();
             FloatSize knownWithFloor = knownDimensions;
             if (widthFromAspectRatio
                 && autoMinimumSizeApplies
-                && (Float.isNaN(minSz.width) || minSz.width <= paddingBorderSum.width)) {
+                && autoMinWidth) {
                 FloatSize minContent = layoutComputer.measureChildSize(
                     item.nodeId,
                     new FloatSize(NaN, NaN),
@@ -2031,7 +2059,7 @@ public class BlockComputer {
             }
             if (heightFromAspectRatio
                 && autoMinimumSizeApplies
-                && (Float.isNaN(minSz.height) || minSz.height <= paddingBorderSum.height)) {
+                && autoMinHeight) {
                 FloatSize contentHeightProbe = layoutComputer.measureChildSize(
                     item.nodeId,
                     new FloatSize(!Float.isNaN(knownWithFloor.width) ? knownWithFloor.width : NaN, NaN),
