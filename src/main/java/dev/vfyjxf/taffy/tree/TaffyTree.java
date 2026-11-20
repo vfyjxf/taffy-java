@@ -32,11 +32,59 @@ public class TaffyTree {
 
     private static final int DEFAULT_CAPACITY = 16;
 
+    /**
+     * The largest node id that still fits an array index, keeping the JVM's array header slots
+     * free. Ids beyond it are stored in {@link #spilledNodes}; they are unreachable in practice
+     * (2^31 nodes of {@link NodeData} would need hundreds of gigabytes) but the storage must not
+     * corrupt a tree if it ever happens.
+     */
+    private static final int MAX_SLOTS = Integer.MAX_VALUE - 8;
+
+    /**
+     * Growth admission for the dense node array: it may never hold more than
+     * {@code max(SPARSE_SLACK, liveNodes * SPARSE_RATIO)} slots.
+     *
+     * <p>Node ids are never reused (a {@link NodeId} is a public handle for the tree's whole
+     * lifetime), so a tree that keeps creating and dropping nodes - or one that is {@link #clear()
+     * cleared} and rebuilt - advances the id counter while its live set stays small. Indexing by
+     * raw id would then size the storage by the number of nodes ever created rather than by the
+     * number of live ones. Past this limit a new id is stored in {@link #spilledNodes} instead,
+     * which degrades that lookup to the hash lookup this class had before: correct in every case,
+     * and the array resumes absorbing ids as soon as the live count makes them cheap again.</p>
+     */
+    private static final int SPARSE_SLACK = 1024;
+    private static final int SPARSE_RATIO = 8;
+
+    /** Arrays below this length are never shrunk, so a small tree cannot thrash on resize. */
+    private static final int SHRINK_FLOOR = DEFAULT_CAPACITY * 4;
+
     /** Counter for generating unique node IDs */
     private final AtomicLong nodeIdCounter = new AtomicLong(0);
 
-    /** NodeData storage by node ID - using fastutil for faster primitive key access */
-    private final Long2ObjectOpenHashMap<NodeData> nodes;
+    /**
+     * Node data indexed directly by node id.
+     *
+     * <p>The id counter starts at zero and only increments, so a node id doubles as a dense array
+     * index and every node lookup is one bounds check plus one array load instead of a hash
+     * lookup. Ids removed from the tree leave a {@code null} slot, which reads exactly like the
+     * missing map entry it replaces, so an id whose node was removed (or an id that was never
+     * allocated) is reported as absent by every caller, including the ones that turn absence into
+     * {@code invalidInputNode}/{@code invalidParentNode}/{@code invalidChildNode}.</p>
+     *
+     * <p>Ids the array cannot cover cheaply live in {@link #spilledNodes}; see
+     * {@link #SPARSE_SLACK}. Slots above the highest live id are trimmed back (and the array
+     * shrunk) when the top of the tree is removed, so a burst of removals returns the memory.</p>
+     */
+    private NodeData[] nodes;
+
+    /** Number of live nodes in the tree: array slots plus {@link #spilledNodes} entries. */
+    private int nodeCount;
+
+    /** One past the highest array slot that holds a live node. */
+    private int topSlot;
+
+    /** Node data whose id the arrays cannot cover cheaply; {@code null} while nothing spilled. */
+    private Long2ObjectOpenHashMap<NodeData> spilledNodes;
 
     /**
      * Detailed grid information recorded by the most recent completed grid layout of a node
@@ -63,8 +111,21 @@ public class TaffyTree {
     /** New-style measure functions (S1, 1.2 additive) storage by node ID. */
     private final Long2ObjectOpenHashMap<MeasureFunction> nodeMeasureFunctions;
 
-    /** Parent of each node */
-    private final Long2ObjectOpenHashMap<NodeId> parents;
+    /**
+     * Parent of each node, indexed like {@link #nodes}.
+     *
+     * <p>Stored as references rather than as a {@code long[]} of ids so that
+     * {@link #getParent(NodeId)} returns the {@link NodeId} the link was recorded with instead of
+     * allocating a record per call - the block algorithm asks for the parent of every child and the
+     * direction resolver asks once per node - and so that a node without a parent is simply a
+     * {@code null} slot, the same value the map returned. The array holds 8-byte references either
+     * way. Slots are grown, shrunk, cleared and spilled together with {@link #nodes}, and every id
+     * the array holds a node for also has its parent slot in the array.</p>
+     */
+    private NodeId[] parents;
+
+    /** Parents whose id the arrays cannot cover cheaply; {@code null} while nothing spilled. */
+    private Long2ObjectOpenHashMap<NodeId> spilledParents;
 
     /**
      * Monotonic stamp for the memoized resolved directions stored on {@link NodeData}.
@@ -122,12 +183,263 @@ public class TaffyTree {
      * Creates a new TaffyTree with the specified initial capacity.
      */
     public TaffyTree(int capacity) {
-        this.nodes = new Long2ObjectOpenHashMap<>(capacity);
+        if (capacity < 0) {
+            throw new IllegalArgumentException("Negative initial capacity: " + capacity);
+        }
+        this.nodes = new NodeData[Math.max(DEFAULT_CAPACITY, capacity)];
         this.detailedGridInfos = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeContextData = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeMeasureContexts = new Long2ObjectOpenHashMap<>(capacity);
         this.nodeMeasureFunctions = new Long2ObjectOpenHashMap<>(capacity);
-        this.parents = new Long2ObjectOpenHashMap<>(capacity);
+        this.parents = new NodeId[Math.max(DEFAULT_CAPACITY, capacity)];
+    }
+
+    // === Dense node storage (node id doubles as the array index) ===
+
+    /**
+     * Returns the data stored for a node id, or {@code null} when this tree has no such node.
+     *
+     * <p>Ids in {@code [0, nodes.length)} are one array load; an id outside that window is either
+     * spilled (see {@link #SPARSE_SLACK}) or unknown, so the spilled map is consulted before
+     * reporting absence. Removed ids leave a {@code null} slot and therefore read as absent, like
+     * the map entry they replaced.</p>
+     */
+    private NodeData nodeAt(long id) {
+        if (id >= 0 && id < nodes.length) {
+            return nodes[(int) id];
+        }
+        return spilledNodes != null ? spilledNodes.get(id) : null;
+    }
+
+    /**
+     * Returns the recorded parent of an id, or {@code null} when it has none (or the id is not a
+     * node of this tree). Reads the same slots as {@link #nodeAt}, with the same spill fallback.
+     */
+    private NodeId parentOf(long id) {
+        if (id >= 0 && id < parents.length) {
+            return parents[(int) id];
+        }
+        return spilledParents != null ? spilledParents.get(id) : null;
+    }
+
+    /** Records (or clears, with {@code null}) the parent link of a child id. */
+    private void setParent(long childId, NodeId parent) {
+        if (childId >= 0 && childId < parents.length) {
+            parents[(int) childId] = parent;
+            return;
+        }
+        if (parent != null) {
+            Long2ObjectOpenHashMap<NodeId> spilled = spilledParents;
+            if (spilled == null) {
+                spilled = new Long2ObjectOpenHashMap<>();
+                spilledParents = spilled;
+            }
+            spilled.put(childId, parent);
+        } else if (spilledParents != null) {
+            spilledParents.remove(childId);
+            if (spilledParents.isEmpty()) {
+                spilledParents = null;
+            }
+        }
+    }
+
+    /** Drops the parent link of an id; an unknown or spilled-away id is a no-op. */
+    private void clearParent(long id) {
+        if (id >= 0 && id < parents.length) {
+            parents[(int) id] = null;
+            return;
+        }
+        if (spilledParents != null) {
+            spilledParents.remove(id);
+            if (spilledParents.isEmpty()) {
+                spilledParents = null;
+            }
+        }
+    }
+
+    /** Returns whether this tree holds a node with the given id. */
+    private boolean hasNode(long id) {
+        if (id >= 0 && id < nodes.length) {
+            return nodes[(int) id] != null;
+        }
+        return spilledNodes != null && spilledNodes.containsKey(id);
+    }
+
+    /**
+     * Stores the data of a freshly created node under its id.
+     *
+     * <p>Ids arrive in increasing order, so an id past the array end usually means "grow by one
+     * node". Growth is admitted only while the array stays bounded relative to the live node count
+     * ({@link #maxArraySlots()}); an id that would make the array disproportionately sparse is
+     * spilled instead of grown, which keeps a churning or repeatedly cleared tree from sizing its
+     * storage by the number of nodes it ever created.</p>
+     */
+    private void putNode(long id, NodeData data) {
+        if (id < nodes.length) {
+            if (nodes[(int) id] == null) {
+                nodeCount++;
+            }
+            nodes[(int) id] = data;
+            if ((int) id >= topSlot) {
+                topSlot = (int) id + 1;
+            }
+            return;
+        }
+        int needed = id <= MAX_SLOTS ? (int) id + 1 : -1;
+        if (needed > nodes.length && needed <= maxArraySlots()) {
+            growTo(needed);
+            if (id < nodes.length) {
+                putNode(id, data);
+                return;
+            }
+        }
+        putSpilledNode(id, data);
+    }
+
+    /** Removes the node stored under an id; a removed or unknown id is a no-op. */
+    private void dropNode(long id) {
+        if (id >= 0 && id < nodes.length) {
+            int slot = (int) id;
+            if (nodes[slot] != null) {
+                nodes[slot] = null;
+                parents[slot] = null;
+                nodeCount--;
+                if (slot + 1 == topSlot) {
+                    trimTopSlots();
+                }
+            }
+            return;
+        }
+        if (spilledNodes != null && spilledNodes.remove(id) != null) {
+            nodeCount--;
+            if (spilledNodes.isEmpty()) {
+                spilledNodes = null;
+            }
+        }
+        if (spilledParents != null) {
+            spilledParents.remove(id);
+            if (spilledParents.isEmpty()) {
+                spilledParents = null;
+            }
+        }
+    }
+
+    /**
+     * Drops every node, resetting the arrays to their initial size so the memory is returned.
+     */
+    private void clearNodeStorage() {
+        nodes = new NodeData[DEFAULT_CAPACITY];
+        parents = new NodeId[DEFAULT_CAPACITY];
+        nodeCount = 0;
+        topSlot = 0;
+        spilledNodes = null;
+        spilledParents = null;
+    }
+
+    /**
+     * The largest array length growth may pick given the current live node count: eight slots per
+     * live node, with {@link #SPARSE_SLACK} slots of slack for small or just-cleared trees.
+     */
+    private int maxArraySlots() {
+        int slots = nodeCount > (MAX_SLOTS / SPARSE_RATIO) ? MAX_SLOTS : nodeCount * SPARSE_RATIO;
+        return Math.max(SPARSE_SLACK, slots);
+    }
+
+    /**
+     * Grows the array to at least {@code minSlots} (and by at least 1.5x), then pulls back every
+     * spilled id that now fits: an id is only ever spilled because it was above the array end, so
+     * growth can cover spilled entries and the spilled map stays a temporary overflow.
+     */
+    private void growTo(int minSlots) {
+        int oldSlots = nodes.length;
+        int newSlots = Math.min(MAX_SLOTS, Math.max(minSlots, oldSlots + (oldSlots >> 1) + 1));
+        if (newSlots <= oldSlots) {
+            return;
+        }
+        nodes = Arrays.copyOf(nodes, newSlots);
+        parents = Arrays.copyOf(parents, newSlots);
+        migrateSpilled(oldSlots, newSlots);
+    }
+
+    /**
+     * Moves the spilled node data and parent links whose ids now fit into the array slots
+     * {@code [fromSlot, toSlot)}.
+     */
+    private void migrateSpilled(int fromSlot, int toSlot) {
+        if (spilledNodes != null && !spilledNodes.isEmpty()) {
+            long[] migrated = new long[spilledNodes.size()];
+            int migratedCount = 0;
+            for (long id : spilledNodes.keySet()) {
+                if (id >= fromSlot && id < toSlot) {
+                    migrated[migratedCount++] = id;
+                }
+            }
+            for (int i = 0; i < migratedCount; i++) {
+                int slot = (int) migrated[i];
+                nodes[slot] = spilledNodes.remove(migrated[i]);
+                if (slot >= topSlot) {
+                    topSlot = slot + 1;
+                }
+            }
+            if (spilledNodes.isEmpty()) {
+                spilledNodes = null;
+            }
+        }
+        if (spilledParents != null && !spilledParents.isEmpty()) {
+            long[] migrated = new long[spilledParents.size()];
+            int migratedCount = 0;
+            for (long id : spilledParents.keySet()) {
+                if (id >= fromSlot && id < toSlot) {
+                    migrated[migratedCount++] = id;
+                }
+            }
+            for (int i = 0; i < migratedCount; i++) {
+                parents[(int) migrated[i]] = spilledParents.remove(migrated[i]);
+            }
+            if (spilledParents.isEmpty()) {
+                spilledParents = null;
+            }
+        }
+    }
+
+    /** Stores node data for an id the dense array does not cover. */
+    private void putSpilledNode(long id, NodeData data) {
+        Long2ObjectOpenHashMap<NodeData> spilled = spilledNodes;
+        if (spilled == null) {
+            spilled = new Long2ObjectOpenHashMap<>();
+            spilledNodes = spilled;
+        }
+        if (spilled.put(id, data) == null) {
+            nodeCount++;
+        }
+    }
+
+    /**
+     * Lowers {@link #topSlot} over the empty slots left by removing the highest live node, then
+     * shrinks the array when the live prefix is much smaller than its length. Removals from the
+     * middle of the id space leave holes (an id is a stable handle, so slots cannot be recycled),
+     * but any burst of removals that reaches the top of the tree returns its memory here.
+     */
+    private void trimTopSlots() {
+        int slot = topSlot;
+        while (slot > 0 && nodes[slot - 1] == null) {
+            slot--;
+        }
+        topSlot = slot;
+        shrinkIfSparse();
+    }
+
+    /** Shrinks the array to about 1.5x the live prefix when it is less than a quarter full. */
+    private void shrinkIfSparse() {
+        int slots = nodes.length;
+        if (slots <= SHRINK_FLOOR || topSlot > (slots >> 2)) {
+            return;
+        }
+        int target = Math.max(SHRINK_FLOOR, topSlot + (topSlot >> 1) + 1);
+        if (target < slots) {
+            nodes = Arrays.copyOf(nodes, target);
+            parents = Arrays.copyOf(parents, target);
+        }
     }
 
     /**
@@ -228,8 +540,8 @@ public class TaffyTree {
         // A node that has never been laid out has no layout to report as new; recording the
         // current generation keeps hasNewLayout false until the next layout request.
         data.acknowledgeLayoutGeneration(layoutGeneration);
-        nodes.put(id, data);
-        parents.put(id, null);
+        putNode(id, data);
+        setParent(id, null);
         
         return nodeId;
     }
@@ -244,9 +556,9 @@ public class TaffyTree {
         NodeData data = new NodeData(style);
         data.setHasContext(true);
         data.acknowledgeLayoutGeneration(layoutGeneration);
-        nodes.put(id, data);
+        putNode(id, data);
         nodeContextData.put(id, measureFunc);
-        parents.put(id, null);
+        setParent(id, null);
         
         return nodeId;
     }
@@ -270,11 +582,11 @@ public class TaffyTree {
         NodeData data = new NodeData(style);
         data.setHasContext(measureFunc != null);
         data.acknowledgeLayoutGeneration(layoutGeneration);
-        nodes.put(id, data);
+        putNode(id, data);
         if (measureFunc != null) {
             nodeMeasureFunctions.put(id, measureFunc);
         }
-        parents.put(id, null);
+        setParent(id, null);
 
         return nodeId;
     }
@@ -288,15 +600,15 @@ public class TaffyTree {
         
         NodeData data = new NodeData(style);
         data.acknowledgeLayoutGeneration(layoutGeneration);
-        nodes.put(id, data);
+        putNode(id, data);
 
         List<NodeId> childList = data.getChildren();
         for (NodeId child : childNodes) {
-            parents.put(child.getId(), nodeId);
+            setParent(child.getId(), nodeId);
             childList.add(child);
         }
 
-        parents.put(id, null);
+        setParent(id, null);
         
         return nodeId;
     }
@@ -314,12 +626,11 @@ public class TaffyTree {
      * Drops all nodes in the tree.
      */
     public void clear() {
-        nodes.clear();
+        clearNodeStorage();
         detailedGridInfos.clear();
         nodeContextData.clear();
         nodeMeasureContexts.clear();
         nodeMeasureFunctions.clear();
-        parents.clear();
         invalidateResolvedDirections();
         // The memoized request signature names a root that no longer exists.
         invalidateLayoutReuse();
@@ -332,9 +643,9 @@ public class TaffyTree {
         long key = node.getId();
         
         // Remove from parent's children list
-        NodeId parent = parents.get(key);
+        NodeId parent = parentOf(key);
         if (parent != null) {
-            NodeData parentData = nodes.get(parent.getId());
+            NodeData parentData = nodeAt(parent.getId());
             if (parentData != null) {
                 parentData.getChildren().removeIf(n -> n.equals(node));
             }
@@ -344,15 +655,15 @@ public class TaffyTree {
         }
         
         // Remove parent references from this node's children
-        NodeData data = nodes.get(key);
+        NodeData data = nodeAt(key);
         if (data != null) {
             for (NodeId child : data.getChildren()) {
-                parents.put(child.getId(), null);
+                setParent(child.getId(), null);
             }
         }
 
-        parents.remove(key);
-        nodes.remove(key);
+        clearParent(key);
+        dropNode(key);
         detailedGridInfos.remove(key);
         nodeContextData.remove(key);
         nodeMeasureContexts.remove(key);
@@ -372,7 +683,7 @@ public class TaffyTree {
      */
     public void setMeasureFunc(NodeId node, MeasureFunc measureFunc) {
         long key = node.getId();
-        NodeData data = nodes.get(key);
+        NodeData data = nodeAt(key);
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -419,7 +730,7 @@ public class TaffyTree {
      */
     public void setMeasureFunction(NodeId node, MeasureFunction measureFunc) {
         long key = node.getId();
-        NodeData data = nodes.get(key);
+        NodeData data = nodeAt(key);
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -460,7 +771,7 @@ public class TaffyTree {
      */
     public void setNodeContext(NodeId node, Object context) {
         long key = node.getId();
-        if (!nodes.containsKey(key)) {
+        if (!hasNode(key)) {
             throw TaffyException.invalidInputNode(node);
         }
 
@@ -492,15 +803,15 @@ public class TaffyTree {
         long parentKey = parent.getId();
         long childKey = child.getId();
 
-        NodeData parentData = nodes.get(parentKey);
+        NodeData parentData = nodeAt(parentKey);
         if (parentData == null) {
             throw TaffyException.invalidParentNode(parent);
         }
-        if (!nodes.containsKey(childKey)) {
+        if (!hasNode(childKey)) {
             throw TaffyException.invalidChildNode(child);
         }
 
-        parents.put(childKey, parent);
+        setParent(childKey, parent);
         parentData.getChildren().add(child);
         invalidateResolvedDirections();
         markDirty(parent);
@@ -511,7 +822,7 @@ public class TaffyTree {
      */
     public void insertChildAtIndex(NodeId parent, int childIndex, NodeId child) {
         long parentKey = parent.getId();
-        NodeData parentData = nodes.get(parentKey);
+        NodeData parentData = nodeAt(parentKey);
         List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
@@ -523,7 +834,7 @@ public class TaffyTree {
             throw TaffyException.childIndexOutOfBounds(parent, childIndex, childCount);
         }
         
-        parents.put(child.getId(), parent);
+        setParent(child.getId(), parent);
         parentChildren.add(childIndex, child);
         invalidateResolvedDirections();
         markDirty(parent);
@@ -534,7 +845,7 @@ public class TaffyTree {
      */
     public void setChildren(NodeId parent, NodeId... newChildren) {
         long parentKey = parent.getId();
-        NodeData parentData = nodes.get(parentKey);
+        NodeData parentData = nodeAt(parentKey);
         List<NodeId> parentChildList = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildList == null) {
@@ -543,17 +854,17 @@ public class TaffyTree {
         
         // Remove parent reference from current children
         for (NodeId child : parentChildList) {
-            parents.put(child.getId(), null);
+            setParent(child.getId(), null);
         }
         
         // Set new children
         for (NodeId child : newChildren) {
             // Remove from previous parent if any
-            NodeId previousParent = parents.get(child.getId());
+            NodeId previousParent = parentOf(child.getId());
             if (previousParent != null) {
                 removeChild(previousParent, child);
             }
-            parents.put(child.getId(), parent);
+            setParent(child.getId(), parent);
         }
         
         parentChildList.clear();
@@ -566,7 +877,7 @@ public class TaffyTree {
      * Removes a child from a parent.
      */
     public void removeChild(NodeId parent, NodeId child) {
-        NodeData parentData = nodes.get(parent.getId());
+        NodeData parentData = nodeAt(parent.getId());
         List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         if (parentChildren == null) {
             throw TaffyException.invalidParentNode(parent);
@@ -590,7 +901,7 @@ public class TaffyTree {
      */
     public NodeId removeChildAtIndex(NodeId parent, int childIndex) {
         long parentKey = parent.getId();
-        NodeData parentData = nodes.get(parentKey);
+        NodeData parentData = nodeAt(parentKey);
         List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
@@ -603,7 +914,7 @@ public class TaffyTree {
         }
         
         NodeId child = parentChildren.remove(childIndex);
-        parents.put(child.getId(), null);
+        setParent(child.getId(), null);
         invalidateResolvedDirections();
         markDirty(parent);
         
@@ -615,7 +926,7 @@ public class TaffyTree {
      */
     public NodeId getChildAtIndex(NodeId parent, int childIndex) {
         long parentKey = parent.getId();
-        NodeData parentData = nodes.get(parentKey);
+        NodeData parentData = nodeAt(parentKey);
         List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
@@ -635,7 +946,7 @@ public class TaffyTree {
      */
     public NodeId replaceChildAtIndex(NodeId parent, int childIndex, NodeId newChild) {
         long parentKey = parent.getId();
-        NodeData parentData = nodes.get(parentKey);
+        NodeData parentData = nodeAt(parentKey);
         List<NodeId> parentChildren = parentData != null ? parentData.getChildren() : null;
         
         if (parentChildren == null) {
@@ -647,9 +958,9 @@ public class TaffyTree {
             throw TaffyException.childIndexOutOfBounds(parent, childIndex, childCount);
         }
         
-        parents.put(newChild.getId(), parent);
+        setParent(newChild.getId(), parent);
         NodeId oldChild = parentChildren.set(childIndex, newChild);
-        parents.put(oldChild.getId(), null);
+        setParent(oldChild.getId(), null);
         invalidateResolvedDirections();
         markDirty(parent);
         
@@ -662,7 +973,7 @@ public class TaffyTree {
      * Returns the number of children of a node.
      */
     public int childCount(NodeId parent) {
-        NodeData data = nodes.get(parent.getId());
+        NodeData data = nodeAt(parent.getId());
         return data != null ? data.getChildren().size() : 0;
     }
 
@@ -670,7 +981,7 @@ public class TaffyTree {
      * Returns an unmodifiable list of children.
      */
     public List<NodeId> getChildren(NodeId parent) {
-        NodeData data = nodes.get(parent.getId());
+        NodeData data = nodeAt(parent.getId());
         return data != null ? data.getChildren() : Collections.emptyList();
     }
 
@@ -679,7 +990,7 @@ public class TaffyTree {
      * Only for internal use where the caller guarantees not to modify the list.
      */
     List<NodeId> getChildrenInternal(NodeId parent) {
-        NodeData data = nodes.get(parent.getId());
+        NodeData data = nodeAt(parent.getId());
         return data != null ? data.getChildren() : null;
     }
 
@@ -687,14 +998,14 @@ public class TaffyTree {
      * Returns the total number of nodes in the tree.
      */
     public int totalNodeCount() {
-        return nodes.size();
+        return nodeCount;
     }
 
     /**
      * Returns the parent of a node.
      */
     public NodeId getParent(NodeId child) {
-        return parents.get(child.getId());
+        return parentOf(child.getId());
     }
 
     /** Returns the epoch that stamps currently valid {@link NodeData} resolved directions. */
@@ -720,7 +1031,7 @@ public class TaffyTree {
      * Sets the style of a node.
      */
     public void setStyle(NodeId node, TaffyStyle style) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -734,7 +1045,7 @@ public class TaffyTree {
      * Gets the style of a node.
      */
     public TaffyStyle getStyle(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -747,7 +1058,7 @@ public class TaffyTree {
      * Returns the layout of a node.
      */
     public Layout getLayout(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             return null;
         }
@@ -758,7 +1069,7 @@ public class TaffyTree {
      * Returns the unrounded layout of a node.
      */
     public Layout getUnroundedLayout(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         return data != null ? data.getUnroundedLayout() : null;
     }
 
@@ -792,7 +1103,7 @@ public class TaffyTree {
      * @return the detailed grid info, or {@code null} as described above
      */
     public DetailedGridInfo getDetailedGridInfo(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             return null;
         }
@@ -812,7 +1123,7 @@ public class TaffyTree {
      */
     void setDetailedGridInfo(NodeId node, DetailedGridInfo detailedGridInfo) {
         long key = node.getId();
-        if (!nodes.containsKey(key)) {
+        if (!hasNode(key)) {
             return;
         }
         if (detailedGridInfo == null) {
@@ -844,7 +1155,7 @@ public class TaffyTree {
      * Similar to Yoga's hasNewLayout - set after layout computation, cleared by acknowledgeLayout().
      */
     public boolean hasNewLayout(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -862,7 +1173,7 @@ public class TaffyTree {
      * where no layout changes occurred.
      */
     public boolean hasDirtyDescendant(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -876,7 +1187,7 @@ public class TaffyTree {
      * this node or any of its children.
      */
     public boolean needsVisit(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -890,7 +1201,7 @@ public class TaffyTree {
      * Marks the current layout as consumed/acknowledged for this node.
      */
     public void acknowledgeLayout(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -905,7 +1216,7 @@ public class TaffyTree {
      * This is useful for bottom-up acknowledgement during tree traversal.
      */
     public void acknowledgeSubtree(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) {
             throw TaffyException.invalidInputNode(node);
         }
@@ -931,16 +1242,16 @@ public class TaffyTree {
         }
 
         // Propagate dirty descendant flag up to ancestors
-        NodeId parent = parents.get(nodeKey);
+        NodeId parent = parentOf(nodeKey);
         while (parent != null) {
-            NodeData parentData = nodes.get(parent.getId());
+            NodeData parentData = nodeAt(parent.getId());
             if (parentData == null) break;
             
             // If already marked, all ancestors are already marked too
             if (parentData.markDirtyDescendant()) {
                 break;
             }
-            parent = parents.get(parent.getId());
+            parent = parentOf(parent.getId());
         }
     }
 
@@ -948,7 +1259,7 @@ public class TaffyTree {
      * Sets the final (rounded) layout of a node.
      */
     public void setLayout(NodeId node, Layout layout) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data != null) {
             Layout oldLayout = data.getFinalLayout();
             data.setFinalLayout(layout);
@@ -967,7 +1278,7 @@ public class TaffyTree {
      * Sets the unrounded layout of a node.
      */
     public void setUnroundedLayout(NodeId node, Layout layout) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data != null) {
             Layout oldLayout = data.getUnroundedLayout();
             data.setUnroundedLayout(layout);
@@ -991,7 +1302,7 @@ public class TaffyTree {
      * @return the cached output, or {@code null} if there is no usable entry
      */
     public LayoutOutput getCacheEntry(NodeId node, LayoutInput inputs) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) return null;
         return data.getCache().get(inputs);
     }
@@ -1004,7 +1315,7 @@ public class TaffyTree {
      * @param output the computed result
      */
     public void storeCacheEntry(NodeId node, LayoutInput inputs, LayoutOutput output) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data != null) {
             data.getCache().store(inputs, output);
             // An injected entry is not a dirty-flag mutation, so the request signature recorded by
@@ -1021,7 +1332,7 @@ public class TaffyTree {
     @Deprecated
     public LayoutOutput getCacheEntry(NodeId node, FloatSize knownDimensions,
                                       TaffySize<AvailableSpace> availableSpace, RunMode runMode) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) return null;
         return data.getCache().get(knownDimensions, availableSpace, runMode);
     }
@@ -1036,7 +1347,7 @@ public class TaffyTree {
     public void storeCacheEntry(NodeId node, FloatSize knownDimensions,
                                 TaffySize<AvailableSpace> availableSpace, RunMode runMode,
                                 LayoutOutput output) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data != null) {
             data.getCache().store(knownDimensions, availableSpace, runMode, output);
             // See the LayoutInput overload: an injected entry bypasses the dirty flags.
@@ -1048,7 +1359,7 @@ public class TaffyTree {
      * Clears the cache for a node.
      */
     public void clearCache(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data != null) {
             data.getCache().clear();
         }
@@ -1064,12 +1375,12 @@ public class TaffyTree {
     }
 
     private void markDirtyRecursive(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) return;
         
         boolean wasAlreadyDirty = data.markDirty();
         if (!wasAlreadyDirty) {
-            NodeId parent = parents.get(node.getId());
+            NodeId parent = parentOf(node.getId());
             if (parent != null) {
                 markDirtyRecursive(parent);
             }
@@ -1080,7 +1391,7 @@ public class TaffyTree {
      * Returns whether a node needs layout recalculation.
      */
     public boolean isDirty(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         return data == null || data.getCache().isEmpty();
     }
 
@@ -1216,7 +1527,7 @@ public class TaffyTree {
             return false;
         }
 
-        NodeData rootData = nodes.get(memo.rootId);
+        NodeData rootData = nodeAt(memo.rootId);
         return rootData != null && !rootData.getCache().isEmpty();
     }
 
@@ -1296,7 +1607,7 @@ public class TaffyTree {
         // The stack stores the node id plus the cumulative (absolute) offset of the node, which is
         // all the traversal state needed. Primitive arrays keep the per-edge cost to two float
         // writes instead of an Object[] / Float boxing allocation.
-        int initialCapacity = Math.max(16, nodes.size());
+        int initialCapacity = Math.max(16, nodeCount);
         long[] nodeIds = new long[initialCapacity];
         float[] cumulativeXs = new float[initialCapacity];
         float[] cumulativeYs = new float[initialCapacity];
@@ -1309,7 +1620,7 @@ public class TaffyTree {
             float cumulativeX = cumulativeXs[stackSize];
             float cumulativeY = cumulativeYs[stackSize];
 
-            NodeData data = nodes.get(nodeKey);
+            NodeData data = nodeAt(nodeKey);
             if (data == null) continue;
             Layout layout = data.getUnroundedLayout();
             if (layout == null) continue;
@@ -1545,14 +1856,30 @@ public class TaffyTree {
      * Returns the node data for internal use.
      */
     NodeData getNodeData(NodeId node) {
-        return nodes.get(node.getId());
+        return nodeAt(node.getId());
+    }
+
+    /**
+     * Number of slots in the dense node array. Package-private diagnostic for tests: the storage
+     * layout is internal (see {@link #SPARSE_SLACK}) and not part of the public API.
+     */
+    int nodeSlotCapacity() {
+        return nodes.length;
+    }
+
+    /**
+     * Number of node ids currently stored in the spilled overflow map. Package-private diagnostic
+     * for tests; {@code 0} is the normal dense case.
+     */
+    int spilledNodeCount() {
+        return spilledNodes == null ? 0 : spilledNodes.size();
     }
 
     /**
      * Checks if a node exists in the tree.
      */
     public boolean containsNode(NodeId node) {
-        return nodes.containsKey(node.getId());
+        return hasNode(node.getId());
     }
 
     /**
@@ -1560,8 +1887,16 @@ public class TaffyTree {
      */
     public Set<NodeId> getAllNodes() {
         Set<NodeId> result = new HashSet<>();
-        for (Long id : nodes.keySet()) {
-            result.add(new NodeId(id));
+        NodeData[] slots = nodes;
+        for (int slot = 0; slot < slots.length; slot++) {
+            if (slots[slot] != null) {
+                result.add(new NodeId(slot));
+            }
+        }
+        if (spilledNodes != null) {
+            for (long id : spilledNodes.keySet()) {
+                result.add(new NodeId(id));
+            }
         }
         return result;
     }
@@ -1589,7 +1924,7 @@ public class TaffyTree {
     }
 
     private void writeTreeRecursive(Writer writer, NodeId node, int depth) throws IOException {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) return;
 
         StringBuilder line = new StringBuilder("  ".repeat(depth));
@@ -1642,7 +1977,7 @@ public class TaffyTree {
     }
 
     private String getDebugLabel(NodeId node) {
-        NodeData data = nodes.get(node.getId());
+        NodeData data = nodeAt(node.getId());
         if (data == null) return "UNKNOWN";
         
         int numChildren = childCount(node);
