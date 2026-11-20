@@ -30,7 +30,9 @@ import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -44,6 +46,185 @@ import static java.lang.Float.isNaN;
 public class FlexboxComputer {
 
     private final LayoutComputer layoutComputer;
+
+    /**
+     * The pass-scoped flex item-list cache; see {@link FlexItemListCache}.
+     */
+    private static final ThreadLocal<FlexItemListCache> ITEM_LIST_CACHE =
+        ThreadLocal.withInitial(FlexItemListCache::new);
+
+    /**
+     * The maximum number of {@link FlexItem}s one pass may pin in {@link #ITEM_LIST_CACHE}. A large
+     * tree is bound rather than allowed to retain every container's item metadata until the pass
+     * ends; beyond the bound the cache is dropped and rebuilt (correct, just uncached).
+     */
+    private static final int MAX_CACHED_ITEMS = 1 << 16;
+
+    /**
+     * A container's flex item list kept for the duration of one layout pass.
+     *
+     * <p>A {@link FlexboxComputer} is created per compute call (see {@code LayoutComputer}'s flex
+     * dispatch), so a pass-scoped cache cannot live on the instance: the pass is the lifetime of
+     * one {@link LayoutComputer} and of one direction epoch (the tree bumps it when a pass starts
+     * or a style/child list changes). The cache therefore lives on a thread-local keyed by the
+     * owning tree and epoch, so a later pass, another tree or a re-entrant pass discards it instead
+     * of observing styles that have since changed.</p>
+     *
+     * <p>Within a pass a container's flex item list is a pure function of its child styles, its
+     * child order, its inner size and its resolved direction, and none of those can change while
+     * the pass runs (styles only change through {@link TaffyTree#setStyle}, which starts a new
+     * epoch). Reusing the list is what keeps a container laid out at several known sizes - grid
+     * track sizing or an intrinsic measurement followed by the final layout - from resolving the
+     * same child styles again. The per-pass results consumed by the layout stages are reset before
+     * a reused list is handed out.</p>
+     */
+    private static final class CachedFlexItemList {
+        final List<FlexItem> items;
+        final float innerWidth;
+        final float innerHeight;
+        final TaffyDirection direction;
+        /**
+         * Whether the item metadata was built from child styles that resolve against the
+         * container's inner size at all. When they do not (the common case: no percentage or
+         * {@code calc()} padding, border, size, min-size, max-size, margin or inset), the same
+         * list is valid for every inner size, so a measurement and a final layout at different
+         * known dimensions share it.
+         */
+        final boolean innerSizeIndependent;
+
+        CachedFlexItemList(List<FlexItem> items, FloatSize innerSize, TaffyDirection direction,
+                           boolean innerSizeIndependent) {
+            this.items = items;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.direction = direction;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        boolean matches(FloatSize innerSize, TaffyDirection containerDirection) {
+            if (direction != containerDirection) {
+                return false;
+            }
+            return innerSizeIndependent
+                   || (Float.floatToIntBits(innerWidth) == Float.floatToIntBits(innerSize.width)
+                       && Float.floatToIntBits(innerHeight) == Float.floatToIntBits(innerSize.height));
+        }
+    }
+
+    /**
+     * The per-pass flex item-list cache. The owning tree is held weakly: the cached items reference
+     * nothing of the tree, so a caller that stops using a tree does not keep it alive through this
+     * thread-local. {@link #epoch} is the tree's direction epoch; a different value means the pass
+     * is over (or a style/child-list change happened) and the entries are dropped.
+     */
+    private static final class FlexItemListCache {
+        private WeakReference<TaffyTree> tree;
+        private long epoch = Long.MIN_VALUE;
+        private final Long2ObjectOpenHashMap<CachedFlexItemList> lists = new Long2ObjectOpenHashMap<>();
+        private int cachedItems;
+
+        void store(long nodeId, List<FlexItem> items, FloatSize innerSize,
+                   TaffyDirection direction, boolean innerSizeIndependent) {
+            CachedFlexItemList previous = lists.put(nodeId,
+                new CachedFlexItemList(items, innerSize, direction, innerSizeIndependent));
+            if (previous != null) {
+                cachedItems -= previous.items.size();
+            }
+            cachedItems += items.size();
+            if (cachedItems > MAX_CACHED_ITEMS) {
+                // Bound the memory a single pass may pin. The list handed to the caller stays
+                // valid; only later lookups in this pass fall back to a rebuild.
+                lists.clear();
+                cachedItems = 0;
+            }
+        }
+    }
+
+    /**
+     * Returns the pass-scoped item-list cache for {@code tree}, discarding the entries of a
+     * previous pass (a different tree or a new direction epoch).
+     */
+    private static FlexItemListCache itemListCache(TaffyTree tree) {
+        FlexItemListCache cache = ITEM_LIST_CACHE.get();
+        long epoch = tree.currentDirectionEpoch();
+        TaffyTree cachedTree = cache.tree == null ? null : cache.tree.get();
+        if (cachedTree != tree || cache.epoch != epoch) {
+            cache.lists.clear();
+            cache.cachedItems = 0;
+            cache.tree = new WeakReference<>(tree);
+            cache.epoch = epoch;
+        }
+        return cache;
+    }
+
+    /**
+     * Clears the per-pass results the flex layout stages fill into an item list before the list is
+     * handed out again. A fresh item starts at zero in every layout-result field and at its
+     * style-resolved margins; a reused item must arrive in the same state, because the main-axis
+     * sizing, cross-axis sizing, freeze and auto-margin stages fill these in progressively and some
+     * of them ({@code frozen}, {@code targetSize}, {@code margin}) are read before being rewritten.
+     */
+    private static void resetPerPassState(List<FlexItem> items) {
+        for (int i = 0, size = items.size(); i < size; i++) {
+            FlexItem item = items.get(i);
+            // Auto margins are assigned into margin during the pass; restore the resolved base.
+            item.margin = item.baseMargin;
+            item.hypotheticalInnerSize = FloatSize.ZERO;
+            item.hypotheticalOuterSize = FloatSize.ZERO;
+            item.targetSize = FloatSize.ZERO;
+            item.outerTargetSize = FloatSize.ZERO;
+            item.flexBasis = 0f;
+            item.innerFlexBasis = 0f;
+            item.resolvedMinimumMainSize = 0f;
+            item.violation = 0f;
+            item.frozen = false;
+            item.contentFlexFraction = 0f;
+            item.baseline = 0f;
+            item.offsetMain = 0f;
+            item.offsetCross = 0f;
+        }
+    }
+
+    /**
+     * Whether any child-style value {@link #generateFlexItems} resolves against the container's
+     * inner size can actually depend on it.
+     *
+     * <p>The item build resolves the child's padding and border against the container's content-box
+     * width and its size/min-size/max-size, margin and inset against the content-box size; a
+     * {@code length} ignores that basis, whereas a percentage or a {@code calc()} expression (which
+     * may embed one) does not. Style height/width keywords and {@code auto} resolve to
+     * {@link Float#NaN} regardless of the basis, so they are basis-independent too. When this
+     * method returns {@code false} the item list may be shared across the different known
+     * dimensions a single pass lays the container out with.</p>
+     */
+    private static boolean hasInnerSizeDependentValues(TaffyStyle style) {
+        return rectDependsOnInnerSize(style.getPadding())
+               || rectDependsOnInnerSize(style.getBorder())
+               || sizeDependsOnInnerSize(style.getSize())
+               || sizeDependsOnInnerSize(style.getMinSize())
+               || sizeDependsOnInnerSize(style.getMaxSize())
+               || lpaRectDependsOnInnerSize(style.getMargin())
+               || lpaRectDependsOnInnerSize(style.getInset());
+    }
+
+    private static boolean rectDependsOnInnerSize(TaffyRect<LengthPercentage> rect) {
+        return rect.left.isPercent() || rect.left.isCalc()
+               || rect.right.isPercent() || rect.right.isCalc()
+               || rect.top.isPercent() || rect.top.isCalc()
+               || rect.bottom.isPercent() || rect.bottom.isCalc();
+    }
+
+    private static boolean lpaRectDependsOnInnerSize(TaffyRect<LengthPercentageAuto> rect) {
+        return rect.left.isPercent() || rect.left.isCalc()
+               || rect.right.isPercent() || rect.right.isCalc()
+               || rect.top.isPercent() || rect.top.isCalc()
+               || rect.bottom.isPercent() || rect.bottom.isCalc();
+    }
+
+    private static boolean sizeDependsOnInnerSize(TaffySize<TaffyDimension> size) {
+        return size.width.isPercent() || size.width.isCalc()
+               || size.height.isPercent() || size.height.isCalc();
+    }
 
     public FlexboxComputer(LayoutComputer layoutComputer) {
         this.layoutComputer = layoutComputer;
@@ -68,6 +249,13 @@ public class FlexboxComputer {
         float resolvedMinimumMainSize;
         FloatRect inset;
         FloatRect margin;
+        /**
+         * The style-resolved margins captured when the item was built. Main- and cross-axis auto
+         * margins are assigned used values into {@link #margin} while the pass runs, so a reused
+         * item list restores this base before the next pass consumes it. The rect is treated as
+         * read-only after the item is built.
+         */
+        FloatRect baseMargin;
         TaffyRect<Boolean> marginIsAuto;
         FloatRect padding;
         FloatRect border;
@@ -546,7 +734,22 @@ public class FlexboxComputer {
     private List<FlexItem> generateFlexItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
                                              FlexDirection flexDirection, TaffyDirection containerDirection) {
         TaffyTree tree = layoutComputer.getTree();
-        List<FlexItem> items = new ArrayList<>();
+        FlexItemListCache cache = itemListCache(tree);
+        CachedFlexItemList cached = cache.lists.get(node.getId());
+        if (cached != null && cached.matches(nodeInnerSize, containerDirection)) {
+            // A layout pass may lay the same container out at several known sizes (track sizing, an
+            // intrinsic measurement, then the final layout). The style-derived metadata was built
+            // once; only the per-pass sizing fields have to be restored.
+            resetPerPassState(cached.items);
+            return cached.items;
+        }
+
+        List<NodeId> children = tree.getChildren(node);
+        // Whether the metadata resolved below depends on the container's inner size. When it does
+        // not, the list is valid for every inner size of this pass (a measurement at one known size
+        // and the final layout at another), which is the common case.
+        boolean innerSizeIndependent = true;
+        List<FlexItem> items = new ArrayList<>(children.size());
         // ST-04 (#1254): explicit `normal` behaves as `stretch` for flex items. The legacy AUTO
         // sentinel stays untouched: it means "not specified" and defers to the caller default.
         AlignItems defaultAlign = AlignmentHelper.resolveNormal(containerStyle.getAlignItems(), AlignItems.STRETCH);
@@ -554,12 +757,16 @@ public class FlexboxComputer {
         boolean isRow = flexDirection.isRow();
 
         int order = 0;
-        for (NodeId childId : tree.getChildren(node)) {
+        for (NodeId childId : children) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE ||
                 childStyle.getPosition().isOutOfFlow()) {
                 order++;
                 continue;
+            }
+
+            if (innerSizeIndependent && hasInnerSizeDependentValues(childStyle)) {
+                innerSizeIndependent = false;
             }
 
             FlexItem item = new FlexItem();
@@ -671,6 +878,7 @@ public class FlexboxComputer {
             }
 
             item.margin = Resolve.resolveRectLpaOrZero(childStyle.getMargin(), nodeInnerSize.width);
+            item.baseMargin = item.margin;
             item.marginIsAuto = new TaffyRect<>(
                 childStyle.getMargin().left.isAuto(),
                 childStyle.getMargin().right.isAuto(),
@@ -708,6 +916,7 @@ public class FlexboxComputer {
             items.add(item);
         }
 
+        cache.store(node.getId(), items, nodeInnerSize, containerDirection, innerSizeIndependent);
         return items;
     }
 
