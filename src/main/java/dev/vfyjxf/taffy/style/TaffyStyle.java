@@ -40,6 +40,23 @@ public final class TaffyStyle {
     public boolean itemIsReplaced = false;
 
     /**
+     * Is it a compressible replaced element that is not a replaced element (a form control with an
+     * intrinsic size, such as an input, select or textarea)?
+     * <p>
+     * A replaced element ({@link #itemIsReplaced}) also counts as compressible replaced; use
+     * {@link #isCompressibleReplaced()} to test for both. Such boxes resolve an {@code auto} width to
+     * their intrinsic size rather than being stretched by block layout, and their grid minimum
+     * contribution is capped by a definite preferred or maximum size.
+     * <p>
+     * This field defaults to {@code false}, so when it is unset {@link #isCompressibleReplaced()}
+     * returns exactly {@link #itemIsReplaced}, which preserves the historical single-flag behavior.
+     *
+     * @see <a href="https://drafts.csswg.org/css-sizing-3/#compressible">CSS Sizing 3: compressible
+     *      replaced elements</a>
+     */
+    public boolean itemIsCompressibleReplaced = false;
+
+    /**
      * Should size styles apply to the content box or the border box
      */
     public BoxSizing boxSizing = BoxSizing.BORDER_BOX;
@@ -55,6 +72,54 @@ public final class TaffyStyle {
      * How much space should be reserved for scrollbars
      */
     public float scrollbarWidth = 0;
+
+    // === Containment Properties ===
+
+    /**
+     * The layout-affecting parts of the CSS {@code contain} property.
+     *
+     * <p>This port implements the {@link Contain#LAYOUT} and {@link Contain#PAINT} containment
+     * types, following upstream taffy #1128 ({@code 4ae4219}): both make the box establish an
+     * independent formatting context (its margins do not collapse with those of its children, it
+     * contains its own floats and avoids external ones), and {@link Contain#LAYOUT} additionally
+     * suppresses the box's baseline for baseline-alignment purposes. The {@link Contain#SIZE} and
+     * {@link Contain#INLINE_SIZE} flags exist for CSS/API parity but have no layout effect, matching
+     * upstream (size containment is not implemented there either).</p>
+     *
+     * <p>The field defaults to {@link Contain#NONE}, so a style that never sets it lays out exactly
+     * as before containment existed.</p>
+     *
+     * @see Contain
+     */
+    public Contain contain = Contain.NONE;
+
+    // === Float Properties ===
+
+    /**
+     * Should the box be floated, and to which side?
+     *
+     * <p>The field is named {@code float_} because {@code float} is a Java keyword, and the
+     * style type is named {@link TaffyFloat} because a top-level {@code Float} in this package
+     * would shadow {@link java.lang.Float} (see {@link TaffyFloat} for details). Upstream
+     * taffy calls the field {@code float} and the type {@code Float} (upstream #866).</p>
+     *
+     * <p><b>1.2 scope.</b> {@code BlockComputer} does not read this field yet; float placement
+     * and block formatting-context integration land in the following FT batches. Setting it is
+     * additive and has no effect on layout in this release.</p>
+     *
+     * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/float">MDN - float</a>
+     */
+    public TaffyFloat float_ = TaffyFloat.NONE;
+
+    /**
+     * Should the box clear floats?
+     *
+     * <p><b>1.2 scope.</b> {@code BlockComputer} does not read this field yet; clearance lands
+     * in the following FT batches, together with float placement.</p>
+     *
+     * @see <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/clear">MDN - clear</a>
+     */
+    public Clear clear = Clear.NONE;
 
     // === Position Properties ===
 
@@ -162,6 +227,24 @@ public final class TaffyStyle {
      * Should elements wrap, or stay in a single line?
      */
     public FlexWrap flexWrap = FlexWrap.NO_WRAP;
+
+    /**
+     * The minimum number of flex lines requested for a multi-line flex container
+     * ({@code flex-line-count}).
+     * <p>
+     * When items are balanced ({@link FlexWrap#BALANCE} or {@link FlexWrap#BALANCE_REVERSE}) they
+     * are divided into at least this many lines. For any multi-line container, the definite
+     * cross-axis available space used when measuring items is divided between this many lines
+     * (after subtracting the cross-axis gaps between them).
+     * <p>
+     * {@code 0} means "not set" and behaves like the CSS initial value of {@code 1}; values below
+     * {@code 0} are treated the same way. The value is clamped to the number of items when it is
+     * used for balancing.
+     *
+     * @see <a href="https://drafts.csswg.org/css-flexbox-2/#flex-line-count-property">CSS Flexbox 2 -
+     *      flex-line-count</a>
+     */
+    public int flexLineCount = 0;
 
     // === Flexbox Item Properties ===
 
@@ -372,9 +455,41 @@ public final class TaffyStyle {
      * Defines named grid areas in the grid template.
      * Each area specifies a name and the row/column lines that bound it.
      * <p>
-     * Rust equivalent: grid_template_areas: Vec&lt;GridTemplateArea&gt;
+     * The size of the area template is not derived from these extents: it is carried by
+     * {@link #gridTemplateAreaRowCount} and {@link #gridTemplateAreaColumnCount}, so that unnamed
+     * ({@code .}) cells beyond the extents of the named areas still contribute to the explicit
+     * grid. When those two fields are left at {@link GridTemplateAreas#DERIVE} (the default), the
+     * size is derived from these extents, which is the historical behavior.
+     * <p>
+     * Rust equivalent: grid_template_areas: Option&lt;GridTemplateAreas&gt; (upstream #1024 /
+     * GR-16). This field keeps the pre-GR-16 {@code Vec<GridTemplateArea>} shape; use
+     * {@link #setGridTemplateAreaTemplate} to set the areas and the template size together.
      */
     public List<GridTemplateArea> gridTemplateAreas = new ArrayList<>();
+
+    /**
+     * The number of rows of the {@code grid-template-areas} template, or
+     * {@link GridTemplateAreas#DERIVE} to derive it from the extents of {@link #gridTemplateAreas}.
+     * <p>
+     * The template may be larger than the extents of the named areas because of unnamed ({@code .})
+     * cells, and such cells still contribute to the size of the explicit grid (for example
+     * {@code "a ."} is a one row by two column template). A value of {@code 0} is a template with
+     * no explicit row, while {@link GridTemplateAreas#DERIVE} (the default, {@code -1}) keeps the
+     * historical behavior of deriving the row count from the named areas.
+     * <p>
+     * Rust equivalent: GridTemplateAreas::row_count (upstream #1024 / GR-16).
+     */
+    public int gridTemplateAreaRowCount = GridTemplateAreas.DERIVE;
+
+    /**
+     * The number of columns of the {@code grid-template-areas} template, or
+     * {@link GridTemplateAreas#DERIVE} to derive it from the extents of {@link #gridTemplateAreas}.
+     * <p>
+     * Rust equivalent: GridTemplateAreas::column_count (upstream #1024 / GR-16).
+     *
+     * @see #gridTemplateAreaRowCount
+     */
+    public int gridTemplateAreaColumnCount = GridTemplateAreas.DERIVE;
 
     /**
      * Defines named lines for grid columns.
@@ -437,9 +552,13 @@ public final class TaffyStyle {
         copy.display = this.display;
         copy.itemIsTable = this.itemIsTable;
         copy.itemIsReplaced = this.itemIsReplaced;
+        copy.itemIsCompressibleReplaced = this.itemIsCompressibleReplaced;
         copy.boxSizing = this.boxSizing;
         copy.overflow = this.overflow.copy();
         copy.scrollbarWidth = this.scrollbarWidth;
+        copy.contain = this.contain;
+        copy.float_ = this.float_;
+        copy.clear = this.clear;
         copy.position = this.position;
         copy.inset = this.inset.copy();
         copy.size = this.size.copy();
@@ -460,6 +579,8 @@ public final class TaffyStyle {
         copy.direction = this.direction;
         copy.flexDirection = this.flexDirection;
         copy.flexWrap = this.flexWrap;
+        copy.flexLineCount = this.flexLineCount;
+        copy.flex = this.flex;
         copy.flexBasis = this.flexBasis;
         copy.flexGrow = this.flexGrow;
         copy.flexShrink = this.flexShrink;
@@ -475,6 +596,8 @@ public final class TaffyStyle {
         copy.gridAutoColumns = new ArrayList<>(this.gridAutoColumns);
         copy.gridAutoFlow = this.gridAutoFlow;
         copy.gridTemplateAreas = new ArrayList<>(this.gridTemplateAreas);
+        copy.gridTemplateAreaRowCount = this.gridTemplateAreaRowCount;
+        copy.gridTemplateAreaColumnCount = this.gridTemplateAreaColumnCount;
         copy.gridTemplateColumnNames = new ArrayList<>(this.gridTemplateColumnNames);
         copy.gridTemplateRowNames = new ArrayList<>(this.gridTemplateRowNames);
         copy.gridRow = this.gridRow.copy();
@@ -506,11 +629,56 @@ public final class TaffyStyle {
 
     public boolean getItemIsReplaced() {return itemIsReplaced;}
 
+    // TODO(T17/T4): upstream #1351 resolves the max-size basis of a grid item's minimum
+    // contribution against zero only for replaced elements (is_replaced), not for form controls.
+    // Java's minimum contribution has no "definite preferred size clamped by min/max" branch yet
+    // (#1022/#1282), so this distinction cannot be wired here.
+    // TODO(S19): upstream #1281 also uses is_replaced so that `normal` alignment does not stretch
+    // replaced grid items; Java has no Normal alignment semantics yet (S10).
+    /**
+     * Returns whether this is a compressible replaced element: a replaced element (image, video,
+     * canvas, ...) or a form control with an intrinsic size. Replaced elements are implicitly
+     * compressible replaced, so this is {@link #itemIsReplaced} or
+     * {@link #itemIsCompressibleReplaced}.
+     */
+    public boolean isCompressibleReplaced() {
+        return itemIsReplaced || itemIsCompressibleReplaced;
+    }
+
+    /**
+     * Marks this as a compressible replaced element that is not a replaced element (a form control
+     * with an intrinsic size). Does not change {@link #itemIsReplaced}.
+     */
+    public void setCompressibleReplaced(boolean compressibleReplaced) {
+        this.itemIsCompressibleReplaced = compressibleReplaced;
+    }
+
     public BoxSizing getBoxSizing() {return boxSizing;}
 
     public TaffyPoint<Overflow> getOverflow() {return overflow;}
 
     public float getScrollbarWidth() {return scrollbarWidth;}
+
+    /**
+     * Returns the layout-affecting parts of this style's CSS {@code contain} property.
+     *
+     * <p>Never returns {@code null}: a {@code null} field (which a caller could only produce by
+     * assigning it explicitly) reads back as {@link Contain#NONE}.</p>
+     *
+     * @return the containment flags of this style
+     */
+    public Contain getContain() {return contain == null ? Contain.NONE : contain;}
+
+    /**
+     * Returns the CSS {@code float} value of this style. The field backing it is named
+     * {@code float_} because {@code float} is a Java keyword.
+     */
+    public TaffyFloat getFloat() {return float_;}
+
+    /**
+     * Returns the CSS {@code clear} value of this style.
+     */
+    public Clear getClear() {return clear;}
 
     public TaffyPosition getPosition() {return position;}
 
@@ -552,6 +720,12 @@ public final class TaffyStyle {
             case START -> JustifyContent.START;
             case END -> JustifyContent.END;
             case STRETCH -> JustifyContent.STRETCH;
+            case NORMAL -> JustifyContent.NORMAL;
+            case SAFE_START -> JustifyContent.SAFE_START;
+            case SAFE_END -> JustifyContent.SAFE_END;
+            case SAFE_FLEX_START -> JustifyContent.SAFE_FLEX_START;
+            case SAFE_FLEX_END -> JustifyContent.SAFE_FLEX_END;
+            case SAFE_CENTER -> JustifyContent.SAFE_CENTER;
             case AUTO -> JustifyContent.FLEX_START; // defensive (handled above)
         };
     }
@@ -563,6 +737,25 @@ public final class TaffyStyle {
     public FlexDirection getFlexDirection() {return flexDirection;}
 
     public FlexWrap getFlexWrap() {return flexWrap;}
+
+    /**
+     * Returns the requested minimum flex line count, or {@code 0} when it is not set.
+     *
+     * @see #flexLineCount
+     */
+    public int getFlexLineCount() {return flexLineCount;}
+
+    /**
+     * Sets the requested minimum flex line count. {@code 0} (the default) clears it.
+     *
+     * @param value the minimum number of flex lines; values below {@code 1} behave like {@code 1}
+     * @return this style, for chaining
+     * @see #flexLineCount
+     */
+    public TaffyStyle setFlexLineCount(int value) {
+        this.flexLineCount = value;
+        return this;
+    }
 
     /**
      * Returns the raw flex field value (may be NaN if not set)
@@ -593,6 +786,67 @@ public final class TaffyStyle {
     public List<TrackSizingFunction> getGridAutoColumns() {return gridAutoColumns;}
 
     public GridAutoFlow getGridAutoFlow() {return gridAutoFlow;}
+
+    /**
+     * Returns the number of rows of the {@code grid-template-areas} template.
+     * <p>
+     * This is {@link #gridTemplateAreaRowCount} when it is set, and otherwise the number of rows
+     * covered by the extents of {@link #gridTemplateAreas} (the historical behavior, mirroring
+     * upstream's default {@code grid_template_area_row_count}). It may be greater than the extents
+     * of the named areas because of unnamed ({@code .}) cells, and it is {@code 0} when there is no
+     * area template at all.
+     */
+    public int getGridTemplateAreaRowCount() {
+        if (gridTemplateAreaRowCount >= 0) {
+            return gridTemplateAreaRowCount;
+        }
+        return GridTemplateAreas.derivedRowCount(gridTemplateAreas);
+    }
+
+    /**
+     * Returns the number of columns of the {@code grid-template-areas} template.
+     *
+     * @see #getGridTemplateAreaRowCount()
+     */
+    public int getGridTemplateAreaColumnCount() {
+        if (gridTemplateAreaColumnCount >= 0) {
+            return gridTemplateAreaColumnCount;
+        }
+        return GridTemplateAreas.derivedColumnCount(gridTemplateAreas);
+    }
+
+    /**
+     * Returns the effective {@code grid-template-areas} value of this style: the named areas plus
+     * the template size (explicitly configured, or derived from the areas' extents when unset).
+     * <p>
+     * The returned value is never {@code null}; a style without an area template reads back as
+     * {@link GridTemplateAreas#empty()}.
+     */
+    public GridTemplateAreas getGridTemplateAreaTemplate() {
+        return GridTemplateAreas.from(this);
+    }
+
+    /**
+     * Sets the {@code grid-template-areas} value of this style: the named areas together with the
+     * size of the area template (upstream #1024 / GR-16).
+     * <p>
+     * This writes {@link #gridTemplateAreas} and the two template size fields, so it is the
+     * additive replacement for assigning the areas list alone. Passing {@code null} clears the
+     * template.
+     *
+     * @param template the template to apply, or {@code null} to clear it
+     * @return this style, for chaining
+     */
+    public TaffyStyle setGridTemplateAreaTemplate(GridTemplateAreas template) {
+        if (template == null) {
+            this.gridTemplateAreas = new ArrayList<>();
+            this.gridTemplateAreaRowCount = GridTemplateAreas.DERIVE;
+            this.gridTemplateAreaColumnCount = GridTemplateAreas.DERIVE;
+        } else {
+            template.applyTo(this);
+        }
+        return this;
+    }
 
     public GridPlacement getGridRowStart() {return gridRow.start;}
 

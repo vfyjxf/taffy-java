@@ -1,0 +1,155 @@
+{
+  "case": "grid_named_lines_absolute_position",
+  "description": "Grid container with [a]/[b]/[c] named rows and columns plus absolutely positioned children using named-line placement; freezes 49b7ef0 output (PA-01).",
+  "availableSpace": {
+    "width": 200.0000,
+    "height": 150.0000
+  },
+  "roundingEnabled": true,
+  "nodes": [
+    {
+      "path": "root",
+      "order": 0,
+      "location": {
+        "x": 0.0000,
+        "y": 0.0000
+      },
+      "size": {
+        "width": 200.0000,
+        "height": 150.0000
+      },
+      "margin": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "border": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "padding": {
+        "left": 10.0000,
+        "top": 10.0000,
+        "right": 10.0000,
+        "bottom": 10.0000
+      },
+      "contentSize": {
+        "width": 200.0000,
+        "height": 80.0000
+      },
+      "scrollWidth": 0.0000,
+      "scrollHeight": 0.0000
+    },
+    {
+      "path": "root/children[0]",
+      "order": 0,
+      "location": {
+        "x": 10.0000,
+        "y": 10.0000
+      },
+      "size": {
+        "width": 100.0000,
+        "height": 70.0000
+      },
+      "margin": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "border": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "padding": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "contentSize": {
+        "width": 0.0000,
+        "height": 0.0000
+      },
+      "scrollWidth": 0.0000,
+      "scrollHeight": 0.0000
+    },
+    {
+      "path": "root/children[1]",
+      "order": 0,
+      "location": {
+        "x": 50.0000,
+        "y": 0.0000
+      },
+      "size": {
+        "width": 150.0000,
+        "height": 30.0000
+      },
+      "margin": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "border": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "padding": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "contentSize": {
+        "width": 0.0000,
+        "height": 0.0000
+      },
+      "scrollWidth": 0.0000,
+      "scrollHeight": 0.0000
+    },
+    {
+      "path": "root/children[2]",
+      "order": 0,
+      "location": {
+        "x": 10.0000,
+        "y": 10.0000
+      },
+      "size": {
+        "width": 100.0000,
+        "height": 70.0000
+      },
+      "margin": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "border": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "padding": {
+        "left": 0.0000,
+        "top": 0.0000,
+        "right": 0.0000,
+        "bottom": 0.0000
+      },
+      "contentSize": {
+        "width": 0.0000,
+        "height": 0.0000
+      },
+      "scrollWidth": 0.0000,
+      "scrollHeight": 0.0000
+    }
+  ]
+}

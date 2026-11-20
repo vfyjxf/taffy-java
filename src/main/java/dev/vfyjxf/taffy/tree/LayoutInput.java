@@ -46,6 +46,49 @@ public record LayoutInput(
         return HIDDEN;
     }
 
+    /**
+     * Swap the horizontal and vertical axes of every per-axis input.
+     *
+     * <p>Lets a tree lay out a node in a vertical writing mode: transpose the inputs, run the
+     * (horizontal top-to-bottom) layout algorithm, then transpose the {@link LayoutOutput} back.
+     * {@code runMode} and {@code sizingMode} are axis-independent and are preserved;
+     * {@code knownDimensions}, {@code parentSize} and {@code availableSpace} swap their axes, and
+     * {@code axis} is transposed ({@link RequestedAxis#BOTH} stays {@code BOTH}).</p>
+     *
+     * <p>{@code verticalMarginsAreCollapsible} is reset to {@link TaffyLine#FALSE}: vertical
+     * margins cannot collapse across a change of block axis. This matches upstream taffy #1265
+     * ({@code LayoutInput::transpose}), so transposing twice does <b>not</b> restore that
+     * field.</p>
+     *
+     * <p>The receiver is never modified. The axis transposition is handled by this method
+     * ({@link RequestedAxis} itself is unchanged in 1.2); the semantics match the upstream
+     * {@code RequestedAxis::transpose}.</p>
+     *
+     * @return a new transposed input
+     */
+    public LayoutInput transpose() {
+        return new LayoutInput(
+            runMode,
+            sizingMode,
+            transposeAxis(axis),
+            new FloatSize(knownDimensions.height, knownDimensions.width),
+            new FloatSize(parentSize.height, parentSize.width),
+            availableSpace.transpose(),
+            TaffyLine.FALSE
+        );
+    }
+
+    private static RequestedAxis transposeAxis(RequestedAxis axis) {
+        if (axis == null) {
+            return null;
+        }
+        return switch (axis) {
+            case HORIZONTAL -> RequestedAxis.VERTICAL;
+            case VERTICAL -> RequestedAxis.HORIZONTAL;
+            case BOTH -> RequestedAxis.BOTH;
+        };
+    }
+
     // === Getters ===
 
     /**

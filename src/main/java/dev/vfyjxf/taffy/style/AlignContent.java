@@ -57,5 +57,45 @@ public enum AlignContent {
      * The gap between the first and last items is exactly HALF the gap between items.
      * The gaps are distributed evenly in proportion to these ratios.
      */
-    SPACE_AROUND;
+    SPACE_AROUND,
+
+    /**
+     * The layout mode's default alignment (upstream #1255): {@code stretch} for flex and grid
+     * containers, {@code start} for block containers.
+     * <p>
+     * Unlike {@link #AUTO}, which is the legacy "not specified" sentinel, this is an explicit
+     * keyword that can override an inherited alignment. Appended after the existing constants so
+     * their ordinals stay stable (1.2 compatibility policy S2/Q2).
+     */
+    NORMAL,
+
+    /**
+     * Like {@link #START}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe start}).
+     */
+    SAFE_START,
+
+    /**
+     * Like {@link #END}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe end}).
+     */
+    SAFE_END,
+
+    /**
+     * Like {@link #FLEX_START}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe flex-start}).
+     */
+    SAFE_FLEX_START,
+
+    /**
+     * Like {@link #FLEX_END}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe flex-end}).
+     */
+    SAFE_FLEX_END,
+
+    /**
+     * Like {@link #CENTER}, but falls back to {@link #START} when the content overflows the
+     * alignment container (upstream #952, {@code safe center}).
+     */
+    SAFE_CENTER;
 }

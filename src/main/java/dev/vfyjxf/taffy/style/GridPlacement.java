@@ -40,12 +40,24 @@ public final class GridPlacement {
     private final int value;
     private final String lineName;
     private final int nthIndex;  // For NAMED_LINE: which occurrence (positive=from start, negative=from end)
+    /**
+     * Whether this named line was created from a bare {@code <custom-ident>} (no {@code <integer>}
+     * prefix). A bare ident first matches the edge of a named grid area and only then falls back to
+     * the integer-1 form (GR-15 / upstream #1258). The flag is only meaningful for
+     * {@link Type#NAMED_LINE}; every other placement type stores {@code false}.
+     */
+    private final boolean nameIsBare;
 
     private GridPlacement(Type type, int value, String lineName, int nthIndex) {
+        this(type, value, lineName, nthIndex, false);
+    }
+
+    private GridPlacement(Type type, int value, String lineName, int nthIndex, boolean nameIsBare) {
         this.type = type;
         this.value = value;
         this.lineName = lineName;
         this.nthIndex = nthIndex;
+        this.nameIsBare = nameIsBare;
     }
 
     /**
@@ -65,16 +77,27 @@ public final class GridPlacement {
     }
 
     /**
-     * Creates a named line placement at the first occurrence of the named line.
-     * Equivalent to namedLine(name, 1).
+     * Creates a named line placement from a bare {@code <custom-ident>} (no {@code <integer>}).
+     * <p>
+     * A bare ident first matches the edge of a named grid area: the first line named
+     * {@code <name>-start} when the placement is used as a start line and the first line named
+     * {@code <name>-end} when it is used as an end line. If there is no such edge it behaves like
+     * the integer-1 form. This mirrors upstream taffy / CSS Grid 2 line placement (GR-15, #1258).
+     * <p>
+     * Use {@link #namedLine(String, int)} with an explicit index to bypass the area-edge preference.
+     *
      * @param name The name of the grid line
      */
     public static GridPlacement namedLine(String name) {
-        return namedLine(name, 1);
+        return new GridPlacement(Type.NAMED_LINE, 0, name, 1, true);
     }
 
     /**
      * Creates a named line placement at the nth occurrence of the named line.
+     * <p>
+     * Unlike {@link #namedLine(String)}, an explicit index never matches a named grid area edge with
+     * that name (it only matches lines named {@code <name>}).
+     *
      * @param name The name of the grid line
      * @param nthIndex Which occurrence to use (1-based). Positive counts from start,
      *                 negative counts from end. 0 is treated as 1.
@@ -156,6 +179,18 @@ public final class GridPlacement {
     }
 
     /**
+     * Returns whether this named line was created from a bare {@code <custom-ident>} (via
+     * {@link #namedLine(String)}), as opposed to an explicit index (via
+     * {@link #namedLine(String, int)}).
+     * <p>
+     * A bare ident first matches the edge of a named grid area, then falls back to the integer-1
+     * form. Only {@link Type#NAMED_LINE} placements can be bare.
+     */
+    public boolean isBareName() {
+        return nameIsBare;
+    }
+
+    /**
      * Returns true if this is a span placement (numeric span)
      */
     public boolean isSpan() {
@@ -192,12 +227,13 @@ public final class GridPlacement {
         if (o == null || getClass() != o.getClass()) return false;
         GridPlacement that = (GridPlacement) o;
         return type == that.type && value == that.value && nthIndex == that.nthIndex &&
+               nameIsBare == that.nameIsBare &&
                Objects.equals(lineName, that.lineName);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(type, value, lineName, nthIndex);
+        return Objects.hash(type, value, lineName, nthIndex, nameIsBare);
     }
 
     @Override
@@ -205,7 +241,7 @@ public final class GridPlacement {
         return switch (type) {
             case AUTO -> "auto";
             case LINE -> String.valueOf(value);
-            case NAMED_LINE -> nthIndex == 1 ? lineName : lineName + " " + nthIndex;
+            case NAMED_LINE -> nameIsBare ? lineName : lineName + " " + nthIndex;
             case SPAN -> "span " + value;
             case NAMED_SPAN -> "span " + lineName + " " + value;
         };

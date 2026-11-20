@@ -42,16 +42,28 @@ public class GridBenchmark {
     public static class WideGridState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         // Rust uses track_count [31, 100, 316]
         @Param({"31", "100", "316"})
         int trackCount;
 
-        @Setup(Level.Invocation)
+        // The tree is built once per trial. Rebuilding it for every invocation put the benchmark's
+        // own tree construction (100k nodes at 316^2) and its garbage into the measured window, so
+        // the reported time was mostly tree construction instead of grid layout.
+        @Setup(Level.Trial)
         public void setup() {
             Object[] result = buildGridFlatHierarchy(trackCount, trackCount);
             tree = (TaffyTree) result[0];
             root = (NodeId) result[1];
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        // Cold-layout semantics: invalidate every node's layout cache (upstream's mark_all_dirty),
+        // so each measured invocation performs a full layout of the same tree.
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -69,12 +81,14 @@ public class GridBenchmark {
     public static class DeepGridState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         // "tracks_levels" format: "2_5" means 2x2 grid, 5 levels deep
         @Param({"2_5", "3_4", "2_7"})
         String config;
 
-        @Setup(Level.Invocation)
+        // Built once per trial; see WideGridState for why the tree must not be rebuilt per invocation.
+        @Setup(Level.Trial)
         public void setup() {
             String[] parts = config.split("_");
             int tracks = Integer.parseInt(parts[0]);
@@ -84,6 +98,12 @@ public class GridBenchmark {
             Object[] result = buildTaffyDeepGridHierarchy(levels, tracks);
             tree = (TaffyTree) result[0];
             root = (NodeId) result[1];
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -103,15 +123,24 @@ public class GridBenchmark {
         TaffyTree tree;
         NodeId root;
 
+        NodeId[] nodes;
+
         @Param({"100", "1000"})
         int depth;
 
-        @Setup(Level.Invocation)
+        // Built once per trial; see WideGridState for why the tree must not be rebuilt per invocation.
+        @Setup(Level.Trial)
         public void setup() {
             // Rust: build_taffy_deep_grid_hierarchy(levels, 1)
             Object[] result = buildTaffyDeepGridHierarchy(depth, 1);
             tree = (TaffyTree) result[0];
             root = (NodeId) result[1];
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 

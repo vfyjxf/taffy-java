@@ -111,6 +111,8 @@ public class LeafTest {
         assertEquals(45.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(165.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -135,6 +137,8 @@ public class LeafTest {
         assertEquals(45.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(165.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -158,6 +162,8 @@ public class LeafTest {
         assertEquals(45.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(180.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -182,6 +188,8 @@ public class LeafTest {
         assertEquals(45.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(180.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -214,6 +222,8 @@ public class LeafTest {
         assertEquals(4.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
     }
 
     @Test
@@ -248,6 +258,8 @@ public class LeafTest {
         assertEquals(4.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
     }
 
     @Test
@@ -270,6 +282,8 @@ public class LeafTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -293,6 +307,8 @@ public class LeafTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -315,6 +331,8 @@ public class LeafTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -338,6 +356,8 @@ public class LeafTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -360,6 +380,8 @@ public class LeafTest {
         assertEquals(25.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -383,6 +405,8 @@ public class LeafTest {
         assertEquals(25.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -405,6 +429,8 @@ public class LeafTest {
         assertEquals(25.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -428,6 +454,8 @@ public class LeafTest {
         assertEquals(25.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -450,6 +478,8 @@ public class LeafTest {
         assertEquals(10.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
@@ -473,6 +503,8 @@ public class LeafTest {
         assertEquals(10.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
     }
 
     @Test
