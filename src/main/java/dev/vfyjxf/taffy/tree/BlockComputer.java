@@ -18,6 +18,7 @@ import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyFloat;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
+import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
@@ -33,7 +34,9 @@ import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,6 +54,19 @@ public class BlockComputer {
      * ever read, never mutated: the adjusted sizes built from it are fresh values.
      */
     private static final FloatSize ZERO_SIZE = new FloatSize(0f, 0f);
+
+    /**
+     * The pass-scoped item-list cache; see {@link ItemListCache}.
+     */
+    private static final ThreadLocal<ItemListCache> ITEM_LIST_CACHE =
+        ThreadLocal.withInitial(ItemListCache::new);
+
+    /**
+     * The maximum number of {@link BlockItem}s one pass may pin in {@link #ITEM_LIST_CACHE}. The
+     * item metadata of the containers seen so far is only reclaimed at the next pass, so a large
+     * tree needs a bound; beyond it the cache is dropped and rebuilt (correct, just uncached).
+     */
+    private static final int MAX_CACHED_ITEMS = 1 << 16;
 
     public BlockComputer(LayoutComputer layoutComputer) {
         this.layoutComputer = layoutComputer;
@@ -186,6 +202,85 @@ public class BlockComputer {
          * written; the final layout commits them in one place. Upstream #971 (BK-01).
          */
         Layout finalLayout;
+    }
+
+    /**
+     * A container's item list kept for the duration of one layout pass.
+     *
+     * <p>A {@link BlockComputer} is created per compute call (see {@code LayoutComputer}'s block
+     * dispatch), so a pass-scoped cache cannot live on the instance: the pass is the lifetime of
+     * one {@link LayoutComputer} and of one direction epoch (the tree bumps it when a pass
+     * starts). The cache therefore lives on a thread-local keyed by the owning tree and epoch, so
+     * a later pass, another tree or a re-entrant pass discards it instead of observing styles that
+     * have since changed.</p>
+     *
+     * <p>Within a pass a container's item list is a pure function of its child styles, its child
+     * order, its inner size and its resolved direction, and none of those can change while the
+     * pass runs (styles only change through {@link TaffyTree#setStyle}, which starts a new epoch).
+     * Reusing the list is what keeps a measurement pass and the final layout from resolving the
+     * same child styles twice; the deferred per-child layout results filled in by the passes are
+     * reset before a reused list is handed out.</p>
+     */
+    private static final class CachedItemList {
+        final List<BlockItem> items;
+        final float innerWidth;
+        final float innerHeight;
+        final TaffyDirection direction;
+        /**
+         * Whether the item metadata was built from child styles that resolve against the
+         * container's inner size at all. When they do not (the common case: no percentage or
+         * {@code calc()} padding, border, size, min-size or max-size), the same list is valid for
+         * every inner size, so a measurement and a final layout at different known dimensions
+         * share it.
+         */
+        final boolean innerSizeIndependent;
+
+        CachedItemList(List<BlockItem> items, FloatSize innerSize, TaffyDirection direction,
+                       boolean innerSizeIndependent) {
+            this.items = items;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.direction = direction;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        boolean matches(FloatSize innerSize, TaffyDirection containerDirection) {
+            if (direction != containerDirection) {
+                return false;
+            }
+            return innerSizeIndependent
+                   || (Float.floatToIntBits(innerWidth) == Float.floatToIntBits(innerSize.width)
+                       && Float.floatToIntBits(innerHeight) == Float.floatToIntBits(innerSize.height));
+        }
+    }
+
+    /**
+     * The per-pass item-list cache. The owning tree is held weakly: the cached items reference
+     * nothing of the tree, so a caller that stops using a tree does not keep it alive through this
+     * thread-local. {@link #epoch} is the tree's direction epoch; a different value means the pass
+     * is over (or a style/child-list change happened) and the entries are dropped.
+     */
+    private static final class ItemListCache {
+        private WeakReference<TaffyTree> tree;
+        private long epoch = Long.MIN_VALUE;
+        private final Long2ObjectOpenHashMap<CachedItemList> lists = new Long2ObjectOpenHashMap<>();
+        private int cachedItems;
+
+        void store(long nodeId, List<BlockItem> items, FloatSize innerSize,
+                   TaffyDirection direction, boolean innerSizeIndependent) {
+            CachedItemList previous = lists.put(nodeId,
+                new CachedItemList(items, innerSize, direction, innerSizeIndependent));
+            if (previous != null) {
+                cachedItems -= previous.items.size();
+            }
+            cachedItems += items.size();
+            if (cachedItems > MAX_CACHED_ITEMS) {
+                // Bound the memory a single pass may pin: a list built once per container is only
+                // worth keeping while the pass is small enough to matter.
+                lists.clear();
+                cachedItems = 0;
+            }
+        }
     }
 
     /**
@@ -944,6 +1039,26 @@ public class BlockComputer {
     private List<BlockItem> generateItemList(
         NodeId node, FloatSize nodeInnerSize, TaffyDirection containerDirection) {
         TaffyTree tree = layoutComputer.getTree();
+        ItemListCache cache = itemListCache(tree);
+        CachedItemList cached = cache.lists.get(node.getId());
+        if (cached != null && cached.matches(nodeInnerSize, containerDirection)) {
+            // Reset the state the layout passes fill in before handing the list out again: the
+            // deferred child layout, the static position of an out-of-flow child and its
+            // collapse-through flag are per-pass results, not item metadata.
+            List<BlockItem> reused = cached.items;
+            for (int i = 0, size = reused.size(); i < size; i++) {
+                BlockItem item = reused.get(i);
+                item.finalLayout = null;
+                item.staticPosition = FloatPoint.ZERO;
+                item.canBeCollapsedThrough = false;
+            }
+            return reused;
+        }
+
+        // Whether the metadata resolved below depends on the container's inner size. When it does
+        // not, the list is valid for every inner size of this pass (a measurement at one known
+        // size and the final layout at another), which is the common case.
+        boolean innerSizeIndependent = true;
         List<BlockItem> items = new ArrayList<>();
 
         int order = 0;
@@ -952,6 +1067,10 @@ public class BlockComputer {
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
                 continue;
+            }
+
+            if (innerSizeIndependent && hasInnerSizeDependentValues(childStyle)) {
+                innerSizeIndependent = false;
             }
 
             BlockItem item = new BlockItem();
@@ -1035,7 +1154,57 @@ public class BlockComputer {
             items.add(item);
         }
 
+        cache.store(node.getId(), items, nodeInnerSize, containerDirection, innerSizeIndependent);
         return items;
+    }
+
+    /**
+     * Returns the pass-scoped item-list cache for {@code tree}, discarding the entries of a
+     * previous pass (a different tree or a new direction epoch).
+     */
+    private static ItemListCache itemListCache(TaffyTree tree) {
+        ItemListCache cache = ITEM_LIST_CACHE.get();
+        long epoch = tree.currentDirectionEpoch();
+        TaffyTree cachedTree = cache.tree == null ? null : cache.tree.get();
+        if (cachedTree != tree || cache.epoch != epoch) {
+            cache.lists.clear();
+            cache.cachedItems = 0;
+            cache.tree = new WeakReference<>(tree);
+            cache.epoch = epoch;
+        }
+        return cache;
+    }
+
+    /**
+     * Whether any child-style value this class resolves against the container's inner size can
+     * actually depend on it.
+     *
+     * <p>{@link #generateItemList} resolves the child's padding and border against the container's
+     * content-box width and its size/min-size/max-size against the content-box size; a
+     * {@code length} ignores that basis, whereas a percentage or a {@code calc()} expression (which
+     * may embed one) does not. Style height/width keywords and {@code auto} resolve to
+     * {@link Float#NaN} regardless of the basis, so they are basis-independent too. When this
+     * method returns {@code false} the item list may be shared across the different known
+     * dimensions a single pass lays the container out with.</p>
+     */
+    private static boolean hasInnerSizeDependentValues(TaffyStyle style) {
+        return rectDependsOnInnerSize(style.getPadding())
+               || rectDependsOnInnerSize(style.getBorder())
+               || sizeDependsOnInnerSize(style.getSize())
+               || sizeDependsOnInnerSize(style.getMinSize())
+               || sizeDependsOnInnerSize(style.getMaxSize());
+    }
+
+    private static boolean rectDependsOnInnerSize(TaffyRect<LengthPercentage> rect) {
+        return rect.left.isPercent() || rect.left.isCalc()
+               || rect.right.isPercent() || rect.right.isCalc()
+               || rect.top.isPercent() || rect.top.isCalc()
+               || rect.bottom.isPercent() || rect.bottom.isCalc();
+    }
+
+    private static boolean sizeDependsOnInnerSize(TaffySize<TaffyDimension> size) {
+        return size.width.isPercent() || size.width.isCalc()
+               || size.height.isPercent() || size.height.isCalc();
     }
 
     private float determineContentBasedContainerWidth(List<BlockItem> items, AvailableSpace availableWidth) {
