@@ -44,6 +44,16 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   `gentest/freshness-allowlist.txt` with stale-entry detection, and CI
   instructions in `gentest/README.md`.
 
+### Post-P7 alignment fixes
+
+- Leaf/root available space now deducts a child's margins exactly once (X2/C17),
+  fixing double subtraction for block/flex/grid measure callbacks.
+- Block stretch width excludes compressible-replaced boxes, and aspect-ratio
+  transfer derives either axis before child layout (BK-04/BK-15; the latter is
+  gated to final layout until FL-15/BL-01 lands).
+- Grid intrinsic measurement subtracts item margins from the available space
+  (T24), and BFC float slots include the nested containing block insets.
+
 ### P7 additions (float, grid details, contain)
 
 - CSS `float`/`clear` (style fields, `FloatContext`/`BlockContext`/`BfcSlot`),
