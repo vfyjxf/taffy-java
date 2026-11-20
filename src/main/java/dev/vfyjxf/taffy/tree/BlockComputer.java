@@ -1197,19 +1197,32 @@ public class BlockComputer {
                 continue;
             }
 
-            // Resolve margins.
+            // Resolve margins once.
             //
             // Percentage (auto-margin-free) margins resolve against the containing block's
             // inline size, i.e. this container's *content box* width, not its outer width.
             // BK-21 / upstream #990 (86d93d95).
-            FloatRect itemMarginOpt = resolveMarginOptional(item.margin, containerInnerWidth);
-            FloatRect itemNonAutoMargin = new FloatRect(
-                Float.isNaN(itemMarginOpt.left) ? 0f : itemMarginOpt.left,
-                Float.isNaN(itemMarginOpt.right) ? 0f : itemMarginOpt.right,
-                Float.isNaN(itemMarginOpt.top) ? 0f : itemMarginOpt.top,
-                Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
-            );
-            float itemNonAutoXMarginSum = itemNonAutoMargin.left + itemNonAutoMargin.right;
+            //
+            // The resolved values are kept as primitives because three consumers read them: the
+            // geometry the box is laid out with (stretch height, BFC slot search, sub-context
+            // insets), the margin-collapse sets, and the {@code Layout.margin} reported back to
+            // the tree. Only the last one needs a rectangle, and only after the used size of an
+            // auto margin is known, so nothing is materialised before then. An auto (or
+            // unresolvable) component stays {@link Float#NaN} until that point.
+            TaffyRect<LengthPercentageAuto> marginStyle = item.margin;
+            boolean autoMarginLeft = marginStyle.left.isAuto();
+            boolean autoMarginRight = marginStyle.right.isAuto();
+            float marginLeft = autoMarginLeft ? NaN : marginStyle.left.maybeResolve(containerInnerWidth);
+            float marginRight = autoMarginRight ? NaN : marginStyle.right.maybeResolve(containerInnerWidth);
+            float marginTop = marginStyle.top.isAuto() ? NaN : marginStyle.top.maybeResolve(containerInnerWidth);
+            float marginBottom = marginStyle.bottom.isAuto() ? NaN : marginStyle.bottom.maybeResolve(containerInnerWidth);
+            // Placement uses the non-auto margins only: an auto margin contributes nothing to the
+            // box's outer size until it is resolved to its used value after layout.
+            float nonAutoMarginLeft = Float.isNaN(marginLeft) ? 0f : marginLeft;
+            float nonAutoMarginRight = Float.isNaN(marginRight) ? 0f : marginRight;
+            float nonAutoMarginTop = Float.isNaN(marginTop) ? 0f : marginTop;
+            float nonAutoMarginBottom = Float.isNaN(marginBottom) ? 0f : marginBottom;
+            float itemNonAutoXMarginSum = nonAutoMarginLeft + nonAutoMarginRight;
 
             // === Floated child (CSS 2.2 §9.5.1) ===
             //
@@ -1266,7 +1279,7 @@ public class BlockComputer {
                 // placement context requires a finite non-negative size.
                 float marginBoxWidth = Math.max(0.0f, finalSize.width + itemNonAutoXMarginSum);
                 float marginBoxHeight = Math.max(
-                    0.0f, finalSize.height + itemNonAutoMargin.top + itemNonAutoMargin.bottom);
+                    0.0f, finalSize.height + nonAutoMarginTop + nonAutoMarginBottom);
                 float minY = committedYOffset + activeCollapsibleMarginSet.resolve();
                 FloatContext.Direction floatDirection = item.floatStyle == TaffyFloat.LEFT
                                                         ? FloatContext.Direction.LEFT
@@ -1282,8 +1295,8 @@ public class BlockComputer {
                 // The context returns the margin-box position relative to this block's border
                 // box; the Layout reports the border box. A relative inset is applied afterwards
                 // and does not affect the placement of any other box (CSS 2.2 9.4.3).
-                float x = placement.x() + itemNonAutoMargin.left;
-                float y = placement.y() + itemNonAutoMargin.top;
+                float x = placement.x() + nonAutoMarginLeft;
+                float y = placement.y() + nonAutoMarginTop;
                 if (item.position == TaffyPosition.RELATIVE) {
                     x += relativeInsetX(item.inset, containerInnerWidth, isRtl);
                     y += relativeInsetY(item.inset, childPercentageResolutionHeight);
@@ -1303,7 +1316,9 @@ public class BlockComputer {
                     scrollbarSize,
                     item.border,
                     item.padding,
-                    itemNonAutoMargin
+                    new FloatRect(
+                        nonAutoMarginLeft, nonAutoMarginRight,
+                        nonAutoMarginTop, nonAutoMarginBottom)
                 );
                 continue;
             }
@@ -1339,8 +1354,8 @@ public class BlockComputer {
                     slot = blockContext.findBfcSlot(
                         minYForSlot,
                         minHeight,
-                        itemNonAutoMargin.left,
-                        itemNonAutoMargin.right,
+                        nonAutoMarginLeft,
+                        nonAutoMarginRight,
                         direction,
                         item.clear,
                         afterSegment
@@ -1495,7 +1510,8 @@ public class BlockComputer {
                 float keywordHeight = resolveStretchHeight(
                     item.heightStyle,
                     childPercentageResolutionHeight,
-                    itemNonAutoMargin,
+                    nonAutoMarginTop,
+                    nonAutoMarginBottom,
                     childrenMarginsAdjoinOwnEdges
                 );
                 // A block size derived from the inline size through the ratio is not passed down
@@ -1539,7 +1555,7 @@ public class BlockComputer {
                                  : containerInnerWidth - itemNonAutoXMarginSum;
                     childWidth = Math.max(childWidth, item.paddingBorderSum.width);
                 }
-                float childLeftInset = contentBoxInset.left + itemNonAutoMargin.left;
+                float childLeftInset = contentBoxInset.left + nonAutoMarginLeft;
                 float childRightInset = containerOuterWidth - childLeftInset - childWidth;
                 float estimatedY = committedYOffset + activeCollapsibleMarginSet.resolve();
                 childBlockContext = blockContext.subContext(estimatedY, childLeftInset, childRightInset);
@@ -1579,15 +1595,15 @@ public class BlockComputer {
 
             // Get margin collapse info from child layout
             CollapsibleMarginSet topMarginSet = itemOutput.topMargin().copy()
-                                                          .collapseWithMargin(!Float.isNaN(itemMarginOpt.top) ? itemMarginOpt.top : 0f);
+                                                          .collapseWithMargin(nonAutoMarginTop);
             CollapsibleMarginSet bottomMarginSet = itemOutput.bottomMargin().copy()
-                                                             .collapseWithMargin(!Float.isNaN(itemMarginOpt.bottom) ? itemMarginOpt.bottom : 0f);
+                                                             .collapseWithMargin(nonAutoMarginBottom);
 
             // Expand auto margins
             float freeXSpace = avoidsFloats
                                ? Math.max(0, floatAvailableWidth - finalSize.width)
                                : Math.max(0, containerInnerWidth - finalSize.width - itemNonAutoXMarginSum);
-            int autoMarginCount = (item.margin.left.isAuto() ? 1 : 0) + (item.margin.right.isAuto() ? 1 : 0);
+            int autoMarginCount = (autoMarginLeft ? 1 : 0) + (autoMarginRight ? 1 : 0);
             float xAxisAutoMarginSize = autoMarginCount > 0 ? freeXSpace / autoMarginCount : 0;
 
             // Layout.margin reports the child's *own* margins. The collapsed sets above describe
@@ -1596,10 +1612,10 @@ public class BlockComputer {
             // the child's margin. Auto margins report 0 here: the resolved auto size is only
             // consumed by the positioning maths. BK-10 / upstream #1287.
             FloatRect resolvedMargin = new FloatRect(
-                Float.isNaN(itemMarginOpt.left) ? xAxisAutoMarginSize : itemMarginOpt.left,
-                Float.isNaN(itemMarginOpt.right) ? xAxisAutoMarginSize : itemMarginOpt.right,
-                Float.isNaN(itemMarginOpt.top) ? 0f : itemMarginOpt.top,
-                Float.isNaN(itemMarginOpt.bottom) ? 0f : itemMarginOpt.bottom
+                Float.isNaN(marginLeft) ? xAxisAutoMarginSize : marginLeft,
+                Float.isNaN(marginRight) ? xAxisAutoMarginSize : marginRight,
+                nonAutoMarginTop,
+                nonAutoMarginBottom
             );
 
             // Resolve item inset. Only `position: relative` applies its inset as a correction
@@ -1657,7 +1673,7 @@ public class BlockComputer {
             // that case (upstream #1250).
             float itemOuterWidth = finalSize.width + resolvedMargin.left + resolvedMargin.right;
             float freeSpace = containerInnerWidth - itemOuterWidth;
-            boolean hasAutoXMargin = item.margin.left.isAuto() || item.margin.right.isAuto();
+            boolean hasAutoXMargin = autoMarginLeft || autoMarginRight;
             float x;
 
             if (nonStretchJustifySelf != null && !hasAutoXMargin) {
@@ -1720,8 +1736,8 @@ public class BlockComputer {
                 // BfcSlot already accounts for the box's non-auto margins; only resolved auto
                 // margins and the relative inset are added here. RTL mirrors the slot's left
                 // border edge around the border-box width.
-                float extraLeft = resolvedMargin.left - itemNonAutoMargin.left;
-                float extraRight = resolvedMargin.right - itemNonAutoMargin.right;
+                float extraLeft = resolvedMargin.left - nonAutoMarginLeft;
+                float extraRight = resolvedMargin.right - nonAutoMarginRight;
                 x = isRtl
                     ? floatSlotX + floatSlotWidth - finalSize.width - extraRight + insetOffsetX
                     : floatSlotX + extraLeft + insetOffsetX;
@@ -1861,18 +1877,6 @@ public class BlockComputer {
         float top = inset.top.maybeResolve(basis);
         float bottom = inset.bottom.maybeResolve(basis);
         return !Float.isNaN(top) ? top : (!Float.isNaN(bottom) ? -bottom : 0f);
-    }
-
-    /**
-     * Resolve margins returning null for auto margins.
-     */
-    private FloatRect resolveMarginOptional(TaffyRect<LengthPercentageAuto> margin, float contextWidth) {
-        return new FloatRect(
-            margin.left.isAuto() ? NaN : margin.left.maybeResolve(contextWidth),
-            margin.right.isAuto() ? NaN : margin.right.maybeResolve(contextWidth),
-            margin.top.isAuto() ? NaN : margin.top.maybeResolve(contextWidth),
-            margin.bottom.isAuto() ? NaN : margin.bottom.maybeResolve(contextWidth)
-        );
     }
 
     /**
@@ -2316,7 +2320,8 @@ public class BlockComputer {
      * @param heightStyle the item's raw style height
      * @param containerPercentageResolutionHeight the containing block's content-box height, or
      *        {@link Float#NaN} when it is indefinite
-     * @param itemMargin the item's resolved non-auto margins
+     * @param marginTop the item's resolved non-auto top margin
+     * @param marginBottom the item's resolved non-auto bottom margin
      * @param marginsTreatedAsZero which block-axis margins adjoin the containing block's edges
      * @return the stretch height, or {@link Float#NaN} when the height is not a resolvable
      *         {@code stretch} keyword in this context
@@ -2324,13 +2329,14 @@ public class BlockComputer {
     private static float resolveStretchHeight(
         TaffyDimension heightStyle,
         float containerPercentageResolutionHeight,
-        FloatRect itemMargin,
+        float marginTop,
+        float marginBottom,
         TaffyLine<Boolean> marginsTreatedAsZero) {
         if (heightStyle == null || !heightStyle.isStretch()) return NaN;
         if (Float.isNaN(containerPercentageResolutionHeight)) return NaN;
         float height = containerPercentageResolutionHeight;
-        if (!marginsTreatedAsZero.start) height -= itemMargin.top;
-        if (!marginsTreatedAsZero.end) height -= itemMargin.bottom;
+        if (!marginsTreatedAsZero.start) height -= marginTop;
+        if (!marginsTreatedAsZero.end) height -= marginBottom;
         return height;
     }
 
