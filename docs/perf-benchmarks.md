@@ -32,7 +32,7 @@ The default JSON result lands in `build/reports/jmh/results.json`; the extended 
 | Class | @Benchmark methods | Default parameters | Coverage | Upstream reference |
 |---|---|---|---|---|
 | `FlexScenarioBenchmark` | 6 | nodeCount 100 / 1,000 / 10,000; row+column; baseline 100/1,000; depth 100/1,000 | row/column, wrap/no-wrap, grow, shrink, baseline alignment, deep nesting | `benches/flexbox.rs` |
-| `PanguiBenchmark` | 11 | 100-15,000 nodes per workload | `wide_no_wrap_simple_few` (1k/10k), `wide_wrapping`, `nested_vertical_stack`, equal/weighted expand, percentage+ratio, min/max constraints, perpendicular wrap, pixels+min-expand, padding/margin | `benches/pangui/*.txt` |
+| `PanguiBenchmark` | 11 | 100-15,000 nodes per workload | `wide_no_wrap_simple_few` (1k/10k; 100k in Extended), `wide_wrapping`, `nested_vertical_stack`, equal/weighted expand, percentage+ratio, min/max constraints, perpendicular wrap, pixels+min-expand, padding/margin | `benches/pangui/*.txt` |
 | `GridCoverageBenchmark` | 4 | cells 100 / 1,000 / 10,000; auto-flow 4 modes; nested `2_5`, `3_4` | fixed/fr/auto tracks, auto-flow row/column/dense, spanning items, nested grids | `benches/grid.rs` |
 | `BlockFloatBenchmark` | 7 | depth/items 100 / 1,000 | deep block nesting, margin collapsing, left/right floats, `clear`, overflow scroll, `flow-root`, `contain: layout` | upstream float/BFC tests and block layout |
 | `LdlibUiBenchmark` | 5 | panels 10/100/1,000; leaves 100/1k/10k; cards 24/96/384; scroll panels 10/100 | LDLib-style panel/label/button/scroll trees, measure-heavy leaves, percentage+aspect-ratio, grid of flex cards | `benches/mixed.rs` (measure-heavy shape) |
