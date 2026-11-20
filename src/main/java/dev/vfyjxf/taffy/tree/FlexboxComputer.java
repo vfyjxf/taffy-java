@@ -830,6 +830,20 @@ public class FlexboxComputer {
                 }
             }
 
+            // css-flexbox-1 §9.2 step B: a content-based flex item with a preferred aspect ratio
+            // and a definite cross size takes its flex base size from the cross size through the
+            // ratio. A cross size pinned by a *specified* cross-axis min-size is definite for this
+            // purpose as well: WPT flex-aspect-ratio-034/036 give a column flex item with no width
+            // or height only `min-width: 100px`, and its used cross size (and therefore its
+            // height) is 100px. An explicit zero min-size (the generated styles carry one almost
+            // everywhere) does not pin anything.
+            if (isNaN(childKnownCross) && isNaN(crossSize) && item.aspectRatio != null && !isNaN(item.aspectRatio)) {
+                float crossMinSpecified = isRow ? item.minSize.height : item.minSize.width;
+                if (!isNaN(crossMinSpecified) && crossMinSpecified > 0f) {
+                    childKnownCross = crossMinSpecified;
+                }
+            }
+
             FloatSize childKnownDimensions = isRow
                                              ? new FloatSize(NaN, childKnownCross)
                                              : new FloatSize(childKnownCross, NaN);

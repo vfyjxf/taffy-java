@@ -1080,16 +1080,30 @@ public class LayoutComputer {
         } else {
             resolvedMinSizeRaw = Resolve.maybeResolveSize(style.getMinSize(), parentSize);
 
-            minSize = Resolve.maybeApplyAspectRatio(resolvedMinSizeRaw, aspectRatio);
-            minSize = maybeAdd(minSize, boxSizingAdjustment);
+            // min-size does NOT apply the aspect ratio either: only the used size of one axis
+            // transfers to the other, and a transferred size is derived from the other axis
+            // *after* that axis has been clamped by its own min/max (css-sizing-4). A transferred
+            // min/max constraint would let e.g. `max-height: 25px` cap an auto inline size of a
+            // 300px-tall box with ratio 4 at 25px instead of 100px.
+            minSize = maybeAdd(resolvedMinSizeRaw, boxSizingAdjustment);
 
             // max-size does NOT apply aspect-ratio in leaf layout (per Taffy behavior)
             maxSize = maybeAdd(resolvedMaxSizeRaw, boxSizingAdjustment);
 
             FloatSize size = Resolve.maybeResolveSize(style.getSize(), parentSize);
-            FloatSize styleSize = Resolve.maybeApplyAspectRatio(size, aspectRatio);
-            styleSize = maybeAdd(styleSize, boxSizingAdjustment);
+            FloatSize styleSize = maybeAdd(size, boxSizingAdjustment);
+            // Clamp the specified axes first, then transfer the remaining definite axis through
+            // the ratio: `height: 300px; max-height: 25px; aspect-ratio: 4` is 25px tall and
+            // therefore 100px wide, not 1200px.
             FloatSize clampedStyleSize = maybeClamp(styleSize, minSize, maxSize);
+            if (Resolve.isTransferableAspectRatio(aspectRatio)) {
+                FloatSize contentBox = new FloatSize(
+                    clampedStyleSize.width - boxSizingAdjustment.width,
+                    clampedStyleSize.height - boxSizingAdjustment.height
+                );
+                FloatSize transferred = Resolve.maybeApplyAspectRatio(contentBox, aspectRatio);
+                clampedStyleSize = maybeClamp(maybeAdd(transferred, boxSizingAdjustment), minSize, maxSize);
+            }
 
             // Merge known dimensions with style size
             styledBasedKnownDimensions = new FloatSize(
@@ -1224,7 +1238,7 @@ public class LayoutComputer {
         // Apply aspect-ratio enforcement.
         // When one dimension is known (from knownDimensions or style) and the other is auto/measured,
         // derive the auto dimension from the known one via aspect ratio.
-        if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
+        if (Resolve.isTransferableAspectRatio(aspectRatio == null ? Float.NaN : aspectRatio)) {
             // Derive height from width (existing behavior)
             float aspectHeight = width / aspectRatio;
             height = Math.max(height, aspectHeight);

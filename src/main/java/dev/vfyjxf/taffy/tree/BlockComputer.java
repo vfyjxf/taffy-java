@@ -31,6 +31,7 @@ import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.FloatContext;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
+import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
 import java.util.ArrayList;
@@ -77,6 +78,23 @@ public class BlockComputer {
          * keywords are equal to the content size and therefore behave like {@code auto}.
          */
         TaffyDimension heightStyle;
+        /**
+         * The item's raw style {@code width}, kept so that a sizing keyword
+         * ({@code min-content}, {@code max-content}, {@code fit-content}, {@code stretch}) can be
+         * resolved in the containing block's layout context. A keyword resolves to
+         * {@link Float#NaN} in {@link #size} and therefore needs its own resolution pass.
+         * Upstream {@code resolve_sizing_keyword} (#1099/#1103/#1247).
+         */
+        TaffyDimension widthStyle;
+        /**
+         * Whether the item's size in this axis was derived from the other axis through
+         * {@code aspect-ratio} rather than specified. A derived axis is subject to the automatic
+         * minimum size (the content-based floor), while a specified one is not.
+         */
+        boolean widthFromAspectRatio;
+        boolean heightFromAspectRatio;
+        /** The item's preferred aspect ratio ({@code NaN} when it has none). */
+        float aspectRatio = NaN;
         FloatSize size;
         FloatSize minSize;
         FloatSize maxSize;
@@ -226,17 +244,22 @@ public class BlockComputer {
                                         ? paddingBorderSize
                                         : new FloatSize(0f, 0f);
 
+        // The style size is resolved without the aspect ratio: a transferred size must be derived
+        // from the *clamped* size of the other axis (a `width: 300px; max-width: 100px` box with
+        // ratio 2 is 100px wide and therefore 50px tall, not the 150px its specified width would
+        // transfer). The transfer happens below, after min/max clamping.
         FloatSize size2 = Resolve.maybeResolveSize(style.getSize(), parentSize);
-        FloatSize sizeStyle = Resolve.maybeApplyAspectRatio(size2, aspectRatio);
-        sizeStyle = maybeAdd(sizeStyle, boxSizingAdjustment);
+        FloatSize sizeStyle = maybeAdd(size2, boxSizingAdjustment);
 
+        // min/max constraints are NOT transferred through the aspect ratio: only the used size of
+        // one axis transfers to the other. A transferred cross-axis constraint would let, for
+        // example, `max-width: 100px` cap a content-sized height (Chrome keeps the height at the
+        // content size), which is neither the css-sizing-4 rule nor what any browser does.
         FloatSize size1 = Resolve.maybeResolveSize(style.getMinSize(), parentSize);
-        FloatSize minSize = Resolve.maybeApplyAspectRatio(size1, aspectRatio);
-        minSize = maybeAdd(minSize, boxSizingAdjustment);
+        FloatSize minSize = maybeAdd(size1, boxSizingAdjustment);
 
         FloatSize size = Resolve.maybeResolveSize(style.getMaxSize(), parentSize);
-        FloatSize maxSize = Resolve.maybeApplyAspectRatio(size, aspectRatio);
-        maxSize = maybeAdd(maxSize, boxSizingAdjustment);
+        FloatSize maxSize = maybeAdd(size, boxSizingAdjustment);
 
         // A `display: flow-root` box always establishes a new block formatting context, and a
         // scroll container (including `overflow: hidden`) does too. The parts of that behaviour
@@ -333,6 +356,17 @@ public class BlockComputer {
             return LayoutOutput.fromOuterSize(styledBasedKnownDimensions);
         }
 
+        // css-sizing-4 automatic minimum size: an aspect-ratio box is floored in an axis by its
+        // content-based minimum size (its min-content contribution) when its min-size is auto,
+        // and the floor is zero for a scroll container (css-sizing-3 "overflow: non-visible" rule;
+        // WPT block-aspect-ratio-010..012, 018). The generated style model cannot distinguish
+        // "min-width: auto" from the 0px a block box computes to, so a zero min-size on an
+        // aspect-ratio box is treated as auto, which is the used value Chrome computes.
+        boolean aspectRatioAutoMinimumSize =
+            !Float.isNaN(aspectRatio)
+            && !overflow.x.isScrollContainer()
+            && !overflow.y.isScrollContainer();
+
         // css-sizing-4: a definite size in one axis transfers through `aspect-ratio` to make the
         // other definite. This must be resolved *before* the content box size and the item list
         // are derived, otherwise the children are laid out against an unknown height (so their
@@ -357,16 +391,24 @@ public class BlockComputer {
         // box before transferring, convert the derived axis back, then clamp it by min/max and
         // floor it at the padding+border sum (like the intrinsic-height path below).
         // BK-15(a).
-        if (runMode == RunMode.PERFORM_LAYOUT && !Float.isNaN(aspectRatio)) {
+        // Which axis (if any) this box's used size was newly derived for through the ratio. A
+        // derived axis is not a specified size: the automatic minimum size above can still floor
+        // it (inline) or grow it (block), and a transferred axis must not be clamped by a
+        // transferred constraint.
+        boolean widthDerivedByAspectRatio = false;
+        boolean heightDerivedByAspectRatio = false;
+        if (runMode == RunMode.PERFORM_LAYOUT && Resolve.isTransferableAspectRatio(aspectRatio)) {
             FloatSize derived = styledBasedKnownDimensions;
             if (!Float.isNaN(derived.width) && Float.isNaN(derived.height)) {
                 float arDerivedHeight = (derived.width - boxSizingAdjustment.width) / aspectRatio
                                         + boxSizingAdjustment.height;
                 derived = new FloatSize(derived.width, arDerivedHeight);
+                heightDerivedByAspectRatio = true;
             } else if (Float.isNaN(derived.width) && !Float.isNaN(derived.height)) {
                 float arDerivedWidth = (derived.height - boxSizingAdjustment.height) * aspectRatio
                                        + boxSizingAdjustment.width;
                 derived = new FloatSize(arDerivedWidth, derived.height);
+                widthDerivedByAspectRatio = true;
             }
             derived = maybeMax(maybeClamp(derived, minSize, maxSize), paddingBorderSize);
             styledBasedKnownDimensions = new FloatSize(
@@ -400,6 +442,25 @@ public class BlockComputer {
                                    + contentBoxInsetH;
             containerOuterWidth = TaffyMath.clamp(intrinsicWidth, minSize.width, maxSize.width);
             containerOuterWidth = Math.max(containerOuterWidth, !Float.isNaN(paddingBorderSize.width) ? paddingBorderSize.width : 0);
+        }
+
+        // css-sizing-4 automatic minimum size in the inline axis: when the inline size was
+        // transferred from a definite block size, the box is still floored by its content-based
+        // minimum size (its min-content contribution), unless its own min-width overrides that.
+        // Block-aspect-ratio-015/056/057: a `height: 100px; aspect-ratio: 1/2` box holding a
+        // 100px-wide child is 100px wide, not the transferred 50px.
+        // The automatic minimum only applies when min-width does not specify a larger minimum; a
+        // content-box adjustment makes a zero specified min-width resolve to the padding+border
+        // sum, so compare against that floor rather than against zero.
+        if (widthDerivedByAspectRatio
+            && aspectRatioAutoMinimumSize
+            && (Float.isNaN(minSize.width) || minSize.width <= paddingBorderSize.width)) {
+            float minContentWidth = determineContentBasedContainerWidth(items, AvailableSpace.minContent())
+                                    + contentBoxInsetWidth;
+            containerOuterWidth = Math.max(containerOuterWidth, minContentWidth);
+            containerOuterWidth = Math.max(
+                TaffyMath.clamp(containerOuterWidth, minSize.width, maxSize.width),
+                paddingBorderSize.width);
         }
 
         // Short-circuit if computing size and both dimensions known
@@ -477,6 +538,19 @@ public class BlockComputer {
         );
 
         float containerOuterHeight = styledBasedKnownDimensions.height;
+        if (!Float.isNaN(containerOuterHeight)
+            && heightDerivedByAspectRatio
+            && aspectRatioAutoMinimumSize
+            && (Float.isNaN(minSize.height) || minSize.height <= paddingBorderSize.height)) {
+            // css-sizing-4 automatic minimum size in the block axis: a block size transferred
+            // from a definite inline size is floored by the content height, so a box with
+            // `width: 100px; aspect-ratio: 2/1` holding 100px of content is 100px tall rather
+            // than the transferred 50px (WPT block-aspect-ratio-009, 042).
+            float contentHeightGrown = Math.max(containerOuterHeight, layoutResult.contentHeight);
+            contentHeightGrown = TaffyMath.clamp(contentHeightGrown, minSize.height, maxSize.height);
+            containerOuterHeight = Math.max(
+                contentHeightGrown, !Float.isNaN(paddingBorderSize.height) ? paddingBorderSize.height : 0);
+        }
         if (Float.isNaN(containerOuterHeight)) {
             // This branch is only reached when the height is auto. In a final layout an
             // aspect-ratio derived height was already resolved above (so the height is definite
@@ -884,11 +958,21 @@ public class BlockComputer {
                                      : new FloatSize(0f, 0f);
 
             FloatSize size2 = Resolve.maybeResolveSize(childStyle.getSize(), nodeInnerSize);
-            item.size = maybeAdd(Resolve.maybeApplyAspectRatio(size2, aspectRatio), boxSizingAdj);
+            // The item's min/max constraints are not transferred through its aspect ratio; see
+            // the note in compute() (only the used size transfers between axes).
             FloatSize size1 = Resolve.maybeResolveSize(childStyle.getMinSize(), nodeInnerSize);
-            item.minSize = maybeAdd(Resolve.maybeApplyAspectRatio(size1, aspectRatio), boxSizingAdj);
+            item.minSize = maybeAdd(size1, boxSizingAdj);
             FloatSize size = Resolve.maybeResolveSize(childStyle.getMaxSize(), nodeInnerSize);
-            item.maxSize = maybeAdd(Resolve.maybeApplyAspectRatio(size, aspectRatio), boxSizingAdj);
+            item.maxSize = maybeAdd(size, boxSizingAdj);
+            // Clamp the item's specified size in its own axis by its own min/max first, then
+            // transfer the remaining definite axis through the ratio (css-sizing-4). Deriving
+            // before clamping would transfer the unclamped size of the other axis.
+            FloatSize clampedSize = maybeClamp(size2, size1, size);
+            item.size = maybeAdd(Resolve.maybeApplyAspectRatio(clampedSize, aspectRatio), boxSizingAdj);
+            item.widthFromAspectRatio =
+                Float.isNaN(clampedSize.width) && !Float.isNaN(item.size.width);
+            item.heightFromAspectRatio =
+                Float.isNaN(clampedSize.height) && !Float.isNaN(item.size.height);
 
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
@@ -896,6 +980,8 @@ public class BlockComputer {
             item.inset = childStyle.getInset();
             item.margin = childStyle.getMargin();
             item.heightStyle = childStyle.getSize().height;
+            item.widthStyle = childStyle.getSize().width;
+            item.aspectRatio = aspectRatio;
             item.computedSize = new FloatSize(0f, 0f);
             item.staticPosition = new FloatPoint(0f, 0f);
             item.canBeCollapsedThrough = false;
@@ -952,11 +1038,23 @@ public class BlockComputer {
             } else {
                 AvailableSpace adjustedAvailable = subtractFromAvailable(availableWidth, marginSum);
 
+                // An item whose width is a sizing keyword is measured under the constraint the
+                // keyword asks for (min-content / max-content / fit-content / stretch) instead of
+                // under the containing block's own available width. Upstream taffy resolves these
+                // keywords separately from the plain style size (#1099/#1103/#1247).
+                AvailableSpace itemAvailable = adjustedAvailable;
+                SizingKeyword.Resolution keyword = SizingKeyword.resolve(item.widthStyle, NaN, NaN);
+                if (keyword != null) {
+                    itemAvailable = keyword.isMeasure()
+                        ? keyword.getMeasureAvailableSpace()
+                        : AvailableSpace.definite(keyword.getExactValue());
+                }
+
                 LayoutOutput output = layoutComputer.performChildLayout(
                     item.nodeId,
                     knownDimensions,
                     new FloatSize(NaN, NaN),
-                    new TaffySize<>(adjustedAvailable, AvailableSpace.minContent()),
+                    new TaffySize<>(itemAvailable, AvailableSpace.minContent()),
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(true, true)
                 );
@@ -1261,35 +1359,81 @@ public class BlockComputer {
             if ((item.isTable || item.isCompressibleReplaced) && !isStretchJustifySelf) {
                 knownDimensions = new FloatSize(NaN, NaN);
             } else {
-                float width;
-                if (!Float.isNaN(item.size.width)) {
-                    width = item.size.width;
-                } else if (nonStretchJustifySelf != null && item.widthIsAuto) {
-                    // "The automatic width of a block-level box whose justify-self is neither
-                    // normal nor stretch is fit-content rather than stretch": measure the item
-                    // under the available width, which is upstream's Dimension::fit_content()
-                    // sizing-keyword resolution (upstream #1250).
-                    float fitContentAvailable = avoidsFloats
-                                               ? Math.max(0f, floatAvailableWidth)
-                                               : Math.max(0f, containerInnerWidth - itemNonAutoXMarginSum);
-                    FloatSize measured = layoutComputer.measureChildSize(
+                // The width this item would take if it were stretched to fill its containing
+                // block's content box (less the block margins that stay outside it).
+                float stretchWidth = Math.max(0f, avoidsFloats
+                                                  ? floatAvailableWidth
+                                                  : containerInnerWidth - itemNonAutoXMarginSum);
+                // "The automatic width of a block-level box whose justify-self is neither normal
+                // nor stretch is fit-content rather than stretch": express that as the
+                // fit-content sizing keyword, which resolves to a measurement under the stretch
+                // width (upstream #1250). An explicit sizing keyword on the item's own width
+                // (min-content, max-content, fit-content, fit-content(...), stretch) resolves
+                // either to an exact width or to a measurement under its own constraint
+                // (upstream #1099/#1103/#1247).
+                TaffyDimension widthStyle = nonStretchJustifySelf != null && item.widthIsAuto
+                                            ? TaffyDimension.fitContent()
+                                            : item.widthStyle;
+                SizingKeyword.Resolution keyword = SizingKeyword.resolve(
+                    widthStyle, stretchWidth, containerInnerWidth);
+                float keywordWidth = NaN;
+                if (keyword != null) {
+                    if (keyword.isExact()) {
+                        keywordWidth = keyword.getExactValue();
+                    } else {
+                        FloatSize measured = layoutComputer.measureChildSize(
+                            item.nodeId,
+                            new FloatSize(NaN, NaN),
+                            parentSize,
+                            new TaffySize<>(keyword.getMeasureAvailableSpace(), AvailableSpace.maxContent()),
+                            SizingMode.INHERENT_SIZE,
+                            new TaffyLine<>(true, true)
+                        );
+                        keywordWidth = measured.width;
+                    }
+                }
+                float width = !Float.isNaN(item.size.width)
+                              ? item.size.width
+                              : (!Float.isNaN(keywordWidth) ? keywordWidth : stretchWidth);
+                // A definite block-axis min/max transfers through the ratio to constrain an auto
+                // or intrinsic inline size (css-sizing-4 transferred constraints): a box with
+                // `max-height: 100px; aspect-ratio: 1` and a max-content inline size is 100px
+                // wide, and `max-height: 40px; min-width: 100px` with the same ratio is 100px
+                // wide (the transferred cap lowers the stretch width to 40px, the explicit
+                // min-width then raises it back to 100px). Chrome never transfers the inline
+                // min/max into the block axis, so the reverse is deliberately not done.
+                if (Float.isNaN(item.size.width) && !Float.isNaN(item.aspectRatio)) {
+                    if (!Float.isNaN(item.maxSize.height)) {
+                        width = Math.min(width, item.maxSize.height * item.aspectRatio);
+                    }
+                    if (!Float.isNaN(item.minSize.height)) {
+                        width = Math.max(width, item.minSize.height * item.aspectRatio);
+                    }
+                }
+                width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
+                // css-sizing-4 automatic minimum size: an inline size transferred from the block
+                // size is floored by the item's min-content contribution unless its own min-width
+                // overrides the automatic minimum. (WPT block-aspect-ratio-015/056/057.)
+                if (item.widthFromAspectRatio
+                    && !item.overflow.x.isScrollContainer()
+                    && !item.overflow.y.isScrollContainer()
+                    && (Float.isNaN(item.minSize.width)
+                        || item.minSize.width <= item.paddingBorderSum.width)) {
+                    FloatSize minContent = layoutComputer.measureChildSize(
                         item.nodeId,
                         new FloatSize(NaN, NaN),
                         parentSize,
-                        new TaffySize<>(
-                            AvailableSpace.definite(fitContentAvailable),
-                            AvailableSpace.maxContent()
-                        ),
+                        new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
                         SizingMode.INHERENT_SIZE,
                         new TaffyLine<>(true, true)
                     );
-                    width = Float.isNaN(measured.width) ? fitContentAvailable : measured.width;
-                } else {
-                    width = avoidsFloats
-                            ? floatAvailableWidth
-                            : containerInnerWidth - itemNonAutoXMarginSum;
+                    if (!Float.isNaN(minContent.width)) {
+                        width = Math.max(width, minContent.width);
+                        width = Math.max(
+                            TaffyMath.clamp(width, item.minSize.width, item.maxSize.width),
+                            item.paddingBorderSum.width);
+                    }
                 }
-                width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
                 // A `height: stretch` item fills this container's content box, minus the block
                 // margins that cannot collapse through the corresponding edge of the containing
                 // block. A resolved style height (including one derived through `aspect-ratio`)
@@ -1303,8 +1447,15 @@ public class BlockComputer {
                     itemNonAutoMargin,
                     childrenMarginsAdjoinOwnEdges
                 );
+                // A block size derived from the inline size through the ratio is not passed down
+                // as a given: the item derives it itself during its final layout, where it can
+                // still be floored by the content height (its block-axis automatic minimum size).
+                // Handing the transferred height down would make it look specified and freeze it
+                // below the content (WPT block-aspect-ratio-009/017/034/035/042).
                 float resolvedHeight =
-                    !Float.isNaN(item.size.height) ? item.size.height : keywordHeight;
+                    item.heightFromAspectRatio
+                        ? keywordHeight
+                        : (!Float.isNaN(item.size.height) ? item.size.height : keywordHeight);
                 knownDimensions = maybeClamp(
                     new FloatSize(width, resolvedHeight),
                     item.minSize,
@@ -1741,9 +1892,11 @@ public class BlockComputer {
             float top = insetStyle.top.maybeResolve(areaHeight);
             float bottom = insetStyle.bottom.maybeResolve(areaHeight);
 
-            // Compute size from style
+            // Compute size from style. The aspect ratio is applied after the specified size has
+            // been clamped in its own axis, and min/max are not transferred across axes (see the
+            // note in compute()).
             FloatSize size2 = Resolve.maybeResolveSize(childStyle.getSize(), new FloatSize(areaWidth, areaHeight));
-            FloatSize styleSize = maybeAdd(Resolve.maybeApplyAspectRatio(size2, aspectRatio), boxSizingAdj);
+            FloatSize styleSize = maybeAdd(size2, boxSizingAdj);
             FloatSize size1 = Resolve.maybeResolveSize(childStyle.getMinSize(), new FloatSize(areaWidth, areaHeight));
             FloatSize minSz = maybeAdd(Resolve.maybeApplyAspectRatio(size1, aspectRatio), boxSizingAdj);
             minSz = maybeMax(minSz, paddingBorderSum);
@@ -1751,6 +1904,38 @@ public class BlockComputer {
             FloatSize maxSz = maybeAdd(Resolve.maybeApplyAspectRatio(size, aspectRatio), boxSizingAdj);
 
             FloatSize knownDimensions = maybeClamp(styleSize, minSz, maxSz);
+            // A missing axis is transferred through the ratio from the other axis' used size. When
+            // the other axis is not specified either, a definite max constraint is used as the
+            // basis: an absolutely positioned box with `max-height: 100%` and no size transfers
+            // that bound into its inline size (WPT abspos-008/014).
+            boolean widthFromAspectRatio = false;
+            boolean heightFromAspectRatio = false;
+            if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
+                // A percentage max constraint also acts as a definite used size when no size is
+                // specified: an absolutely positioned box with `max-height: 100%` and no height
+                // transfers that bound into its inline size (WPT abspos-008/014). A length max
+                // constraint is only a cap and does not transfer (the generated upstream
+                // block_absolute_aspect_ratio_fill_max_* fixtures pin that behaviour).
+                float basisWidth = knownDimensions.width;
+                float basisHeight = knownDimensions.height;
+                if (Float.isNaN(basisHeight) && childStyle.getMaxSize().height.isPercent()) {
+                    basisHeight = maxSz.height;
+                }
+                if (Float.isNaN(basisWidth) && childStyle.getMaxSize().width.isPercent()) {
+                    basisWidth = maxSz.width;
+                }
+                FloatSize contentBasis = new FloatSize(basisWidth - boxSizingAdj.width,
+                    basisHeight - boxSizingAdj.height);
+                FloatSize transferred = maybeAdd(
+                    Resolve.maybeApplyAspectRatio(contentBasis, aspectRatio), boxSizingAdj);
+                FloatSize next = new FloatSize(
+                    !Float.isNaN(knownDimensions.width) ? knownDimensions.width : transferred.width,
+                    !Float.isNaN(knownDimensions.height) ? knownDimensions.height : transferred.height
+                );
+                widthFromAspectRatio = Float.isNaN(knownDimensions.width) && !Float.isNaN(next.width);
+                heightFromAspectRatio = Float.isNaN(knownDimensions.height) && !Float.isNaN(next.height);
+                knownDimensions = maybeMax(maybeClamp(next, minSz, maxSz), paddingBorderSum);
+            }
 
             // For calculating width from inset, use non-auto margins only
             float nonAutoMarginLeft = Float.isNaN(marginOpt.left) ? 0f : marginOpt.left;
@@ -1790,6 +1975,56 @@ public class BlockComputer {
                 SizingMode.CONTENT_SIZE,
                 new TaffyLine<>(false, false)
             );
+
+            // css-sizing-4 automatic minimum size, out-of-flow flavour: an axis transferred
+            // through the ratio is floored by the content-based minimum (min-content inline, the
+            // content height in the block axis) unless an explicit min-size overrides it.
+            // WPT abspos-012/013 need the content floors, abspos-008/014 the transferred bound.
+            boolean autoMinimumSizeApplies =
+                !childStyle.getOverflow().x.isScrollContainer()
+                && !childStyle.getOverflow().y.isScrollContainer();
+            FloatSize knownWithFloor = knownDimensions;
+            if (widthFromAspectRatio
+                && autoMinimumSizeApplies
+                && (Float.isNaN(minSz.width) || minSz.width <= paddingBorderSum.width)) {
+                FloatSize minContent = layoutComputer.measureChildSize(
+                    item.nodeId,
+                    new FloatSize(NaN, NaN),
+                    new FloatSize(areaWidth, areaHeight),
+                    new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
+                    SizingMode.INHERENT_SIZE,
+                    new TaffyLine<>(false, false)
+                );
+                if (!Float.isNaN(minContent.width)) {
+                    knownWithFloor = new FloatSize(
+                        Math.max(Math.max(knownWithFloor.width, minContent.width), paddingBorderSum.width),
+                        knownWithFloor.height);
+                }
+            }
+            if (heightFromAspectRatio
+                && autoMinimumSizeApplies
+                && (Float.isNaN(minSz.height) || minSz.height <= paddingBorderSum.height)) {
+                FloatSize contentHeightProbe = layoutComputer.measureChildSize(
+                    item.nodeId,
+                    new FloatSize(!Float.isNaN(knownWithFloor.width) ? knownWithFloor.width : NaN, NaN),
+                    new FloatSize(areaWidth, areaHeight),
+                    new TaffySize<>(
+                        !Float.isNaN(knownWithFloor.width)
+                            ? AvailableSpace.definite(knownWithFloor.width)
+                            : AvailableSpace.maxContent(),
+                        AvailableSpace.maxContent()),
+                    SizingMode.INHERENT_SIZE,
+                    new TaffyLine<>(false, false)
+                );
+                if (!Float.isNaN(contentHeightProbe.height)) {
+                    knownWithFloor = new FloatSize(knownWithFloor.width,
+                        Math.max(Math.max(knownWithFloor.height, contentHeightProbe.height),
+                            paddingBorderSum.height));
+                }
+            }
+            knownDimensions = maybeClamp(knownWithFloor, minSz, maxSz);
+            knownDimensions = new FloatSize(Math.max(knownDimensions.width, paddingBorderSum.width),
+                Math.max(knownDimensions.height, paddingBorderSum.height));
 
             FloatSize finalSize = maybeClamp(
                 new FloatSize(

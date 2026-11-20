@@ -104,10 +104,25 @@ public final class Resolve {
     }
 
     /**
+     * Whether {@code aspectRatio} is a ratio that can transfer a size between axes.
+     *
+     * <p>A ratio of zero ({@code aspect-ratio: 0/1}) or a non-finite one
+     * ({@code aspect-ratio: 1/0}, {@code 0/0} parsed as infinity) carries no usable
+     * proportionality: transferring through it would force the other axis to zero or to
+     * infinity, while browsers leave the axis to its own sizing rule (a zero-ratio block still
+     * fills its containing block, and an infinite ratio behaves like {@code auto}). The generated
+     * WPT cases are css/css-sizing/aspect-ratio/zero-or-infinity-002 (zero) and -006..-010
+     * (zero/infinite, replaced elements).</p>
+     */
+    public static boolean isTransferableAspectRatio(float aspectRatio) {
+        return !Float.isNaN(aspectRatio) && aspectRatio > 0f && !Float.isInfinite(aspectRatio);
+    }
+
+    /**
      * Apply aspect ratio to a size if one dimension is missing.
      */
     public static FloatSize maybeApplyAspectRatio(FloatSize size, float aspectRatio) {
-        if (Float.isNaN(aspectRatio)) return size;
+        if (!isTransferableAspectRatio(aspectRatio)) return size;
         if (!Float.isNaN(size.width) && Float.isNaN(size.height)) {
             return new FloatSize(size.width, size.width / aspectRatio);
         }
