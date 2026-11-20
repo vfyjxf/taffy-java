@@ -2021,7 +2021,10 @@ public class GridComputer {
     private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
                                              NamedLineResolver namedLineResolver) {
         TaffyTree tree = layoutComputer.getTree();
-        List<GridItem> items = new ArrayList<>();
+        // Sized up front: a grid container commonly has one item per child, and growing the list
+        // would copy it repeatedly for a large grid.
+        List<NodeId> children = tree.getChildren(node);
+        List<GridItem> items = new ArrayList<>(children.size());
 
         // Explicit track counts for negative line number resolution. They come from the resolver so
         // that in-flow items, absolutely positioned items and named-line fallbacks all number their
@@ -2030,7 +2033,7 @@ public class GridComputer {
         int explicitRowCount = namedLineResolver.getExplicitRowCount();
 
         int order = 0;
-        for (NodeId childId : tree.getChildren(node)) {
+        for (NodeId childId : children) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
@@ -3530,6 +3533,27 @@ public class GridComputer {
             resolveTrackSizingList(expandedCols, autoColumns, colCounts, numColumns);
         int explicitColCount = (templateCols != null) ? templateCols.size() : 0;
 
+        // Index the items by the column they start in, once (O(items)). The contribution loops
+        // below visit every track and only care about the items that start in it; rescanning the
+        // whole item list for each track made the pass O(tracks * items), which dominated wide
+        // grids. Entries are allocated lazily because a sparse grid leaves most columns empty.
+        // The per-column lists keep the items' original order, and the loops that use them only
+        // combine per-item values with max/sum, so the result is unchanged.
+        IntList[] itemIndicesByColumn = new IntList[numColumns];
+        for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
+            GridItem item = items.get(itemIdx);
+            int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
+            if (col < 0 || col >= numColumns) {
+                continue;
+            }
+            IntList columnItems = itemIndicesByColumn[col];
+            if (columnItems == null) {
+                columnItems = new IntArrayList();
+                itemIndicesByColumn[col] = columnItems;
+            }
+            columnItems.add(itemIdx);
+        }
+
         // Initialize growth limits list
         for (int i = 0; i < numColumns; i++) {
             growthLimits.add(Float.MAX_VALUE);
@@ -3660,10 +3684,10 @@ public class GridComputer {
             float maxLimit = trackDefiniteValue(trackMaxFunction(resolvedColumnTracks.get(i)), nodeInnerSize.width);
             if (Float.isNaN(maxLimit) || Float.isNaN(sizes.getFloat(i))) continue;
             float base = sizes.getFloat(i);
-            for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
-                GridItem item = items.get(itemIdx);
-                int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
-                if (col != i || item.columnSpan != 1) continue;
+            IntList columnItems = itemIndicesByColumn[i];
+            for (int idx = 0; columnItems != null && idx < columnItems.size(); idx++) {
+                GridItem item = items.get(columnItems.getInt(idx));
+                if (item.columnSpan != 1) continue;
                 float estimatedRowHeight = estimateItemRowHeightWithKnownSizes(item, templateRows, autoRows,
                     numRows, nodeInnerSize.height, gap, knownRowSizes);
                 FloatSize itemGridAreaSize = new FloatSize(NaN, estimatedRowHeight);
@@ -3691,13 +3715,13 @@ public class GridComputer {
                 // sizing function fix a growth limit (upstream's span-1 planned increase).
                 boolean hasSpanOneItem = false;
 
-                for (int itemIdx = 0; itemIdx < items.size(); itemIdx++) {
-                    GridItem item = items.get(itemIdx);
-                    int col = getItemColumnWithCounts(item, itemIdx, numColumns, colCounts);
+                IntList columnItems = itemIndicesByColumn[i];
+                for (int idx = 0; columnItems != null && idx < columnItems.size(); idx++) {
+                    GridItem item = items.get(columnItems.getInt(idx));
                     int span = item.columnSpan;
 
                     // Only consider items that occupy this track with span of 1
-                    if (col == i && span == 1) {
+                    if (span == 1) {
                         hasSpanOneItem = true;
                         // Estimate the height available for this item based on row tracks. This is the
                         // item's grid area: during intrinsic sizing its percentages resolve against the
@@ -5712,8 +5736,11 @@ public class GridComputer {
                 // - Vertical percentage margins resolve against the grid area's inline size
                 FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-                // Compute known dimensions using the proper method that respects item's percentage sizes
-                FloatSize itemKnownDimensions = item.computeKnownDimensions(gridAreaSize);
+                // Compute known dimensions using the proper method that respects item's percentage sizes.
+                // The cached variant performs the same computation, and it is what this item's
+                // intrinsic contribution below uses, so the known dimensions of one grid area are
+                // resolved once per item instead of twice.
+                FloatSize itemKnownDimensions = item.computeKnownDimensionsCached(gridAreaSize);
 
                 // If item has explicit height (from its size or computed from aspect ratio)
                 if (!Float.isNaN(itemKnownDimensions.height)) {
