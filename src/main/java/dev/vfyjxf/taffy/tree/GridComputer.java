@@ -33,6 +33,7 @@ import dev.vfyjxf.taffy.util.BaselineHelper;
 import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
+import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.floats.FloatList;
@@ -363,6 +364,7 @@ public class GridComputer {
             FloatSize min = maybeAdd(maybeApplyAspectRatioToMinMax(
                 Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio, specifiedSizeForTransfer(gridAreaSize)),
                 boxSizingAdjustment(gridAreaSize));
+            min = resolveTransferredIntrinsicKeyword(gridAreaSize, rawMinSize, min, true);
             FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
             return new FloatSize(
                 Math.max(!Float.isNaN(min.width) ? min.width : 0f, paddingBorder.width),
@@ -393,9 +395,59 @@ public class GridComputer {
 
         /** The item's specified max size resolved against the grid area. */
         FloatSize resolveMaxSize(FloatSize gridAreaSize) {
-            return maybeAdd(maybeApplyAspectRatioToMinMax(
+            FloatSize max = maybeAdd(maybeApplyAspectRatioToMinMax(
                 Resolve.maybeResolveSize(rawMaxSize, gridAreaSize), aspectRatio, specifiedSizeForTransfer(gridAreaSize)),
                 boxSizingAdjustment(gridAreaSize));
+            return resolveTransferredIntrinsicKeyword(gridAreaSize, rawMaxSize, max, false);
+        }
+
+        /**
+         * Resolve an intrinsic-sizing keyword ({@code min-content} / {@code max-content}) in one of
+         * the item's min/max sizes.
+         *
+         * <p>Such a keyword asks for the box's intrinsic size in that axis, which for a box with a
+         * preferred aspect ratio and a definite size in the other axis is the transferred size
+         * (css-sizing-4's transferred size suggestion). Chrome gives a 50px-tall, ratio-2/1 box a
+         * 100px min-content inline size, so {@code width: 1%; min-width: min-content} uses 100px
+         * rather than falling back to {@code auto} (WPT grid-aspect-ratio-016). Without a definite
+         * opposite axis the keyword keeps behaving like {@code auto}.</p>
+         */
+        private FloatSize resolveTransferredIntrinsicKeyword(FloatSize gridAreaSize,
+                                                            TaffySize<TaffyDimension> raw,
+                                                            FloatSize resolved,
+                                                            boolean isMin) {
+            if (raw == null || raw.width == null || raw.height == null) return resolved;
+            if (!Resolve.isTransferableAspectRatio(aspectRatio)) return resolved;
+            SizingKeyword widthKeyword = SizingKeyword.parse(raw.width);
+            SizingKeyword heightKeyword = SizingKeyword.parse(raw.height);
+            boolean widthIsIntrinsicKeyword = widthKeyword != null && isIntrinsicKeyword(widthKeyword);
+            boolean heightIsIntrinsicKeyword = heightKeyword != null && isIntrinsicKeyword(heightKeyword);
+            if (!widthIsIntrinsicKeyword && !heightIsIntrinsicKeyword) return resolved;
+
+            FloatSize preferred = resolveSpecifiedSize(gridAreaSize);
+            FloatSize adjustment = boxSizingAdjustment(gridAreaSize);
+            FloatSize out = resolved;
+            if (widthIsIntrinsicKeyword && !Float.isNaN(preferred.height)) {
+                float contentHeight = preferred.height - adjustment.height;
+                float transferred = contentHeight * aspectRatio + adjustment.width;
+                out = new FloatSize(combineTransferred(out.width, transferred, isMin), out.height);
+            }
+            if (heightIsIntrinsicKeyword && !Float.isNaN(preferred.width)) {
+                float contentWidth = preferred.width - adjustment.width;
+                float transferred = contentWidth / aspectRatio + adjustment.height;
+                out = new FloatSize(out.width, combineTransferred(out.height, transferred, isMin));
+            }
+            return out;
+        }
+
+        private static boolean isIntrinsicKeyword(SizingKeyword keyword) {
+            return keyword.isMinContent() || keyword.isMaxContent();
+        }
+
+        /** Minimum constraints widen the allowed range, maximum constraints narrow it. */
+        private static float combineTransferred(float specified, float transferred, boolean isMin) {
+            if (Float.isNaN(specified)) return transferred;
+            return isMin ? Math.max(specified, transferred) : Math.min(specified, transferred);
         }
 
         /**
