@@ -138,6 +138,41 @@ public class BlockComputer {
         TaffyPosition position;
         TaffyRect<LengthPercentageAuto> inset;
         TaffyRect<LengthPercentageAuto> margin;
+        /**
+         * The item's margins as pre-resolved at item-build time when their used value cannot
+         * depend on the containing block's content-box width, i.e. a {@code length} (kept as is)
+         * or an {@code auto}/intrinsic-keyword side (which resolves to nothing, so
+         * {@link Float#NaN}). A {@code percent} or {@code calc()} component does depend on that
+         * width and stays unresolved here; the matching {@code margin*Basis} flag says so.
+         *
+         * <p>Resolving them once per item instead of once per layout pass removes four
+         * {@link LengthPercentageAuto#maybeResolve} and two {@link LengthPercentageAuto#isAuto}
+         * calls per child from {@link #performFinalLayoutOnChildren}, which the block profile of
+         * {@code formPerFrameStyleChange} reported as the largest self-time there (P18). The
+         * values are style-derived item metadata, so they are immutable for the lifetime of the
+         * item and reset by nothing in {@link #resetPerPassState}.</p>
+         */
+        float marginLeft = NaN;
+        float marginRight = NaN;
+        float marginTop = NaN;
+        float marginBottom = NaN;
+        /**
+         * Whether the matching margin side is {@code auto}: the resolved used value is only known
+         * after layout (an auto inline-axis margin absorbs the free space).
+         */
+        boolean marginLeftIsAuto;
+        boolean marginRightIsAuto;
+        /** Whether the matching margin side still needs the container's inner width at layout time. */
+        boolean marginLeftNeedsInnerWidth;
+        boolean marginRightNeedsInnerWidth;
+        boolean marginTopNeedsInnerWidth;
+        boolean marginBottomNeedsInnerWidth;
+        /**
+         * Whether all four margins were pre-resolved, i.e. the layout-time margin resolution reads
+         * the four primitives and never touches the style object. This is the common case (a
+         * child with plain lengths or no margins at all).
+         */
+        boolean marginsPreResolved;
         FloatRect padding;
         FloatRect border;
         FloatSize paddingBorderSum;
@@ -1214,7 +1249,28 @@ public class BlockComputer {
             item.scrollbarWidth = childStyle.getScrollbarWidth();
             item.position = childStyle.getPosition();
             item.inset = childStyle.getInset();
-            item.margin = childStyle.getMargin();
+            TaffyRect<LengthPercentageAuto> itemMargin = childStyle.getMargin();
+            item.margin = itemMargin;
+            // Classify the four margin sides once, here, instead of resolving them on every layout
+            // pass: only a percent or calc() component needs the containing block's width (a
+            // container-specific basis), while a length is its own value and auto/intrinsic
+            // components resolve to nothing. The layout-time resolution in
+            // performFinalLayoutOnChildren then reads the primitives alone whenever no side needs
+            // the basis. P18.
+            item.marginLeftNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.left);
+            item.marginRightNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.right);
+            item.marginTopNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.top);
+            item.marginBottomNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.bottom);
+            item.marginLeft = item.marginLeftNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.left);
+            item.marginRight = item.marginRightNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.right);
+            item.marginTop = item.marginTopNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.top);
+            item.marginBottom = item.marginBottomNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.bottom);
+            item.marginLeftIsAuto = itemMargin.left.isAuto();
+            item.marginRightIsAuto = itemMargin.right.isAuto();
+            item.marginsPreResolved = !item.marginLeftNeedsInnerWidth
+                                      && !item.marginRightNeedsInnerWidth
+                                      && !item.marginTopNeedsInnerWidth
+                                      && !item.marginBottomNeedsInnerWidth;
             item.heightStyle = childSize.height;
             item.widthStyle = childSize.width;
             item.aspectRatio = aspectRatio;
@@ -1356,8 +1412,8 @@ public class BlockComputer {
             if (item.position.isOutOfFlow()) continue;
 
             FloatSize knownDimensions = maybeClamp(item.size, item.minSize, item.maxSize);
-            float marginSum = resolveMarginSumOrZero(
-                item.margin, availableWidth.isDefinite() ? availableWidth.getValue() : NaN);
+            float marginSum = resolveInlineMarginSum(
+                item, availableWidth.isDefinite() ? availableWidth.getValue() : NaN);
 
             // An inline size derived from the block size through a preferred aspect ratio is not a
             // specified width: the item still contributes its content, floored by the transferred
@@ -1534,25 +1590,40 @@ public class BlockComputer {
                 continue;
             }
 
-            // Resolve margins once.
+            // Resolve margins.
             //
             // Percentage (auto-margin-free) margins resolve against the containing block's
             // inline size, i.e. this container's *content box* width, not its outer width.
             // BK-21 / upstream #990 (86d93d95).
             //
-            // The resolved values are kept as primitives because three consumers read them: the
-            // geometry the box is laid out with (stretch height, BFC slot search, sub-context
-            // insets), the margin-collapse sets, and the {@code Layout.margin} reported back to
-            // the tree. Only the last one needs a rectangle, and only after the used size of an
-            // auto margin is known, so nothing is materialised before then. An auto (or
-            // unresolvable) component stays {@link Float#NaN} until that point.
-            TaffyRect<LengthPercentageAuto> marginStyle = item.margin;
-            boolean autoMarginLeft = marginStyle.left.isAuto();
-            boolean autoMarginRight = marginStyle.right.isAuto();
-            float marginLeft = autoMarginLeft ? NaN : marginStyle.left.maybeResolve(containerInnerWidth);
-            float marginRight = autoMarginRight ? NaN : marginStyle.right.maybeResolve(containerInnerWidth);
-            float marginTop = marginStyle.top.isAuto() ? NaN : marginStyle.top.maybeResolve(containerInnerWidth);
-            float marginBottom = marginStyle.bottom.isAuto() ? NaN : marginStyle.bottom.maybeResolve(containerInnerWidth);
+            // The classification and all basis-independent values were captured when the item was
+            // built (see #generateItemList), so a child with plain lengths, auto margins or no
+            // margins at all reads four primitives here and never touches the style object; only a
+            // percent or calc() side resolves against the content-box width. An auto (or
+            // unresolvable) component stays {@link Float#NaN} until its used value is known.
+            // P18.
+            float marginLeft;
+            float marginRight;
+            float marginTop;
+            float marginBottom;
+            if (item.marginsPreResolved) {
+                marginLeft = item.marginLeft;
+                marginRight = item.marginRight;
+                marginTop = item.marginTop;
+                marginBottom = item.marginBottom;
+            } else {
+                TaffyRect<LengthPercentageAuto> marginStyle = item.margin;
+                marginLeft = item.marginLeftNeedsInnerWidth
+                             ? marginStyle.left.maybeResolve(containerInnerWidth) : item.marginLeft;
+                marginRight = item.marginRightNeedsInnerWidth
+                              ? marginStyle.right.maybeResolve(containerInnerWidth) : item.marginRight;
+                marginTop = item.marginTopNeedsInnerWidth
+                            ? marginStyle.top.maybeResolve(containerInnerWidth) : item.marginTop;
+                marginBottom = item.marginBottomNeedsInnerWidth
+                               ? marginStyle.bottom.maybeResolve(containerInnerWidth) : item.marginBottom;
+            }
+            boolean autoMarginLeft = item.marginLeftIsAuto;
+            boolean autoMarginRight = item.marginRightIsAuto;
             // Placement uses the non-auto margins only: an auto margin contributes nothing to the
             // box's outer size until it is resolved to its used value after layout.
             float nonAutoMarginLeft = Float.isNaN(marginLeft) ? 0f : marginLeft;
@@ -2928,6 +2999,28 @@ public class BlockComputer {
     // Helper methods
 
     /**
+     * Whether a margin component's used value depends on the containing block's content-box width.
+     *
+     * <p>Only a {@code percent} component scales with that width and only a {@code calc()}
+     * expression can embed one, so those two stay unresolved until layout. A {@code length} is its
+     * own value and {@code auto}/intrinsic keywords resolve to nothing, both independent of the
+     * basis. {@code CalcExpression} has no basis-dependence query (it only exposes
+     * {@code resolve(float)}), so every {@code calc()} is conservatively treated as dependent.</p>
+     */
+    private static boolean marginNeedsInnerWidth(LengthPercentageAuto margin) {
+        return margin.isPercent() || margin.isCalc();
+    }
+
+    /**
+     * The basis-independent value of a margin component: the length itself, or {@link Float#NaN}
+     * for {@code auto} and the intrinsic sizing keywords, which are exactly the values
+     * {@link LengthPercentageAuto#maybeResolve(float)} returns for any basis.
+     */
+    private static float staticMarginValue(LengthPercentageAuto margin) {
+        return margin.isLength() ? margin.getValue() : NaN;
+    }
+
+    /**
      * Resolves a padding/border rectangle against the container's content-box width, returning the
      * shared {@link #ZERO_RECT} when every side is a zero length.
      *
@@ -3051,9 +3144,22 @@ public class BlockComputer {
         return available;
     }
 
-    private float resolveMarginSumOrZero(TaffyRect<LengthPercentageAuto> margin, float contextWidth) {
-        float left = margin.left.isAuto() ? 0f : margin.left.resolveOrZero(contextWidth);
-        float right = margin.right.isAuto() ? 0f : margin.right.resolveOrZero(contextWidth);
+    /**
+     * Resolves an item's inline-axis margin sum against {@code contextWidth}, returning zero for
+     * every component that resolves to nothing.
+     *
+     * <p>Reads the pre-resolved primitives for a side whose value cannot depend on a basis (a
+     * length, {@code auto} or an intrinsic keyword); only a percent or calc() side resolves here.
+     * The result equals the {@code resolveOrZero} sum of the style values, with {@code auto}
+     * counting as zero. P18.</p>
+     */
+    private static float resolveInlineMarginSum(BlockItem item, float contextWidth) {
+        float left = item.marginLeftNeedsInnerWidth
+                     ? item.margin.left.resolveOrZero(contextWidth)
+                     : (Float.isNaN(item.marginLeft) ? 0f : item.marginLeft);
+        float right = item.marginRightNeedsInnerWidth
+                      ? item.margin.right.resolveOrZero(contextWidth)
+                      : (Float.isNaN(item.marginRight) ? 0f : item.marginRight);
         return left + right;
     }
 }
