@@ -75,6 +75,18 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   notifications and dirty-flag propagation are unchanged; the deprecated
   four-argument `RoundLayout.roundLayout(tree, node, x, y)` overload keeps its
   original recursive implementation and semantics.
+- Grid column sizing indexes items by their start column (instead of scanning
+  every item for every track), precomputes track start offsets for placement,
+  reuses the known-dimensions cache in the auto-row pass and memoizes grid
+  placement parsing per layout pass.
+- Block item generation resolves margins once as floats and reuses transient
+  geometry; the layout cache stores key fields in place (no per-lookup
+  `CacheKey`), reuses entry shells, pre-filters measure entries by fingerprint
+  and fast-paths the last measure entry. Direction inheritance is memoized per
+  layout pass in `NodeData`, with an epoch invalidated by style/child changes.
+- The JMH benchmark suite now builds trees once per trial and only clears caches
+  per invocation (except the intentional build/destruction benchmarks), and
+  includes the new Flex/Grid/Block/UI/relayout/lifecycle scenarios.
 
 ### P7 additions (float, grid details, contain)
 
