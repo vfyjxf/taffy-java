@@ -5,6 +5,7 @@ import dev.vfyjxf.taffy.geometry.FloatRect;
 import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
+import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.TaffyStyle;
@@ -1326,6 +1327,50 @@ public class TaffyTree {
             data.getCache().store(inputs, output);
             // An injected entry is not a dirty-flag mutation, so the request signature recorded by
             // the last pass can no longer be trusted to describe the stored layouts.
+            invalidateLayoutReuse();
+        }
+    }
+
+    /**
+     * Gets a cached final-layout result that a same-BFC block child may reuse.
+     *
+     * <p>Package-private: this is the internal lookup of
+     * {@link LayoutComputer#computeChildLayout(NodeId, LayoutInput, dev.vfyjxf.taffy.util.BlockContext)},
+     * and it only returns entries produced by a float-free same-BFC pass with the same resolved
+     * direction (see {@link LayoutCache#getContextFreeFinalEntry}). The public
+     * {@link #getCacheEntry(NodeId, LayoutInput)} never grants that reuse permission.</p>
+     *
+     * @param node      the child node
+     * @param inputs    the inputs of the layout pass
+     * @param direction the direction the node currently resolves to
+     * @return the cached output, or {@code null} if there is no reuse-safe entry
+     */
+    LayoutOutput getContextFreeCacheEntry(NodeId node, LayoutInput inputs, TaffyDirection direction) {
+        NodeData data = nodeAt(node.getId());
+        if (data == null) return null;
+        return data.getCache().getContextFreeFinalEntry(inputs, direction);
+    }
+
+    /**
+     * Stores a final-layout result of a same-BFC block child that later passes may reuse.
+     *
+     * <p>The caller must have verified that the inherited context held no floats and that the
+     * child placed none, and must pass the direction the node was laid out with; see
+     * {@link LayoutCache#storeContextFreeFinalEntry}. Package-private for the same reason as
+     * {@link #getContextFreeCacheEntry}.</p>
+     *
+     * @param node      the child node
+     * @param inputs    the inputs of the layout pass
+     * @param output    the computed result
+     * @param direction the direction the node resolved to during this layout
+     */
+    void storeContextFreeCacheEntry(NodeId node, LayoutInput inputs, LayoutOutput output,
+                                    TaffyDirection direction) {
+        NodeData data = nodeAt(node.getId());
+        if (data != null) {
+            data.getCache().storeContextFreeFinalEntry(inputs, output, direction);
+            // The injected entry is not a dirty-flag mutation, so the recorded request signature
+            // can no longer be trusted to describe the stored layouts (see storeCacheEntry).
             invalidateLayoutReuse();
         }
     }

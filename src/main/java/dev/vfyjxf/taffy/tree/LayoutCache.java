@@ -4,6 +4,7 @@ import dev.vfyjxf.taffy.geometry.FloatSize;
 import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AvailableSpace;
+import dev.vfyjxf.taffy.style.TaffyDirection;
 
 /**
  * A cache for storing the results of layout computation.
@@ -42,6 +43,33 @@ public final class LayoutCache {
      * Cache entry for final layout
      */
     private CacheEntry<LayoutOutput> finalLayoutEntry = null;
+
+    /**
+     * Whether {@link #finalLayoutEntry} was produced by a same-BFC block layout that may be reused
+     * by another same-BFC pass.
+     *
+     * <p>A same-BFC block child is normally recomputed on every pass because the inherited
+     * {@code BlockContext} makes its output depend on mutable float state. When the inherited
+     * context holds no floats <em>and</em> the child's own layout placed none, the output is a pure
+     * function of the {@link LayoutInput} and the node's style/subtree, exactly like a BFC-root
+     * layout. Such an entry is marked here;
+     * {@link #getContextFreeFinalEntry(LayoutInput, TaffyDirection)} is the only lookup that
+     * honours the mark, so ordinary {@link #get(LayoutInput)} callers never gain float-dependent
+     * reuse. Every other store clears the mark (see {@link #store(LayoutInput, LayoutOutput)} and
+     * {@link #clearEntries()}).</p>
+     */
+    private boolean finalEntryContextFree = false;
+
+    /**
+     * The resolved text direction {@link #finalLayoutEntry} was computed with, as a
+     * {@link TaffyDirection} ordinal, or {@code -1} when the entry was not stored as context-free.
+     *
+     * <p>{@code direction: inherit} is resolved from the ancestors and is not part of the
+     * {@link LayoutInput} key, so the same input can produce a mirrored layout after an ancestor's
+     * direction changes. A context-free entry therefore remembers the direction it was computed
+     * with, and a lookup only hits when the node resolves to the same direction.</p>
+     */
+    private int finalEntryDirection = -1;
 
     /**
      * Cache entries for size measurements
@@ -205,10 +233,44 @@ public final class LayoutCache {
         }
 
         return switch (inputs.runMode()) {
-            case PERFORM_LAYOUT -> getFinalLayoutEntry(inputs);
+            // A context-free entry was computed under an inherited BlockContext. Callers of this
+            // generic lookup cannot prove that their own context holds no floats, so the entry is
+            // never handed out here: only getContextFreeFinalEntry, which is called from the one
+            // place that checks the inherited float state and the resolved direction, may
+            // return it.
+            case PERFORM_LAYOUT -> finalEntryContextFree ? null : getFinalLayoutEntry(inputs);
             case COMPUTE_SIZE -> getMeasureEntry(inputs);
             case PERFORM_HIDDEN_LAYOUT -> null;
         };
+    }
+
+    /**
+     * Try to retrieve a final-layout result that a same-BFC block child may reuse.
+     *
+     * <p>This is the only lookup that honours the context-free mark documented on
+     * {@link #finalEntryContextFree}: it returns a result only when the stored final entry was
+     * produced by a same-BFC block layout whose inherited context held no floats and which placed
+     * no floats itself. A plain {@link #get(LayoutInput)} never consults the mark, so callers that
+     * cannot reason about the inherited {@code BlockContext} are unaffected.</p>
+     *
+     * <p>The resolved direction is compared as well: {@code direction: inherit} is not part of the
+     * {@link LayoutInput} key, so an ancestor's direction change would otherwise be invisible.</p>
+     *
+     * @param inputs    the inputs of the layout pass; must be a {@link RunMode#PERFORM_LAYOUT} request
+     * @param direction the direction the node currently resolves to
+     * @return the cached output, or {@code null} if there is no reuse-safe entry
+     */
+    public LayoutOutput getContextFreeFinalEntry(LayoutInput inputs, TaffyDirection direction) {
+        if (isEmpty || !finalEntryContextFree || finalEntryDirection != direction.ordinal()) {
+            return null;
+        }
+        if (inputs.runMode() != RunMode.PERFORM_LAYOUT) {
+            return null;
+        }
+        if (mode != CacheMode.from(inputs)) {
+            return null;
+        }
+        return getFinalLayoutEntry(inputs);
     }
 
     private LayoutOutput getFinalLayoutEntry(LayoutInput inputs) {
@@ -306,6 +368,10 @@ public final class LayoutCache {
                 finalLayoutEntry = entry;
             }
             entry.set(axisKeyWidth, axisKeyHeight, parentKey, keyHash, layoutOutput);
+            // An ordinary store never carries the same-BFC reuse permission; the dedicated
+            // storeContextFreeFinalEntry below is the only path that grants it.
+            finalEntryContextFree = false;
+            finalEntryDirection = -1;
             return;
         }
 
@@ -357,6 +423,31 @@ public final class LayoutCache {
         if (nextMeasureEntry == CACHE_SIZE) {
             nextMeasureEntry = 0;
         }
+    }
+
+    /**
+     * Stores a final-layout result that a later same-BFC block pass may reuse.
+     *
+     * <p>The caller must only use this for a {@link RunMode#PERFORM_LAYOUT} result that was
+     * computed with a float-free inherited {@code BlockContext} and that placed no floats itself:
+     * those are the results whose value is independent of the mutable BFC float state. The entry
+     * is stored exactly like {@link #store(LayoutInput, LayoutOutput)} and is additionally marked
+     * context-free; only {@link #getContextFreeFinalEntry(LayoutInput, TaffyDirection)} can observe
+     * the mark.</p>
+     *
+     * @param inputs       the inputs of the layout pass
+     * @param layoutOutput the computed result
+     * @param direction    the direction the node resolved to during this layout
+     */
+    public void storeContextFreeFinalEntry(
+        LayoutInput inputs, LayoutOutput layoutOutput, TaffyDirection direction) {
+
+        if (inputs.runMode() != RunMode.PERFORM_LAYOUT) {
+            throw new IllegalArgumentException("context-free reuse is only defined for final layout");
+        }
+        store(inputs, layoutOutput);
+        finalEntryContextFree = true;
+        finalEntryDirection = direction.ordinal();
     }
 
     /**
@@ -526,6 +617,8 @@ public final class LayoutCache {
         if (finalLayoutEntry != null) {
             finalLayoutEntry.invalidate();
         }
+        finalEntryContextFree = false;
+        finalEntryDirection = -1;
         for (int i = 0; i < CACHE_SIZE; i++) {
             CacheEntry<FloatSize> entry = measureEntries[i];
             if (entry != null) {
