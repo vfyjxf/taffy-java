@@ -231,20 +231,19 @@ public class IncrementalLayoutBenchmark {
     // === Measure cache: cold vs valid child caches ===
 
     @State(Scope.Thread)
-    public static class MeasureState {
+    public static class MeasureColdState {
         @Param({"200"})
         public int leafCount;
 
         TaffyTree tree;
         NodeId root;
         NodeId[] nodes;
-        BenchSupport.WordWrapMeasure measure;
 
         @Setup(Level.Trial)
         public void setupTrial() {
             tree = new TaffyTree();
             tree.disableRounding();
-            measure = new BenchSupport.WordWrapMeasure(16);
+            BenchSupport.WordWrapMeasure measure = new BenchSupport.WordWrapMeasure(16);
             TaffyStyle rootStyle = BenchSupport.sizedFlex(FlexDirection.COLUMN, 800f, Float.NaN);
             NodeId[] children = new NodeId[leafCount];
             TaffyStyle leafStyle = new TaffyStyle();
@@ -268,14 +267,52 @@ public class IncrementalLayoutBenchmark {
     }
 
     @Benchmark
-    public void measureCold(MeasureState state, Blackhole bh) {
+    public void measureCold(MeasureColdState state, Blackhole bh) {
         state.tree.computeLayout(state.root, measureSize());
         bh.consume(state.tree.getLayout(state.root));
     }
 
+    /**
+     * Same tree as {@link MeasureColdState}, but only the root cache is cleared so the measured
+     * leaves are answered from their caches. This is the warm counterpart of
+     * {@link #measureCold}.
+     */
+    @State(Scope.Thread)
+    public static class MeasureWarmState {
+        @Param({"200"})
+        public int leafCount;
+
+        TaffyTree tree;
+        NodeId root;
+        BenchSupport.WordWrapMeasure measure;
+
+        @Setup(Level.Trial)
+        public void setupTrial() {
+            tree = new TaffyTree();
+            tree.disableRounding();
+            measure = new BenchSupport.WordWrapMeasure(16);
+            TaffyStyle rootStyle = BenchSupport.sizedFlex(FlexDirection.COLUMN, 800f, Float.NaN);
+            NodeId[] children = new NodeId[leafCount];
+            TaffyStyle leafStyle = new TaffyStyle();
+            leafStyle.size = new TaffySize<>(TaffyDimension.percent(1f), TaffyDimension.AUTO);
+            for (int i = 0; i < leafCount; i++) {
+                children[i] = tree.newLeafWithMeasure(leafStyle, measure);
+            }
+            root = tree.newWithChildren(rootStyle, children);
+            tree.computeLayout(root, measureSize());
+            if (measure.callCount() == 0L) {
+                throw new IllegalStateException("measure callback was not invoked during setup");
+            }
+        }
+
+        @Setup(Level.Invocation)
+        public void clearRootCache() {
+            tree.clearCache(root);
+        }
+    }
+
     @Benchmark
-    public void measureWarmChildren(MeasureState state, Blackhole bh) {
-        state.tree.clearCache(state.root);
+    public void measureWarmChildren(MeasureWarmState state, Blackhole bh) {
         state.tree.computeLayout(state.root, measureSize());
         bh.consume(state.tree.getLayout(state.root));
     }
