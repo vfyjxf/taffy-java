@@ -32,13 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Tests for the allocation-free steady state of the rounding pass.
  *
- * <p>Whole-pixel layouts round to themselves, so the pass does not have to replace the stored
- * final layout on every call: when the rounded output is bit-identical to the unrounded layout and
- * the stored layout already holds it, the pass only keeps the bookkeeping (new-layout flag,
- * ancestor dirty-descendant propagation, listener notification). These tests pin that behavior and
- * its boundary: identity of the kept layout, listener arguments and ordering, flags across
- * acknowledge and re-round, and the cases that must keep taking the full rebuild path
- * (fractional values, NaN, signed zeros, the scrollable-overflow compatibility placeholder).
+ * <p>A layout whose rounded output does not change does not have to be replaced on every call:
+ * when the node's stored final layout already carries the values the pass would compute, the pass
+ * only keeps the bookkeeping (new-layout flag, ancestor dirty-descendant propagation, listener
+ * notification). This is the common case for a fixed, whole-pixel layout and for any geometry that
+ * did not change since the previous round. These tests pin that behavior and its boundary: identity
+ * of the kept layout, listener arguments and ordering, flags across acknowledge and re-round, and
+ * the cases that must keep taking the full rebuild path (a stale stored layout, NaN, the
+ * scrollable-overflow compatibility placeholder) or that round correctly once and are then stable
+ * (fractional values, signed zeros).
  */
 public class RoundLayoutFastPathTest {
 
@@ -200,10 +202,11 @@ public class RoundLayoutFastPathTest {
         assertEquals(2f, childFirst.size().width, 0f, "width = round(3.0) - round(0.5)");
         assertEquals(2f, childFirst.size().height, 0f, "height = round(3.0) - round(0.5)");
 
-        // The whole-pixel root is still kept; the fractional child is re-rounded to the same values.
+        // Once the stored output matches the computed rounding, even a fractional layout is kept.
         tree.roundLayout(root);
         assertSame(rootFirst, tree.getLayout(root), "whole-pixel root layout is kept");
-        assertEquals(childFirst, tree.getLayout(child), "repeated rounding is idempotent for fractions");
+        assertSame(childFirst, tree.getLayout(child), "stable fractional layout is kept");
+        assertEquals(2f, tree.getLayout(child).size().width, 0f, "kept fractional layout keeps its rounded value");
     }
 
     @Test
@@ -253,10 +256,11 @@ public class RoundLayoutFastPathTest {
         assertEquals(3f, rounded.padding().top, 0f, "padding top");
         assertEquals(-3f, rounded.padding().bottom, 0f, "padding bottom");
 
-        // Fractional/NaN/transformed components never take the keep path: re-rounding rebuilds the
-        // layout and lands on exactly the same values.
+        // The rounded output of the transformed components is now stored, so the next pass keeps it
+        // and lands on exactly the same values.
         tree.roundLayout(root);
-        assertEquals(rounded, tree.getLayout(root), "repeated rounding is idempotent");
+        assertSame(rounded, tree.getLayout(root), "repeated rounding keeps the layout");
+        assertEquals(3, rounded.order(), "order is still carried through");
     }
 
     @Test
@@ -277,7 +281,9 @@ public class RoundLayoutFastPathTest {
         ));
 
         tree.roundLayout(root);
+        Layout firstPass = tree.getLayout(root);
         tree.roundLayout(root);
+        assertSame(firstPass, tree.getLayout(root), "an already rounded signed-zero overflow is kept");
 
         ScrollableOverflow rounded = tree.getLayout(root).scrollableOverflow();
         assertEquals(Float.floatToRawIntBits(-0.0f), Float.floatToRawIntBits(rounded.left()),
@@ -339,8 +345,8 @@ public class RoundLayoutFastPathTest {
     }
 
     @Test
-    @DisplayName("a mixed tree keeps whole-pixel nodes and re-rounds fractional ones")
-    void mixedTreeKeepsOnlyWholePixelNodes() {
+    @DisplayName("a mixed tree keeps every node whose rounded output is unchanged")
+    void mixedTreeKeepsEveryStableNode() {
         TaffyTree tree = new TaffyTree();
         NodeId whole = tree.newLeaf(new TaffyStyle());
         NodeId fractional = tree.newLeaf(new TaffyStyle());
@@ -359,7 +365,7 @@ public class RoundLayoutFastPathTest {
         tree.roundLayout(root);
         assertSame(rootFirst, tree.getLayout(root), "whole-pixel root is kept");
         assertSame(wholeFirst, tree.getLayout(whole), "whole-pixel child is kept");
-        assertEquals(fractionalFirst, tree.getLayout(fractional), "fractional child re-rounds to the same values");
+        assertSame(fractionalFirst, tree.getLayout(fractional), "stable fractional child is kept");
     }
 
     @Test
@@ -386,6 +392,58 @@ public class RoundLayoutFastPathTest {
         assertSame(rootFirst, tree.getLayout(root), "unchanged geometry keeps the rounded root layout");
         assertSame(firstChildFirst, tree.getLayout(first), "unchanged geometry keeps the rounded child layout");
         assertEquals(20f, tree.getLayout(root).size().height, 0f, "values are unchanged");
+    }
+
+    @Test
+    @DisplayName("a changed layout replaces the stored one and is stable afterwards")
+    void changedLayoutIsRebuiltAndThenKept() {
+        TaffyTree tree = new TaffyTree();
+        NodeId root = tree.newLeaf(new TaffyStyle());
+        tree.setUnroundedLayout(root, integerLayout(0f, 0f, 10f, 10f));
+
+        tree.roundLayout(root);
+        Layout first = tree.getLayout(root);
+        assertEquals(10f, first.size().width, 0f, "first rounded width");
+
+        // New geometry: the stored layout no longer matches the required rounding.
+        tree.setUnroundedLayout(root, integerLayout(0f, 0f, 20f, 20f));
+        tree.roundLayout(root);
+
+        Layout rebuilt = tree.getLayout(root);
+        assertNotSame(first, rebuilt, "a changed layout is rebuilt");
+        assertEquals(20f, rebuilt.size().width, 0f, "rebuilt width");
+        assertEquals(20f, rebuilt.size().height, 0f, "rebuilt height");
+
+        tree.roundLayout(root);
+        assertSame(rebuilt, tree.getLayout(root), "the rebuilt layout is kept on the next pass");
+    }
+
+    @Test
+    @DisplayName("a null unrounded overflow keeps the shared ZERO placeholder")
+    void nullOverflowKeepsTheSharedPlaceholder() {
+        TaffyTree tree = new TaffyTree();
+        NodeId root = tree.newLeaf(new TaffyStyle());
+        tree.setUnroundedLayout(root, new Layout(
+            0,
+            new FloatPoint(0f, 0f),
+            new FloatSize(10f, 10f),
+            new FloatSize(10f, 10f),
+            null,
+            FloatSize.zero(),
+            FloatRect.zero(),
+            FloatRect.zero(),
+            FloatRect.zero()
+        ));
+
+        tree.roundLayout(root);
+
+        Layout rounded = tree.getLayout(root);
+        assertSame(ScrollableOverflow.ZERO, rounded.scrollableOverflow(),
+            "a null overflow is replaced by the shared placeholder, as before");
+        assertEquals(10f, rounded.size().width, 0f, "size is rounded");
+
+        tree.roundLayout(root);
+        assertSame(rounded, tree.getLayout(root), "the placeholder-carrying layout is stable and is kept");
     }
 
     @Test
