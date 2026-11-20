@@ -34,11 +34,13 @@ public class DirectionRtlBenchmark {
         TaffyTree treeRtl;
         NodeId rootLtr;
         NodeId rootRtl;
+        NodeId[] nodesLtr;
+        NodeId[] nodesRtl;
 
         @Param({"100", "500", "1000"})
         int childCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             // LTR tree
             treeLtr = new TaffyTree();
@@ -72,6 +74,14 @@ public class DirectionRtlBenchmark {
                 treeLtr.addChild(rootLtr, treeLtr.newLeaf(childStyle));
                 treeRtl.addChild(rootRtl, treeRtl.newLeaf(childStyle));
             }
+            nodesLtr = BenchSupport.collectNodes(treeLtr, rootLtr);
+            nodesRtl = BenchSupport.collectNodes(treeRtl, rootRtl);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(treeLtr, nodesLtr);
+            BenchSupport.clearCaches(treeRtl, nodesRtl);
         }
     }
 
@@ -93,11 +103,12 @@ public class DirectionRtlBenchmark {
     public static class FlexboxRowReverseRtlState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"100", "500"})
         int childCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             TaffyStyle containerStyle = new TaffyStyle();
@@ -116,6 +127,12 @@ public class DirectionRtlBenchmark {
                 );
                 tree.addChild(root, tree.newLeaf(childStyle));
             }
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -133,11 +150,13 @@ public class DirectionRtlBenchmark {
         TaffyTree treeStart;
         NodeId rootStretch;
         NodeId rootStart;
+        NodeId[] nodesStretch;
+        NodeId[] nodesStart;
 
         @Param({"10", "20", "50"})
         int trackCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             // Grid with STRETCH (default)
             treeStretch = new TaffyTree();
@@ -172,6 +191,14 @@ public class DirectionRtlBenchmark {
                 treeStretch.addChild(rootStretch, treeStretch.newLeaf(childStyle));
                 treeStart.addChild(rootStart, treeStart.newLeaf(childStyle));
             }
+            nodesStretch = BenchSupport.collectNodes(treeStretch, rootStretch);
+            nodesStart = BenchSupport.collectNodes(treeStart, rootStart);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(treeStretch, nodesStretch);
+            BenchSupport.clearCaches(treeStart, nodesStart);
         }
 
         private List<TrackSizingFunction> createAutoTracks(int count) {
@@ -205,11 +232,13 @@ public class DirectionRtlBenchmark {
         TaffyTree treeRtl;
         NodeId rootLtr;
         NodeId rootRtl;
+        NodeId[] nodesLtr;
+        NodeId[] nodesRtl;
 
         @Param({"5", "10", "20"})
         int trackCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             int cellCount = trackCount * trackCount;
 
@@ -240,6 +269,14 @@ public class DirectionRtlBenchmark {
                 treeLtr.addChild(rootLtr, treeLtr.newLeaf(childStyle));
                 treeRtl.addChild(rootRtl, treeRtl.newLeaf(childStyle));
             }
+            nodesLtr = BenchSupport.collectNodes(treeLtr, rootLtr);
+            nodesRtl = BenchSupport.collectNodes(treeRtl, rootRtl);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(treeLtr, nodesLtr);
+            BenchSupport.clearCaches(treeRtl, nodesRtl);
         }
 
         private List<TrackSizingFunction> createFixedTracks(int count, float size) {
@@ -271,11 +308,12 @@ public class DirectionRtlBenchmark {
     public static class DirectionInheritState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"3", "5", "7"})
         int depth;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             
@@ -289,6 +327,12 @@ public class DirectionRtlBenchmark {
 
             // Build nested structure with INHERIT direction
             buildNestedInherit(tree, root, depth, 3);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
 
         private void buildNestedInherit(TaffyTree tree, NodeId parent, int remainingDepth, int childrenPerLevel) {
