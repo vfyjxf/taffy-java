@@ -1468,7 +1468,7 @@ public class WptSizingAspectRatioTest_8 {
         s2.flexGrow = 0.0f;
         s2.flexShrink = 1.0f;
         s2.flexBasis = TaffyDimension.AUTO;
-        s2.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
+        s2.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.length(100.0f));
         s2.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
         s2.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s2.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -1562,7 +1562,7 @@ public class WptSizingAspectRatioTest_8 {
         s2.flexGrow = 0.0f;
         s2.flexShrink = 1.0f;
         s2.flexBasis = TaffyDimension.AUTO;
-        s2.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(100.0f));
+        s2.size = new TaffySize<>(TaffyDimension.percent(1.0f), TaffyDimension.percent(1.0f));
         s2.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
         s2.aspectRatio = 1.0f;
         s2.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
@@ -1999,7 +1999,7 @@ public class WptSizingAspectRatioTest_8 {
         s3.flexShrink = 1.0f;
         s3.flexBasis = TaffyDimension.AUTO;
         s3.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(25.0f));
-        s3.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
+        s3.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
         s3.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s3.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
         s3.padding = new TaffyRect<>(LengthPercentage.length(0.0f), LengthPercentage.length(0.0f), LengthPercentage.length(0.0f), LengthPercentage.length(0.0f));
@@ -2021,7 +2021,7 @@ public class WptSizingAspectRatioTest_8 {
         s4.flexShrink = 1.0f;
         s4.flexBasis = TaffyDimension.AUTO;
         s4.size = new TaffySize<>(TaffyDimension.length(100.0f), TaffyDimension.length(25.0f));
-        s4.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
+        s4.minSize = new TaffySize<>(TaffyDimension.AUTO, TaffyDimension.AUTO);
         s4.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s4.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
         s4.padding = new TaffyRect<>(LengthPercentage.length(0.0f), LengthPercentage.length(0.0f), LengthPercentage.length(0.0f), LengthPercentage.length(0.0f));
