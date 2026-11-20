@@ -333,6 +333,20 @@ public class GridComputer {
         }
 
         /**
+         * The item's preferred size resolved against the grid area WITHOUT the aspect ratio.
+         *
+         * <p>The final alignment pass derives the missing axis from the *clamped* size of the other
+         * axis, and an explicit stretch in an axis wins over the ratio, so the pass needs the
+         * specified size rather than a size that has already been transferred (WPT
+         * grid-aspect-ratio-034/036/038). The contribution paths keep using
+         * {@link #resolvePreferredSize(FloatSize)}, where the transfer belongs to the item's
+         * intrinsic contribution.</p>
+         */
+        FloatSize resolveSpecifiedSize(FloatSize gridAreaSize) {
+            return maybeAdd(Resolve.maybeResolveSize(rawSize, gridAreaSize), boxSizingAdjustment(gridAreaSize));
+        }
+
+        /**
          * The item's preferred size clamped by its resolved min/max size, mirroring the clamp that
          * upstream applies in {@code GridItem::known_dimensions}. A size contribution is the clamped
          * preferred size, not the raw preferred size: {@code width:25px; max-width:10px} contributes
@@ -5717,6 +5731,27 @@ public class GridComputer {
      * @param hasAspectRatio     whether the item has a preferred aspect ratio (block axis only)
      * @return the resolved alignment, never null
      */
+    /**
+     * Returns whether the item's resolved self-alignment keyword is the explicit
+     * {@code stretch} keyword (as opposed to {@code normal} resolving to stretch).
+     *
+     * <p>css-grid-1 sizes a stretched grid item to its grid area, and that stretched size wins
+     * over a preferred aspect ratio in the same axis, while the contextual {@code normal}
+     * resolution does not (WPT grid-aspect-ratio-032/033 use an explicit stretch in both axes and
+     * expect the ratio to be ignored, while 028 keeps the ratio for the {@code normal} axis).</p>
+     */
+    private static boolean isExplicitStretch(
+        AlignItems itemAlignment,
+        AlignItems containerAlignment,
+        TaffyDirection itemDirection,
+        TaffyDirection containerDirection,
+        boolean axisIsInline) {
+
+        AlignItems merged = AlignmentHelper.isUnset(itemAlignment) ? containerAlignment : itemAlignment;
+        merged = AlignmentHelper.resolveSelfRelative(merged, itemDirection, containerDirection, axisIsInline);
+        return merged == AlignItems.STRETCH;
+    }
+
     private static AlignItems resolveGridItemAlignment(
         AlignItems itemAlignment,
         AlignItems containerAlignment,
@@ -5874,7 +5909,7 @@ public class GridComputer {
             item.padding = itemPadding;
             item.border = itemBorder;
             FloatSize itemPaddingBorderSize = item.paddingBorderSize(containingBlockSize);
-            FloatSize preferredSize = item.resolvePreferredSize(containingBlockSize);
+            FloatSize preferredSize = item.resolveSpecifiedSize(containingBlockSize);
             FloatSize resolvedMinSize = item.resolveMinSize(containingBlockSize);
             FloatSize resolvedMaxSize = item.resolveMaxSize(containingBlockSize);
 
@@ -5916,6 +5951,14 @@ public class GridComputer {
             // When margin is auto, the item should use its content size and auto margins absorb free space
             boolean stretchWidth = alignX == AlignItems.STRETCH && !hasHorizontalAutoMargin;
             boolean stretchHeight = alignY == AlignItems.STRETCH && !hasVerticalAutoMargin;
+            // An *explicit* stretch keyword wins over a preferred aspect ratio in its own axis;
+            // the contextual normal-to-stretch resolution does not (see isExplicitStretch).
+            boolean explicitStretchWidth = isExplicitStretch(
+                childStyle.justifySelf, defaultJustifyItems, itemDirection, containerDirection, true)
+                && !hasHorizontalAutoMargin;
+            boolean explicitStretchHeight = isExplicitStretch(
+                childStyle.getAlignSelf(), defaultAlignItems, itemDirection, containerDirection, false)
+                && !hasVerticalAutoMargin;
 
             // Available space after margin
             float availableWidth = trackWidth - margin.left - margin.right;
@@ -5925,14 +5968,35 @@ public class GridComputer {
             float itemPaddingBorderWidth = itemPaddingBorderSize.width;
             float itemPaddingBorderHeight = itemPaddingBorderSize.height;
 
+            boolean hasAspectRatio = item.aspectRatio != null && !Float.isNaN(item.aspectRatio);
+
+            // The block-axis size transfers through a preferred aspect ratio to the inline size
+            // whenever it is already definite: either specified, or stretched by an explicit
+            // align-self. css-grid-1 then sizes the auto inline size from the ratio rather than
+            // stretching it (WPT grid-aspect-ratio-028/029, Chrome's used values).
+            float definiteHeight = NaN;
+            if (!Float.isNaN(preferredSize.height)) {
+                definiteHeight = Math.max(preferredSize.height, itemPaddingBorderHeight);
+            } else if (explicitStretchHeight) {
+                definiteHeight = availableHeight;
+            }
+
             // Calculate size based on alignment
-            float width, height;
+            float width;
+            boolean widthFromAspectRatio = false;
 
             if (!Float.isNaN(preferredSize.width)) {
                 // Preferred size resolved against the grid area (but at least padding+border)
                 width = Math.max(preferredSize.width, itemPaddingBorderWidth);
+            } else if (explicitStretchWidth) {
+                // An explicit stretch fills the grid area and wins over the ratio
+                width = availableWidth;
+            } else if (hasAspectRatio && !Float.isNaN(definiteHeight)) {
+                // A definite block size transfers through the ratio
+                width = definiteHeight * item.aspectRatio;
+                widthFromAspectRatio = true;
             } else if (stretchWidth) {
-                // Stretch to fill
+                // Normal alignment resolves to stretch in an auto inline axis
                 width = availableWidth;
             } else {
                 // Content-based size (START, CENTER, END, or has auto margin) - measure child. The
@@ -5949,21 +6013,44 @@ public class GridComputer {
                 width = output.size().width;
             }
 
-            // Reapply aspect ratio after width is determined
-            // If aspect_ratio is set and height is not explicitly set, calculate height from width
-            float heightFromAspectRatio = NaN;
-            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(preferredSize.height)) {
-                heightFromAspectRatio = width / item.aspectRatio;
+            // Apply min/max constraints (resolved against the grid area)
+            width = TaffyMath.clamp(width, resolvedMinSize.width, resolvedMaxSize.width);
+            // css-sizing-4 automatic minimum size: a ratio-transferred inline size is floored by
+            // the item's min-content contribution unless an explicit min-width overrides it.
+            if (widthFromAspectRatio
+                && !item.overflow.x.isScrollContainer()
+                && !item.overflow.y.isScrollContainer()
+                && (Float.isNaN(resolvedMinSize.width) || resolvedMinSize.width <= itemPaddingBorderWidth)) {
+                FloatSize minContent = layoutComputer.measureChildSize(
+                    item.nodeId,
+                    new FloatSize(NaN, NaN),
+                    containingBlockSize,
+                    new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
+                    SizingMode.INHERENT_SIZE,
+                    new TaffyLine<>(false, false)
+                );
+                if (!Float.isNaN(minContent.width)) {
+                    width = Math.max(width, minContent.width);
+                    width = Math.max(
+                        TaffyMath.clamp(width, resolvedMinSize.width, resolvedMaxSize.width),
+                        itemPaddingBorderWidth);
+                }
             }
 
+            float height;
+            float heightFromAspectRatio = NaN;
             if (!Float.isNaN(preferredSize.height)) {
                 // Preferred size resolved against the grid area (but at least padding+border)
                 height = Math.max(preferredSize.height, itemPaddingBorderHeight);
-            } else if (!Float.isNaN(heightFromAspectRatio)) {
-                // Height from aspect ratio
+            } else if (explicitStretchHeight) {
+                // An explicit stretch fills the grid area and wins over the ratio
+                height = availableHeight;
+            } else if (hasAspectRatio && !Float.isNaN(width) && !widthFromAspectRatio) {
+                // Inline size definite: the block size is derived from the ratio
+                heightFromAspectRatio = width / item.aspectRatio;
                 height = heightFromAspectRatio;
             } else if (stretchHeight) {
-                // Stretch to fill
+                // Normal alignment resolves to stretch in an auto block axis
                 height = availableHeight;
             } else {
                 // Content-based size (START, CENTER, END, or has auto margin) - measure child with known width
@@ -5978,14 +6065,8 @@ public class GridComputer {
                 height = output.size().height;
             }
 
-            // Reapply aspect ratio after height is determined (for cases where width is not set but height is)
-            if (item.aspectRatio != null && !Float.isNaN(item.aspectRatio) && Float.isNaN(preferredSize.width) && !Float.isNaN(preferredSize.height)) {
-                width = height * item.aspectRatio;
-            }
-
-            // Apply min/max constraints (resolved against the grid area)
-            width = TaffyMath.clamp(width, resolvedMinSize.width, resolvedMaxSize.width);
             height = TaffyMath.clamp(height, resolvedMinSize.height, resolvedMaxSize.height);
+
 
             // Calculate auto margin values - auto margins absorb free space
             float freeSpaceX = availableWidth - width;
