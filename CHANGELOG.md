@@ -212,6 +212,15 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 
 ### Fixed
 
+- **Incremental block measurement (P25/P26)** — The content-based container
+  width probe in block layout used `performChildLayout` (a `PERFORM_LAYOUT`
+  run) instead of `measureChildSize` (a `COMPUTE_SIZE` run). The probe therefore
+  wrote the child and its descendants' layouts with the probe's own parent size
+  and available space, and a later final-layout cache hit could leave those
+  probe layouts behind: a percentage-height flex child resolved against the
+  probe's height instead of the real parent (fuzz seed 6: 193px vs 9px). The
+  probe now measures, so incremental layout matches a freshly built tree; a
+  20-seed/200-step differential test pins it.
 - **PA-01 (grid)** — Absolutely positioned children now resolve named grid
   lines. The absolute-positioning path passed raw placements to the line
   resolver, which had no `NAMED_LINE` branch and fell back to the container

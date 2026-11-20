@@ -1485,7 +1485,13 @@ public class BlockComputer {
                         : AvailableSpace.definite(keyword.getExactValue());
                 }
 
-                LayoutOutput output = layoutComputer.performChildLayout(
+                // Measurement, not layout: upstream determines the content-based container
+                // width with measure_child_size (upstream block.rs). Running a PERFORM_LAYOUT
+                // probe here writes the child's (and its descendants') layouts with this probe's
+                // parent size and available space instead of the real pass, and a later final
+                // cache hit can leave those probe layouts behind (seed 6: n21 percentage height
+                // resolved against the probe's height).
+                FloatSize measuredSize = layoutComputer.measureChildSize(
                     item.nodeId,
                     knownDimensions,
                     new FloatSize(NaN, NaN),
@@ -1493,7 +1499,7 @@ public class BlockComputer {
                     SizingMode.INHERENT_SIZE,
                     TaffyLine.TRUE
                 );
-                float measuredWidth = output.size().width;
+                float measuredWidth = measuredSize.width;
                 // The cap is the item's min-content contribution, so its fit-content contribution
                 // is min(max-content, max(cap, available)). Upstream #1401 (4aca4f49).
                 float cap = item.minContentWidthCap;
