@@ -133,6 +133,39 @@ public final class Resolve {
     }
 
     /**
+     * Transfer min/max sizes between the axes through a preferred aspect ratio.
+     *
+     * <p>This is the {@code min-width}/{@code min-height}/{@code max-width}/{@code max-height}
+     * counterpart of {@link #maybeApplyAspectRatio(FloatSize, float)}, but the transfer only flows
+     * into an axis whose <em>preferred</em> size is {@code auto} (unresolved, {@code NaN}). A box
+     * that already has a definite preferred size in an axis derives its other axis from that size
+     * (css-sizing-4 §5.1: the transferred size suggestion sizes the axis that depends on the
+     * ratio), so a min/max constraint on the derived axis must not flow back and resize the
+     * definite one. Chrome transfers a {@code max-height} into {@code max-width} only when the
+     * inline size is auto; with a definite inline size the {@code max-height} only clamps the
+     * ratio-derived block size (WPT grid-aspect-ratio-022/023/024/027).</p>
+     *
+     * @param value         the resolved min (or max) size pair; unresolved axes are {@code NaN}
+     * @param aspectRatio   the preferred aspect ratio
+     * @param preferredSize the box's preferred size, resolved through the same basis as
+     *                      {@code value}; an {@code auto} axis is {@code NaN}
+     * @return the transferred min/max size pair
+     */
+    public static FloatSize maybeApplyAspectRatioToMinMax(FloatSize value, float aspectRatio, FloatSize preferredSize) {
+        if (!isTransferableAspectRatio(aspectRatio)) return value;
+        float width = value.width;
+        float height = value.height;
+        // Both directions read the original values so that a single call never transfers twice.
+        float transferredWidth = Float.isNaN(value.width) && Float.isNaN(preferredSize.width) && !Float.isNaN(value.height)
+                                 ? value.height * aspectRatio
+                                 : value.width;
+        float transferredHeight = Float.isNaN(value.height) && Float.isNaN(preferredSize.height) && !Float.isNaN(value.width)
+                                  ? value.width / aspectRatio
+                                  : value.height;
+        return new FloatSize(transferredWidth, transferredHeight);
+    }
+
+    /**
      * Maybe add to Size if values are non-null.
      */
     public static FloatSize maybeAddSize(FloatSize size, FloatSize addition) {

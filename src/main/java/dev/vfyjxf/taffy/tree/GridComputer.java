@@ -360,7 +360,8 @@ public class GridComputer {
 
         /** The item's specified min size resolved against the grid area, floored at padding + border. */
         FloatSize resolveMinSize(FloatSize gridAreaSize) {
-            FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio),
+            FloatSize min = maybeAdd(maybeApplyAspectRatioToMinMax(
+                Resolve.maybeResolveSize(rawMinSize, gridAreaSize), aspectRatio, specifiedSizeForTransfer(gridAreaSize)),
                 boxSizingAdjustment(gridAreaSize));
             FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
             return new FloatSize(
@@ -380,7 +381,8 @@ public class GridComputer {
                 !Float.isNaN(gridAreaSize.width) ? gridAreaSize.width : 0f,
                 !Float.isNaN(gridAreaSize.height) ? gridAreaSize.height : 0f
             );
-            FloatSize min = maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMinSize, basis), aspectRatio),
+            FloatSize min = maybeAdd(maybeApplyAspectRatioToMinMax(
+                Resolve.maybeResolveSize(rawMinSize, basis), aspectRatio, specifiedSizeForTransfer(basis)),
                 boxSizingAdjustment(gridAreaSize));
             FloatSize paddingBorder = paddingBorderSize(gridAreaSize);
             return new FloatSize(
@@ -391,8 +393,20 @@ public class GridComputer {
 
         /** The item's specified max size resolved against the grid area. */
         FloatSize resolveMaxSize(FloatSize gridAreaSize) {
-            return maybeAdd(maybeApplyAspectRatio(Resolve.maybeResolveSize(rawMaxSize, gridAreaSize), aspectRatio),
+            return maybeAdd(maybeApplyAspectRatioToMinMax(
+                Resolve.maybeResolveSize(rawMaxSize, gridAreaSize), aspectRatio, specifiedSizeForTransfer(gridAreaSize)),
                 boxSizingAdjustment(gridAreaSize));
+        }
+
+        /**
+         * The item's preferred size used as the gate for min/max aspect-ratio transfer: the ratio
+         * only transfers min/max constraints into an axis whose preferred size is auto
+         * ({@link Resolve#maybeApplyAspectRatioToMinMax}). This is the raw, <em>untransferred</em>
+         * specified size, because the transfer direction depends on which axis the style actually
+         * defines.
+         */
+        private FloatSize specifiedSizeForTransfer(FloatSize gridAreaSize) {
+            return Resolve.maybeResolveSize(rawSize, gridAreaSize);
         }
 
         /** The item's margins resolved against the grid area's inline size. */
@@ -7275,6 +7289,17 @@ public class GridComputer {
             }
         }
         return 0;
+    }
+
+    /**
+     * Min/max counterpart of {@link #maybeApplyAspectRatio(FloatSize, Float)}: transfers min/max
+     * constraints between the axes, but only into an axis whose preferred size is auto.
+     *
+     * @see Resolve#maybeApplyAspectRatioToMinMax(FloatSize, float, FloatSize)
+     */
+    private static FloatSize maybeApplyAspectRatioToMinMax(FloatSize value, Float aspectRatio, FloatSize preferredSize) {
+        if (aspectRatio == null || Float.isNaN(aspectRatio)) return value;
+        return Resolve.maybeApplyAspectRatioToMinMax(value, aspectRatio, preferredSize);
     }
 
     private static FloatSize maybeApplyAspectRatio(FloatSize size, Float aspectRatio) {
