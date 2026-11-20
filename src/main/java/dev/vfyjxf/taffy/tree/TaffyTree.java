@@ -66,6 +66,19 @@ public class TaffyTree {
     /** Parent of each node */
     private final Long2ObjectOpenHashMap<NodeId> parents;
 
+    /**
+     * Monotonic stamp for the memoized resolved directions stored on {@link NodeData}.
+     *
+     * <p>A {@link NodeData#getResolvedDirection() cached direction} is trusted only while its
+     * stamp equals this value. The counter is bumped when a layout pass starts (a new pass can
+     * observe styles mutated in place through {@code getStyle}) and on every style or child-list
+     * mutation: direction is inherited, so changing one node's style or moving a subtree under a
+     * different parent can change the direction of every node below it, and a counter bump
+     * invalidates that whole subtree in O(1) instead of walking it. Starts at 1 so the
+     * {@code -1} stamp of a freshly created node is never trusted.</p>
+     */
+    private long directionEpoch = 1L;
+
     /** Whether to round layout values */
     private boolean useRounding = true;
     
@@ -237,6 +250,7 @@ public class TaffyTree {
         nodeMeasureContexts.clear();
         nodeMeasureFunctions.clear();
         parents.clear();
+        invalidateResolvedDirections();
     }
 
     /**
@@ -271,6 +285,7 @@ public class TaffyTree {
         nodeContextData.remove(key);
         nodeMeasureContexts.remove(key);
         nodeMeasureFunctions.remove(key);
+        invalidateResolvedDirections();
     }
 
     // === Context (Measure Function) Management ===
@@ -415,6 +430,7 @@ public class TaffyTree {
 
         parents.put(childKey, parent);
         parentData.getChildren().add(child);
+        invalidateResolvedDirections();
         markDirty(parent);
     }
 
@@ -437,6 +453,7 @@ public class TaffyTree {
         
         parents.put(child.getId(), parent);
         parentChildren.add(childIndex, child);
+        invalidateResolvedDirections();
         markDirty(parent);
     }
 
@@ -469,6 +486,7 @@ public class TaffyTree {
         
         parentChildList.clear();
         parentChildList.addAll(Arrays.asList(newChildren));
+        invalidateResolvedDirections();
         markDirty(parent);
     }
 
@@ -514,6 +532,7 @@ public class TaffyTree {
         
         NodeId child = parentChildren.remove(childIndex);
         parents.put(child.getId(), null);
+        invalidateResolvedDirections();
         markDirty(parent);
         
         return child;
@@ -559,6 +578,7 @@ public class TaffyTree {
         parents.put(newChild.getId(), parent);
         NodeId oldChild = parentChildren.set(childIndex, newChild);
         parents.put(oldChild.getId(), null);
+        invalidateResolvedDirections();
         markDirty(parent);
         
         return oldChild;
@@ -605,6 +625,23 @@ public class TaffyTree {
         return parents.get(child.getId());
     }
 
+    /** Returns the epoch that stamps currently valid {@link NodeData} resolved directions. */
+    long currentDirectionEpoch() {
+        return directionEpoch;
+    }
+
+    /**
+     * Invalidates every memoized resolved direction by starting a new direction epoch.
+     *
+     * <p>Called when a layout pass starts and after any style or child-list change, because a
+     * direction is inherited: one changed style or one re-parented subtree may change the
+     * resolved direction of arbitrarily many descendants. Starting a new epoch invalidates all
+     * of them at once (O(1)); the layout pass then resolves each node at most once, top-down.</p>
+     */
+    void invalidateResolvedDirections() {
+        directionEpoch++;
+    }
+
     // === Style Management ===
 
     /**
@@ -616,6 +653,8 @@ public class TaffyTree {
             throw TaffyException.invalidInputNode(node);
         }
         data.setStyle(style);
+        // A new direction may be inherited by the whole subtree; one epoch bump invalidates it.
+        invalidateResolvedDirections();
         markDirty(node);
     }
 

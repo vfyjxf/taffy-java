@@ -99,6 +99,9 @@ public class LayoutComputer {
     public void computeLayout(NodeId root, TaffySize<AvailableSpace> availableSpace) {
         TaffyStyle style = tree.getStyle(root);
         TaffyPosition position = style.getPosition();
+        // A new pass may observe styles that were mutated in place through getStyle(), so no
+        // direction memoized by an earlier pass may be trusted; see resolveDirection.
+        tree.invalidateResolvedDirections();
         TaffyDirection direction = resolveDirection(root);
 
         // The ICB only exists when the viewport is definite in both axes.
@@ -1540,33 +1543,73 @@ public class LayoutComputer {
     }
     
     /**
-     * Resolves the direction for a node, handling INHERIT by looking up the parent chain.
-     * If direction is INHERIT, it walks up the parent chain to find a non-INHERIT direction.
-     * If no parent has a concrete direction, defaults to LTR.
-     * 
+     * Resolves the direction for a node, handling INHERIT through the parent chain.
+     *
+     * <p>{@code direction} is an inherited property, so a node with an explicit LTR/RTL style
+     * answers with its own value, a node styled INHERIT takes the nearest ancestor's resolved
+     * direction, and a chain that never states one resolves to {@link TaffyDirection#DEFAULT}
+     * (LTR). The answer cannot change while a layout pass holds the tree still, yet flex, grid
+     * and block layout ask for it once per child item and the measured-leaf path asks once per
+     * leaf, so recomputing the chain each time made the walk roughly a quarter of layout time on
+     * wide trees: the walk itself plus its id-to-style and parent lookups dominated the profile.</p>
+     *
+     * <p>The walk is therefore memoized on {@link NodeData} and stamped with the tree's current
+     * direction epoch (see {@link TaffyTree#invalidateResolvedDirections()}). A repeated query is
+     * one id-to-node lookup plus a field read, and no ancestor's style is read. A cache miss
+     * resolves top-down and memoizes every ancestor it consults, so a whole layout pass resolves
+     * each node at most once instead of once per child item, and there is no separate pre-pass
+     * traversal. Stale stamps (a new pass, a style change, an insert/remove/move, or a parent
+     * change) are ignored, which also covers descendants of a node whose direction changed.</p>
+     *
      * @param node The node to resolve direction for
      * @return The resolved direction (LTR or RTL, never INHERIT)
+     * @throws TaffyException if the node does not belong to this tree
      */
     public TaffyDirection resolveDirection(NodeId node) {
-        TaffyStyle style = tree.getStyle(node);
-        TaffyDirection direction = style.getDirection();
-        
-        if (!direction.isInherit()) {
-            return direction;
+        NodeData data = tree.getNodeData(node);
+        if (data == null) {
+            // Keep the historical failure mode for unknown nodes: getStyle reports the error.
+            tree.getStyle(node);
+            return TaffyDirection.DEFAULT;
         }
-        
-        // Walk up the parent chain to find a non-INHERIT direction
-        NodeId parent = tree.getParent(node);
-        while (parent != null) {
-            TaffyStyle parentStyle = tree.getStyle(parent);
-            TaffyDirection parentDirection = parentStyle.getDirection();
-            if (!parentDirection.isInherit()) {
-                return parentDirection;
+        long epoch = tree.currentDirectionEpoch();
+        if (data.getResolvedDirectionEpoch() == epoch) {
+            return data.getResolvedDirection();
+        }
+        return resolveDirectionUncached(node, data, epoch);
+    }
+
+    /**
+     * Resolves a node whose memoized direction is stale and stamps the result for {@code epoch}.
+     *
+     * <p>The recursion depth is the distance to the nearest ancestor that already has a concrete
+     * direction or a current stamp: one frame in the normal top-down layout order (the parent has
+     * just resolved itself), and at most the tree depth for a query that starts deep in a chain
+     * of INHERIT nodes. Every visited node is stamped, so the walk happens once per node per
+     * pass, which keeps the total resolution work linear in the number of nodes.</p>
+     */
+    private TaffyDirection resolveDirectionUncached(NodeId node, NodeData data, long epoch) {
+        TaffyDirection own = data.getStyle().getDirection();
+        TaffyDirection resolved;
+        if (!own.isInherit()) {
+            resolved = own;
+        } else {
+            NodeId parent = tree.getParent(node);
+            NodeData parentData = parent == null ? null : tree.getNodeData(parent);
+            if (parentData == null) {
+                if (parent != null) {
+                    // Historical failure mode for an inconsistent parent link.
+                    tree.getStyle(parent);
+                }
+                // No parent with a concrete direction found, use the CSS initial value.
+                resolved = TaffyDirection.DEFAULT;
+            } else if (parentData.getResolvedDirectionEpoch() == epoch) {
+                resolved = parentData.getResolvedDirection();
+            } else {
+                resolved = resolveDirectionUncached(parent, parentData, epoch);
             }
-            parent = tree.getParent(parent);
         }
-        
-        // No parent with concrete direction found, use default
-        return TaffyDirection.DEFAULT;
+        data.setResolvedDirection(resolved, epoch);
+        return resolved;
     }
 }
