@@ -52,6 +52,15 @@ public final class LayoutCache {
     private int measureEntryCount = 0;
 
     /**
+     * Index of the measure entry that satisfied the previous lookup, or {@code -1}. Many layout
+     * passes repeat the same measurement (a stretch pass followed by a layout pass, or a style
+     * change that keeps the child's available space), so checking this slot before scanning all
+     * nine usually turns the scan into one comparison. Clock eviction still sees the access via
+     * {@link #recentlyUsedEntries}.
+     */
+    private int lastMeasureEntry = -1;
+
+    /**
      * Tracks which measure entries have been used since the eviction cursor last passed them.
      * Bit {@code i} corresponds to {@link #measureEntries}{@code [i]}. Implements the
      * second-chance (clock) eviction policy from upstream taffy (#1010).
@@ -235,6 +244,16 @@ public final class LayoutCache {
         FloatSize parent = inputs.parentSize();
         int keyHash = keyHash(known, availableSpace, parent);
 
+        int last = lastMeasureEntry;
+        if (last >= 0) {
+            CacheEntry<FloatSize> entry = measureEntries[last];
+            if (entry != null && entry.valid && entry.keyHash == keyHash
+                && entry.matches(known, availableSpace, parent)) {
+                recentlyUsedEntries |= 1 << last;
+                return LayoutOutput.fromOuterSize(entry.content);
+            }
+        }
+
         for (int i = 0; i < CACHE_SIZE; i++) {
             CacheEntry<FloatSize> entry = measureEntries[i];
             // The fingerprint rejects almost every non-matching slot without touching its key
@@ -245,6 +264,7 @@ public final class LayoutCache {
             if (entry.matches(known, availableSpace, parent)) {
                 // Mark the entry as used so that the clock does not evict a hot entry.
                 recentlyUsedEntries |= 1 << i;
+                lastMeasureEntry = i;
                 return LayoutOutput.fromOuterSize(entry.content);
             }
         }
@@ -303,6 +323,7 @@ public final class LayoutCache {
                 && entry.matches(known, availableSpace, parent)) {
                 entry.content = content;
                 recentlyUsedEntries |= 1 << i;
+                lastMeasureEntry = i;
                 return;
             }
         }
@@ -329,6 +350,7 @@ public final class LayoutCache {
             measureEntryCount++;
         }
         entry.set(known, availableSpace, parent, keyHash, content);
+        lastMeasureEntry = entryIndex;
         recentlyUsedEntries |= 1 << entryIndex;
         nextMeasureEntry++;
         if (nextMeasureEntry == CACHE_SIZE) {
@@ -469,6 +491,7 @@ public final class LayoutCache {
         recentlyUsedEntries = 0;
         nextMeasureEntry = 0;
         measureEntryCount = 0;
+        lastMeasureEntry = -1;
         isEmpty = true;
     }
 
