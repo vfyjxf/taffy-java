@@ -778,6 +778,16 @@ public class GridComputer {
             minSize, maxSize)
                                      : new FloatSize(NaN, NaN);
 
+        // Whether this container's block size was newly derived from its definite inline size
+        // through the preferred ratio. A derived block size is a *preferred* size, not a
+        // specified one: css-sizing-4's automatic minimum size still floors it by the content
+        // (the used grid rows), so the container has to be re-grown after track sizing.
+        boolean heightDerivedByAspectRatio = Float.isNaN(
+            Resolve.maybeResolveSize(style.getSize(), parentSize).height)
+            && !Float.isNaN(clampedStyleSize.height)
+            && !style.getOverflow().x.isScrollContainer()
+            && !style.getOverflow().y.isScrollContainer();
+
         // Compute styled based known dimensions
         FloatSize minMaxDefiniteSize = new FloatSize(
             (!Float.isNaN(minSize.width) && !Float.isNaN(maxSize.width) && maxSize.width <= minSize.width)
@@ -1284,6 +1294,11 @@ public class GridComputer {
                                     ? styledBasedKnownDimensions.height
                                     : contentHeight + contentBoxInset.top + contentBoxInset.bottom;
 
+            if (heightDerivedByAspectRatio) {
+                containerHeight = Math.max(containerHeight,
+                    contentHeight + contentBoxInset.top + contentBoxInset.bottom);
+            }
+
             containerWidth = TaffyMath.clamp(containerWidth, minSize.width, maxSize.width);
             containerHeight = TaffyMath.clamp(containerHeight, minSize.height, maxSize.height);
             containerWidth = Math.max(containerWidth, paddingBorderSize.width);
@@ -1376,6 +1391,16 @@ public class GridComputer {
         float containerHeight = !Float.isNaN(styledBasedKnownDimensions.height)
                                 ? styledBasedKnownDimensions.height
                                 : contentHeight + contentBoxInset.top + contentBoxInset.bottom;
+
+        // css-sizing-4 automatic minimum size in the block axis: a block size transferred from a
+        // definite inline size is a preferred size, so the content (here the used rows) floors it.
+        // A 100px-wide, ratio-2/1 grid holding a 100px row is 100px tall rather than the
+        // transferred 50px (WPT grid-aspect-ratio-039); an explicit max-height still caps the
+        // grown size (grid-aspect-ratio-042).
+        if (heightDerivedByAspectRatio) {
+            containerHeight = Math.max(containerHeight,
+                contentHeight + contentBoxInset.top + contentBoxInset.bottom);
+        }
 
         // Apply min/max
         containerWidth = TaffyMath.clamp(containerWidth, minSize.width, maxSize.width);
