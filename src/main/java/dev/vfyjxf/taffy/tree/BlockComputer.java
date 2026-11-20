@@ -46,6 +46,12 @@ public class BlockComputer {
 
     private final LayoutComputer layoutComputer;
 
+    /**
+     * A shared all-zero size used for the default {@code border-box} sizing adjustment. Only
+     * ever read, never mutated: the adjusted sizes built from it are fresh values.
+     */
+    private static final FloatSize ZERO_SIZE = new FloatSize(0f, 0f);
+
     public BlockComputer(LayoutComputer layoutComputer) {
         this.layoutComputer = layoutComputer;
     }
@@ -106,7 +112,12 @@ public class BlockComputer {
         FloatRect padding;
         FloatRect border;
         FloatSize paddingBorderSum;
-        FloatSize computedSize;
+        /**
+         * The child's static-position point. Only an out-of-flow child needs one (its containing
+         * block's inline static-position rectangle plus the hypothetical block position); an
+         * in-flow child shares the read-only zero because nothing reads it there. Filled in by
+         * {@link #performFinalLayoutOnChildren}.
+         */
         FloatPoint staticPosition;
         boolean canBeCollapsedThrough;
         /**
@@ -955,20 +966,21 @@ public class BlockComputer {
 
             FloatSize boxSizingAdj = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
                                      ? item.paddingBorderSum
-                                     : new FloatSize(0f, 0f);
+                                     : ZERO_SIZE;
 
             FloatSize size2 = Resolve.maybeResolveSize(childStyle.getSize(), nodeInnerSize);
             // The item's min/max constraints are not transferred through its aspect ratio; see
             // the note in compute() (only the used size transfers between axes).
             FloatSize size1 = Resolve.maybeResolveSize(childStyle.getMinSize(), nodeInnerSize);
-            item.minSize = maybeAdd(size1, boxSizingAdj);
+            item.minSize = addBoxSizingAdjustment(size1, boxSizingAdj);
             FloatSize size = Resolve.maybeResolveSize(childStyle.getMaxSize(), nodeInnerSize);
-            item.maxSize = maybeAdd(size, boxSizingAdj);
+            item.maxSize = addBoxSizingAdjustment(size, boxSizingAdj);
             // Clamp the item's specified size in its own axis by its own min/max first, then
             // transfer the remaining definite axis through the ratio (css-sizing-4). Deriving
             // before clamping would transfer the unclamped size of the other axis.
-            FloatSize clampedSize = maybeClamp(size2, size1, size);
-            item.size = maybeAdd(Resolve.maybeApplyAspectRatio(clampedSize, aspectRatio), boxSizingAdj);
+            FloatSize clampedSize = clampIfConstrained(size2, size1, size);
+            item.size = addBoxSizingAdjustment(
+                Resolve.maybeApplyAspectRatio(clampedSize, aspectRatio), boxSizingAdj);
             item.widthFromAspectRatio =
                 Float.isNaN(clampedSize.width) && !Float.isNaN(item.size.width);
             item.heightFromAspectRatio =
@@ -982,8 +994,7 @@ public class BlockComputer {
             item.heightStyle = childStyle.getSize().height;
             item.widthStyle = childStyle.getSize().width;
             item.aspectRatio = aspectRatio;
-            item.computedSize = new FloatSize(0f, 0f);
-            item.staticPosition = new FloatPoint(0f, 0f);
+            item.staticPosition = FloatPoint.ZERO;
             item.canBeCollapsedThrough = false;
             item.isTable = childStyle.getItemIsTable();
             item.isCompressibleReplaced = childStyle.isCompressibleReplaced();
@@ -1306,7 +1317,6 @@ public class BlockComputer {
                     item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
                     item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
                 );
-                item.computedSize = finalSize;
                 item.finalLayout = new Layout(
                     item.order,
                     new FloatPoint(x, y),
@@ -1646,18 +1656,10 @@ public class BlockComputer {
                                                           .collapseWithSet(topMarginSet).resolve();
             }
 
-            item.computedSize = finalSize;
             item.canBeCollapsedThrough = itemOutput.marginsCanCollapseThrough();
 
-            // Update static position for RTL
-            float staticX = isRtl
-                ? (containerOuterWidth - contentBoxInset.right)
-                : contentBoxInset.left;
-            item.staticPosition = new FloatPoint(
-                staticX,
-                committedYOffset + activeCollapsibleMarginSet.resolve()
-            );
-
+            // An in-flow item's static position is never read (only an out-of-flow child needs
+            // one, and that is filled in above), so it is not recomputed here.
             float y = committedYOffset + insetOffsetY + yMarginOffset;
             if (avoidsFloats) {
                 // A box beside floats starts at the content slot's top edge. Its top margin may
@@ -2597,6 +2599,39 @@ public class BlockComputer {
     }
 
     // Helper methods
+
+    /**
+     * Adds a box-sizing adjustment to a resolved size.
+     *
+     * <p>With the default {@code border-box} sizing the adjustment is the shared all-zero size,
+     * and the result is numerically identical to the input, so the input is returned as-is. The
+     * sizes handed around by this class are never mutated after construction, which makes that
+     * aliasing safe and saves one allocation per size per item.</p>
+     */
+    private static FloatSize addBoxSizingAdjustment(FloatSize size, FloatSize adjustment) {
+        if (adjustment.width == 0f && adjustment.height == 0f) {
+            return size;
+        }
+        return new FloatSize(
+            TaffyMath.maybeAdd(size.width, adjustment.width),
+            TaffyMath.maybeAdd(size.height, adjustment.height)
+        );
+    }
+
+    /**
+     * Clamps a size by its optional min/max constraints, returning the input unchanged when both
+     * constraints are absent (the common case for a style without {@code min-*}/{@code max-*}).
+     */
+    private static FloatSize clampIfConstrained(FloatSize size, FloatSize min, FloatSize max) {
+        if (Float.isNaN(min.width) && Float.isNaN(min.height)
+            && Float.isNaN(max.width) && Float.isNaN(max.height)) {
+            return size;
+        }
+        return new FloatSize(
+            TaffyMath.maybeClamp(size.width, min.width, max.width),
+            TaffyMath.maybeClamp(size.height, min.height, max.height)
+        );
+    }
 
     private FloatSize maybeAdd(FloatSize size, FloatSize addition) {
         return new FloatSize(
