@@ -172,6 +172,61 @@ tasks.register('jmhSmokeLdlib', JavaExec) {
     jvmArgs = ['-Xss16m']
 }
 
+// Plain-java true-cold layout probe (src/jmh/java/.../ColdLayoutProbe.java).
+// It answers a question the JMH suite cannot: the suite builds the tree once and calls
+// clearCache per invocation, but clearCache does not clear the p20 flex item list or the p22 grid
+// item list, so every invocation after the first reuses metadata built by the first layout. The
+// probe rebuilds the tree outside the timer for every round ("true cold") and also reproduces the
+// JMH convention ("clear-cache") in the same process, so the two numbers share one JVM and one JIT.
+// The same compiled probe can be linked against the published local5 jar by replacing only the
+// main classes:
+//   ./gradlew coldLayoutProbe
+//   ./gradlew coldLayoutProbe -PcoldProbeRounds=20 -PcoldProbeRepeats=2
+//   ./gradlew coldLayoutProbe -PcoldProbeOnly=wideGrid-316 -PcoldProbeMode=true
+//   ./gradlew coldLayoutProbe \
+//     -PcoldProbeOldJar="$HOME/.m2/repository/dev/vfyjxf/taffy/1.2.0-local5/taffy-1.2.0-local5-all.jar" \
+//     -PcoldProbeLabel=local5
+// See docs/perf-coldcheck.md for the recorded run and its caveats.
+tasks.register('coldLayoutProbe', JavaExec) {
+    group = 'jmh'
+    description = 'Measures true-cold and clearCache-cold layout in a plain Java process (no JMH).'
+
+    dependsOn tasks.named('jmhClasses')
+    mainClass = 'dev.vfyjxf.taffy.benchmark.ColdLayoutProbe'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+    jvmArgs = ['-Xss16m', '-Xms2g', '-Xmx3g']
+
+    def oldJar = project.findProperty('coldProbeOldJar')
+    if (oldJar) {
+        // Replace only the main classes: the probe and the benchmark builders are the same
+        // compiled artifacts in both runs, and the old all-jar carries its own shaded fastutil.
+        def mainOutputs = sourceSets.main.output.files.collect { it.absolutePath } as Set
+        classpath = files(oldJar) + (sourceSets.jmh.runtimeClasspath.filter {
+            !mainOutputs.contains(it.absolutePath)
+        }) + configurations.jmh
+    } else {
+        classpath = sourceSets.jmh.runtimeClasspath + configurations.jmh
+    }
+
+    def probeArgs = []
+    ['coldProbeRounds': 'rounds', 'coldProbeLargeRounds': 'largeRounds',
+     'coldProbeWarmup': 'warmup', 'coldProbeWarmupMs': 'warmupMs',
+     'coldProbeRepeats': 'repeats', 'coldProbeOnly': 'only', 'coldProbeMode': 'mode',
+     'coldProbeGc': 'gc'].each { property, key ->
+        if (project.hasProperty(property)) {
+            probeArgs.add("${key}=${project.property(property)}")
+        }
+    }
+    if (project.hasProperty('coldProbeLabel')) {
+        probeArgs.add("label=${project.property('coldProbeLabel')}")
+    } else {
+        probeArgs.add(oldJar ? 'label=old' : 'label=current')
+    }
+    args probeArgs
+}
+
 // Heap-footprint probe for the benchmark tree shapes (src/jmh/java/.../MemoryFootprintMain.java).
 // This is not a benchmark: it starts no JMH, it builds flat/form/deep trees, forces full GCs and
 // prints used-heap deltas per node. The numbers and their limits are documented in
