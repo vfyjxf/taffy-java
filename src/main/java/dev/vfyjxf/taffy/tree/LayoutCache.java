@@ -260,7 +260,7 @@ public final class LayoutCache {
      * @param direction the direction the node currently resolves to
      * @return the cached output, or {@code null} if there is no reuse-safe entry
      */
-    public LayoutOutput getContextFreeFinalEntry(LayoutInput inputs, TaffyDirection direction) {
+    LayoutOutput getContextFreeFinalEntry(LayoutInput inputs, TaffyDirection direction) {
         if (isEmpty || !finalEntryContextFree || finalEntryDirection != direction.ordinal()) {
             return null;
         }
@@ -439,7 +439,7 @@ public final class LayoutCache {
      * @param layoutOutput the computed result
      * @param direction    the direction the node resolved to during this layout
      */
-    public void storeContextFreeFinalEntry(
+    void storeContextFreeFinalEntry(
         LayoutInput inputs, LayoutOutput layoutOutput, TaffyDirection direction) {
 
         if (inputs.runMode() != RunMode.PERFORM_LAYOUT) {

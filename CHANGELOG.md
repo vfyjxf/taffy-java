@@ -122,6 +122,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 - The final-layout cache entry now stores an exact packed key (three `long`s built
   with `floatToIntBits`/available-space type codes) instead of comparing six fields
   per lookup; `NaN`, `-0.0`, known-axis and parent-size semantics are unchanged.
+- A same-BFC block child whose inherited context holds no floats and which places
+  none is cached and reused across passes instead of being recomputed on every
+  pass. The entry records the resolved direction (the key has no direction slot)
+  and is only visible to the context-free lookup; the ordinary cache lookup refuses
+  it, and any float in the inherited context or in the child's subtree falls back
+  to the previous always-recompute path.
+
 
 
 ### P7 additions (float, grid details, contain)
