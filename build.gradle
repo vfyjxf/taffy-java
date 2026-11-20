@@ -172,6 +172,36 @@ tasks.register('jmhSmokeLdlib', JavaExec) {
     jvmArgs = ['-Xss16m']
 }
 
+// Heap-footprint probe for the benchmark tree shapes (src/jmh/java/.../MemoryFootprintMain.java).
+// This is not a benchmark: it starts no JMH, it builds flat/form/deep trees, forces full GCs and
+// prints used-heap deltas per node. The numbers and their limits are documented in
+// docs/perf-memory.md.
+//   ./gradlew memoryFootprint
+//   ./gradlew memoryFootprint -PmemoryFootprintRounds=7 -PmemoryFootprintOnly=flat-flex-100k
+tasks.register('memoryFootprint', JavaExec) {
+    group = 'jmh'
+    description = 'Measures the retained heap of the benchmark tree shapes (plain java main, no JMH).'
+
+    dependsOn tasks.named('jmhClasses')
+    classpath = sourceSets.jmh.runtimeClasspath + configurations.jmh
+    mainClass = 'dev.vfyjxf.taffy.benchmark.MemoryFootprintMain'
+    // The deep shape is a 100k-node chain, i.e. ~50k recursive layout frames; the benchmark
+    // tasks use -Xss16m for depth 1024, so this needs a much larger stack.
+    jvmArgs = ['-Xss512m', '-Xmx4g']
+    if (project.hasProperty('memoryFootprintRounds')) {
+        args "rounds=${project.property('memoryFootprintRounds')}"
+    }
+    if (project.hasProperty('memoryFootprintOnly')) {
+        args "only=${project.property('memoryFootprintOnly')}"
+    }
+    if (project.hasProperty('memoryFootprintFill')) {
+        args "fill=${project.property('memoryFootprintFill')}"
+    }
+    if (project.hasProperty('memoryFootprintLabel')) {
+        args "label=${project.property('memoryFootprintLabel')}"
+    }
+}
+
 test {
     useJUnitPlatform()
     // Forward the golden-update switch from the Gradle CLI (-D...) to the test JVM.
