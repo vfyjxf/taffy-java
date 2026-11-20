@@ -166,14 +166,15 @@ public record Layout(
      * </ul>
      *
      * <p><b>1.2 compatibility path:</b> a {@code Layout} built by hand through the compatibility
-     * constructors (or {@link #Layout()}) carries {@link ScrollableOverflow#ZERO}, which this port
-     * treats as "no scrollable-overflow data". Such a value keeps the legacy
-     * {@code contentSize}-based formula so that 1.x source and binaries observe the same numbers;
-     * layouts produced by {@code computeLayout} always carry the rectangle (possibly an empty
-     * one) and use the new model. 2.0 removes {@code contentSize} and this fallback together.</p>
+     * constructors (or {@link #Layout()}) carries the shared {@link ScrollableOverflow#ZERO}
+     * placeholder, which this port treats as "no scrollable-overflow data". Such a value keeps the
+     * legacy {@code contentSize}-based formula so that 1.x source and binaries observe the same
+     * numbers; layouts produced by {@code computeLayout} always carry a freshly built rectangle
+     * (possibly an empty one) and use the new model. 2.0 removes {@code contentSize} and this
+     * fallback together.</p>
      */
     public float scrollWidth() {
-        if (hasScrollableOverflow()) {
+        if (hasComputedScrollableOverflow()) {
             if (scrollableOverflow.reversedX()) {
                 return -scrollableOverflow.left();
             }
@@ -196,7 +197,7 @@ public record Layout(
      * 1.2 compatibility path described by {@link #scrollWidth()}; 2.0 removes it.</p>
      */
     public float scrollHeight() {
-        if (hasScrollableOverflow()) {
+        if (hasComputedScrollableOverflow()) {
             if (scrollableOverflow.reversedY()) {
                 return -scrollableOverflow.top();
             }
@@ -209,25 +210,24 @@ public record Layout(
     }
 
     /**
-     * Whether this layout carries scrollable-overflow data rather than the 1.2 compatibility
-     * placeholder.
+     * Whether this layout carries a computed scrollable-overflow rectangle rather than the 1.2
+     * compatibility placeholder.
      *
-     * <p>{@link ScrollableOverflow#ZERO} (all edges zero, no reversed origin) is the value the
-     * compatibility constructors supply, so it means "a 1.x caller built this layout and did not
-     * provide an overflow rectangle". A computed rectangle that happens to be empty is
-     * indistinguishable from it and is also treated as the legacy path, where both formulas agree
-     * on zero.</p>
+     * <p>The placeholder is the shared {@link ScrollableOverflow#ZERO} constant, and that constant
+     * is only ever installed by the compatibility constructors ({@link #Layout()},
+     * {@link #Layout(int)}, {@link #withOrder(int)} and the 8-component constructor), so it is
+     * recognised by identity. Every rectangle an algorithm produces — the block, flex and grid
+     * accumulators, the measured-leaf path and the rounded layout — is a freshly constructed value,
+     * even when its edges happen to be zero.</p>
+     *
+     * <p>An <em>empty</em> computed rectangle is a real result and must be honoured: a scroll
+     * container whose content does not overflow has a zero range, so it must not fall back to the
+     * legacy {@code contentSize} formula, which still adds the clipped scrollbar gutter and
+     * reported a 2px range for a 2px-wide {@code overflow: scroll} box
+     * ({@code grid_overflow_scrollbars_overridden_by_available_space}, upstream #1372 reports 0).</p>
      */
-    private boolean hasScrollableOverflow() {
-        if (scrollableOverflow == null) {
-            return false;
-        }
-        return scrollableOverflow.left() != 0f
-               || scrollableOverflow.right() != 0f
-               || scrollableOverflow.top() != 0f
-               || scrollableOverflow.bottom() != 0f
-               || scrollableOverflow.reversedX()
-               || scrollableOverflow.reversedY();
+    private boolean hasComputedScrollableOverflow() {
+        return scrollableOverflow != null && scrollableOverflow != ScrollableOverflow.ZERO;
     }
 
     // === Getter methods ===

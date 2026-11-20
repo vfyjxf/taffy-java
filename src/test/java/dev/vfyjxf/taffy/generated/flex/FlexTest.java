@@ -3758,6 +3758,8 @@ public class FlexTest {
         assertEquals(200.0f, node1Layout.size().height, "height of node1");
         assertEquals(200.0f, node1Layout.location().x, "x of node1");
         assertEquals(0.0f, node1Layout.location().y, "y of node1");
+        assertEquals(0.0f, node1Layout.scrollWidth(), EPSILON, "scroll width of node1");
+        assertEquals(0.0f, node1Layout.scrollHeight(), EPSILON, "scroll height of node1");
         Layout node10Layout = tree.getLayout(node10);
         assertEquals(0.0f, node10Layout.size().width, "width of node10");
         assertEquals(0.0f, node10Layout.size().height, "height of node10");
@@ -3952,6 +3954,8 @@ public class FlexTest {
         assertEquals(270.0f, node1Layout.size().height, "height of node1");
         assertEquals(270.0f, node1Layout.location().x, "x of node1");
         assertEquals(0.0f, node1Layout.location().y, "y of node1");
+        assertEquals(0.0f, node1Layout.scrollWidth(), EPSILON, "scroll width of node1");
+        assertEquals(0.0f, node1Layout.scrollHeight(), EPSILON, "scroll height of node1");
         Layout node10Layout = tree.getLayout(node10);
         assertEquals(0.0f, node10Layout.size().width, "width of node10");
         assertEquals(0.0f, node10Layout.size().height, "height of node10");
@@ -22030,6 +22034,8 @@ public class FlexTest {
         assertEquals(100.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(85.0f, node0Layout.size().width, "width of node0");
         assertEquals(30.0f, node0Layout.size().height, "height of node0");
@@ -22080,6 +22086,8 @@ public class FlexTest {
         assertEquals(100.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(85.0f, node0Layout.size().width, "width of node0");
         assertEquals(30.0f, node0Layout.size().height, "height of node0");
@@ -22812,6 +22820,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(50.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(50.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(100.0f, node0Layout.size().width, "width of node0");
         assertEquals(100.0f, node0Layout.size().height, "height of node0");
@@ -22858,6 +22868,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(50.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(50.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(100.0f, node0Layout.size().width, "width of node0");
         assertEquals(100.0f, node0Layout.size().height, "height of node0");
@@ -40860,6 +40872,8 @@ public class FlexTest {
         assertEquals(50.0f, node1Layout.size().height, "height of node1");
         assertEquals(9.0f, node1Layout.location().x, "x of node1");
         assertEquals(0.0f, node1Layout.location().y, "y of node1");
+        assertEquals(9.0f, node1Layout.scrollWidth(), EPSILON, "scroll width of node1");
+        assertEquals(0.0f, node1Layout.scrollHeight(), EPSILON, "scroll height of node1");
     }
 
     @Test
@@ -40904,6 +40918,8 @@ public class FlexTest {
         assertEquals(50.0f, node1Layout.size().height, "height of node1");
         assertEquals(9.0f, node1Layout.location().x, "x of node1");
         assertEquals(0.0f, node1Layout.location().y, "y of node1");
+        assertEquals(9.0f, node1Layout.scrollWidth(), EPSILON, "scroll width of node1");
+        assertEquals(0.0f, node1Layout.scrollHeight(), EPSILON, "scroll height of node1");
     }
 
     @Test
@@ -44110,6 +44126,8 @@ public class FlexTest {
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(50.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
     }
 
     @Test
@@ -44144,6 +44162,8 @@ public class FlexTest {
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(50.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
     }
 
     @Test
@@ -44177,6 +44197,8 @@ public class FlexTest {
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(65.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
     }
 
     @Test
@@ -44212,6 +44234,8 @@ public class FlexTest {
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(65.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
     }
 
     @Test
@@ -44379,6 +44403,8 @@ public class FlexTest {
         assertEquals(4.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(0.0f, node00Layout.size().width, "width of node00");
         assertEquals(0.0f, node00Layout.size().height, "height of node00");
@@ -44424,6 +44450,8 @@ public class FlexTest {
         assertEquals(4.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(0.0f, node00Layout.size().width, "width of node00");
         assertEquals(0.0f, node00Layout.size().height, "height of node00");
@@ -44456,6 +44484,8 @@ public class FlexTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(0.0f, node0Layout.size().width, "width of node0");
         assertEquals(0.0f, node0Layout.size().height, "height of node0");
@@ -44490,6 +44520,8 @@ public class FlexTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(0.0f, node0Layout.size().width, "width of node0");
         assertEquals(0.0f, node0Layout.size().height, "height of node0");
@@ -44522,6 +44554,8 @@ public class FlexTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(0.0f, node0Layout.size().width, "width of node0");
         assertEquals(0.0f, node0Layout.size().height, "height of node0");
@@ -44556,6 +44590,8 @@ public class FlexTest {
         assertEquals(4.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(0.0f, node0Layout.size().width, "width of node0");
         assertEquals(0.0f, node0Layout.size().height, "height of node0");
@@ -44588,6 +44624,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(35.0f, node0Layout.size().width, "width of node0");
         assertEquals(35.0f, node0Layout.size().height, "height of node0");
@@ -44622,6 +44660,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(35.0f, node0Layout.size().width, "width of node0");
         assertEquals(35.0f, node0Layout.size().height, "height of node0");
@@ -44654,6 +44694,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(35.0f, node0Layout.size().width, "width of node0");
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
@@ -44688,6 +44730,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(35.0f, node0Layout.size().width, "width of node0");
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
@@ -44720,6 +44764,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(50.0f, node0Layout.size().width, "width of node0");
         assertEquals(35.0f, node0Layout.size().height, "height of node0");
@@ -44754,6 +44800,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(0.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(0.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(50.0f, node0Layout.size().width, "width of node0");
         assertEquals(35.0f, node0Layout.size().height, "height of node0");
@@ -50565,6 +50613,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(65.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(65.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(100.0f, node0Layout.size().width, "width of node0");
         assertEquals(100.0f, node0Layout.size().height, "height of node0");
@@ -50602,6 +50652,8 @@ public class FlexTest {
         assertEquals(50.0f, nodeLayout.size().height, "height of node");
         assertEquals(0.0f, nodeLayout.location().x, "x of node");
         assertEquals(0.0f, nodeLayout.location().y, "y of node");
+        assertEquals(65.0f, nodeLayout.scrollWidth(), EPSILON, "scroll width of node");
+        assertEquals(65.0f, nodeLayout.scrollHeight(), EPSILON, "scroll height of node");
         Layout node0Layout = tree.getLayout(node0);
         assertEquals(100.0f, node0Layout.size().width, "width of node0");
         assertEquals(100.0f, node0Layout.size().height, "height of node0");
@@ -51192,6 +51244,8 @@ public class FlexTest {
         assertEquals(100.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(140.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51241,6 +51295,8 @@ public class FlexTest {
         assertEquals(140.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(100.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51287,6 +51343,8 @@ public class FlexTest {
         assertEquals(100.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(140.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51336,6 +51394,8 @@ public class FlexTest {
         assertEquals(140.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(100.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51474,6 +51534,8 @@ public class FlexTest {
         assertEquals(240.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51522,6 +51584,8 @@ public class FlexTest {
         assertEquals(240.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51567,6 +51631,8 @@ public class FlexTest {
         assertEquals(40.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(200.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");
@@ -51615,6 +51681,8 @@ public class FlexTest {
         assertEquals(40.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(0.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(200.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node00Layout = tree.getLayout(node00);
         assertEquals(160.0f, node00Layout.size().width, "width of node00");
         assertEquals(200.0f, node00Layout.size().height, "height of node00");

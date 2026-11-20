@@ -1182,11 +1182,25 @@ public class LayoutComputer {
 
         // Use a measure callback if available. The output size is a content size (same semantics
         // as the legacy MeasureFunc FloatSize); the padding/border/scrollbar inset is added below.
-        // Subtract content box inset (incl. scrollbar) from known dimensions to get content area
-        FloatSize measureKnownDimensions = new FloatSize(
-            TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
-            TaffyMath.maybeSub(styledBasedKnownDimensions.height, contentBoxInsetSize.height)
-        );
+        // Subtract content box inset (incl. scrollbar) from known dimensions to get content area.
+        //
+        // A scroll container is measured as if no size were known on a full layout pass (upstream
+        // leaf.rs `measure_function(match run_mode { RunMode::ComputeSize => known_dimensions, _ => Size::NONE }, ...)`):
+        // its scrollable overflow rectangle is derived from the intrinsic content extent at the
+        // available space, so echoing the already-known box size back to the callback would erase
+        // exactly the overflow the rectangle describes (a 45x45 overflow:scroll text box reported
+        // scrollWidth 0). Other leaves keep the S1 contract documented on {@link MeasureContext},
+        // where the callback receives the content-box known dimensions so it can echo them.
+        // SO-04.
+        boolean measureWithoutKnownSize =
+            inputs.runMode() == RunMode.PERFORM_LAYOUT
+            && ScrollableOverflowUtil.isScrollContainer(overflow);
+        FloatSize measureKnownDimensions = measureWithoutKnownSize
+            ? new FloatSize(Float.NaN, Float.NaN)
+            : new FloatSize(
+                TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
+                TaffyMath.maybeSub(styledBasedKnownDimensions.height, contentBoxInsetSize.height)
+            );
         LayoutOutput measuredOutput = measureLeaf(
             node, inputs, style, measureKnownDimensions, contentAvailableSpace);
         FloatSize measuredSize = measuredOutput != null
