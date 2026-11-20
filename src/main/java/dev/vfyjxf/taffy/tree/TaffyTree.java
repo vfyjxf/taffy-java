@@ -1071,6 +1071,17 @@ public class TaffyTree {
      * Unknown nodes and nodes without an unrounded layout are skipped together with their
      * subtree.</p>
      *
+     * <p><b>Allocation-free steady state.</b> A node whose rounded output is bit-for-bit identical
+     * to its unrounded layout (the common case for fixed, whole-pixel layouts) does not need a new
+     * {@link Layout}: when the node's stored final layout already holds those values, the pass
+     * skips the {@link Layout} allocation and the {@code setFinalLayout} write and keeps only the
+     * bookkeeping — the new-layout flag, the ancestor dirty-descendant propagation and the
+     * {@link LayoutChangeListener} notification, which receives the kept layout as both the old and
+     * the new value. Rounded components are never shared with the unrounded layout, so callers keep
+     * observing exactly the values a full rebuild would have produced; a stale stored layout (the
+     * first round of a subtree) and every fractional, NaN or compatibility-placeholder node keep
+     * taking the full rebuild path below.</p>
+     *
      * @param node the root of the subtree to round
      */
     public void roundLayout(NodeId node) {
@@ -1126,24 +1137,39 @@ public class TaffyTree {
             FloatSize scrollbarSize = layout.scrollbarSize();
             float scrollbarWidth = (scrollbarSize != null && !Float.isNaN(scrollbarSize.width)) ? scrollbarSize.width : 0f;
             float scrollbarHeight = (scrollbarSize != null && !Float.isNaN(scrollbarSize.height)) ? scrollbarSize.height : 0f;
-            FloatSize roundedScrollbarSize = new FloatSize(round(scrollbarWidth), round(scrollbarHeight));
+            float roundedScrollbarWidth = round(scrollbarWidth);
+            float roundedScrollbarHeight = round(scrollbarHeight);
 
-            Layout roundedLayout = new Layout(
-                layout.order(),
-                new FloatPoint(roundedX, roundedY),
-                new FloatSize(roundedWidth, roundedHeight),
-                new FloatSize(roundedContentWidth, roundedContentHeight),
-                roundOverflow(layout.scrollableOverflow()),
-                roundedScrollbarSize,
-                roundRect(layout.border()),
-                roundRect(layout.padding()),
-                roundRect(layout.margin())
-            );
+            // Fixed, whole-pixel layouts round to themselves: when the stored final layout already
+            // carries those values, replace neither the layout nor its components (see the method
+            // javadoc). Everything else keeps the full rebuild path.
+            Layout storedLayout = data.getFinalLayout();
+            if (roundingIsNoOp(layout, roundedX, roundedY, roundedWidth, roundedHeight,
+                    roundedContentWidth, roundedContentHeight,
+                    roundedScrollbarWidth, roundedScrollbarHeight)
+                    && storedLayout != null
+                    && hasComputedScrollableOverflow(storedLayout)
+                    && storedLayout.equals(layout)) {
+                if (useRounding) {
+                    markNodeLayoutUpdated(data, nodeKey, storedLayout, storedLayout);
+                }
+            } else {
+                Layout roundedLayout = new Layout(
+                    layout.order(),
+                    new FloatPoint(roundedX, roundedY),
+                    new FloatSize(roundedWidth, roundedHeight),
+                    new FloatSize(roundedContentWidth, roundedContentHeight),
+                    roundOverflow(layout.scrollableOverflow()),
+                    new FloatSize(roundedScrollbarWidth, roundedScrollbarHeight),
+                    roundRect(layout.border()),
+                    roundRect(layout.padding()),
+                    roundRect(layout.margin())
+                );
 
-            Layout oldLayout = data.getFinalLayout();
-            data.setFinalLayout(roundedLayout);
-            if (useRounding) {
-                markNodeLayoutUpdated(data, nodeKey, oldLayout, roundedLayout);
+                data.setFinalLayout(roundedLayout);
+                if (useRounding) {
+                    markNodeLayoutUpdated(data, nodeKey, storedLayout, roundedLayout);
+                }
             }
 
             List<NodeId> childList = data.getChildren();
@@ -1183,14 +1209,114 @@ public class TaffyTree {
         return overflow == null ? ScrollableOverflow.ZERO : overflow.round();
     }
 
+    /** Rounds a rect edge with {@link #round(float)}, mapping NaN edges to zero. */
+    private static float roundedEdge(float value) {
+        return !Float.isNaN(value) ? round(value) : 0f;
+    }
+
     /** Rounds a rect with {@link #round(float)}, mapping NaN edges to zero. */
     private static FloatRect roundRect(FloatRect rect) {
         return new FloatRect(
-            !Float.isNaN(rect.left) ? round(rect.left) : 0f,
-            !Float.isNaN(rect.right) ? round(rect.right) : 0f,
-            !Float.isNaN(rect.top) ? round(rect.top) : 0f,
-            !Float.isNaN(rect.bottom) ? round(rect.bottom) : 0f
+            roundedEdge(rect.left),
+            roundedEdge(rect.right),
+            roundedEdge(rect.top),
+            roundedEdge(rect.bottom)
         );
+    }
+
+    /**
+     * Returns whether rounding would reproduce {@code layout} with exactly the same bits, so the
+     * stored final layout can be kept instead of allocating a rounded replacement.
+     *
+     * <p>The comparison is bit-exact ({@link Float#floatToRawIntBits(float)}), which is stricter
+     * than value equality for every component the pass transforms: a {@code -0.0} becomes
+     * {@code +0.0}, a NaN position or size becomes zero, a NaN rect edge becomes zero, and a
+     * {@code null} content or scrollbar size would be replaced by a fresh zero size. Each of those
+     * counts as a change and keeps the full rebuild path. The scrollable overflow is reusable only
+     * when it is a real computed rectangle — never the shared {@link ScrollableOverflow#ZERO}
+     * compatibility placeholder, which {@code Layout} recognises by identity — whose rounded edges
+     * keep their bits.</p>
+     *
+     * @param layout                 the node's unrounded layout
+     * @param roundedX               the rounded x offset, relative to the parent
+     * @param roundedY               the rounded y offset, relative to the parent
+     * @param roundedWidth           the rounded width
+     * @param roundedHeight          the rounded height
+     * @param roundedContentWidth    the rounded content width
+     * @param roundedContentHeight   the rounded content height
+     * @param roundedScrollbarWidth  the rounded scrollbar width
+     * @param roundedScrollbarHeight the rounded scrollbar height
+     * @return whether a rounded rebuild would produce a bit-identical layout
+     */
+    private static boolean roundingIsNoOp(Layout layout, float roundedX, float roundedY,
+                                          float roundedWidth, float roundedHeight,
+                                          float roundedContentWidth, float roundedContentHeight,
+                                          float roundedScrollbarWidth, float roundedScrollbarHeight) {
+        FloatPoint location = layout.location();
+        FloatSize size = layout.size();
+        FloatSize contentSize = layout.contentSize();
+        FloatSize scrollbarSize = layout.scrollbarSize();
+        return sameBits(roundedX, location.x)
+            && sameBits(roundedY, location.y)
+            && sameBits(roundedWidth, size.width)
+            && sameBits(roundedHeight, size.height)
+            && contentSize != null
+            && sameBits(roundedContentWidth, contentSize.width)
+            && sameBits(roundedContentHeight, contentSize.height)
+            && scrollbarSize != null
+            && sameBits(roundedScrollbarWidth, scrollbarSize.width)
+            && sameBits(roundedScrollbarHeight, scrollbarSize.height)
+            && rectRoundsToSameBits(layout.border())
+            && rectRoundsToSameBits(layout.padding())
+            && rectRoundsToSameBits(layout.margin())
+            && overflowRoundsToSameBits(layout.scrollableOverflow());
+    }
+
+    /** Returns whether every rounded edge of {@code rect} has the same bits as the original edge. */
+    private static boolean rectRoundsToSameBits(FloatRect rect) {
+        return sameBits(roundedEdge(rect.left), rect.left)
+            && sameBits(roundedEdge(rect.right), rect.right)
+            && sameBits(roundedEdge(rect.top), rect.top)
+            && sameBits(roundedEdge(rect.bottom), rect.bottom);
+    }
+
+    /**
+     * Returns whether {@code overflow} is a computed rectangle whose rounded edges keep the same
+     * bits.
+     *
+     * <p>The shared {@link ScrollableOverflow#ZERO} placeholder is never reusable: a rounded layout
+     * always carries a freshly built rectangle (even an empty one), and {@code Layout} recognises
+     * the placeholder by identity to keep the legacy {@code contentSize} scroll formula for
+     * hand-built layouts. {@link #round(float)} maps {@code -0.0} to {@code +0.0}, so a signed-zero
+     * edge is reported as changed and keeps the regular {@link ScrollableOverflow#round()} path,
+     * which preserves that sign (upstream #1372).</p>
+     */
+    private static boolean overflowRoundsToSameBits(ScrollableOverflow overflow) {
+        return overflow != null
+            && overflow != ScrollableOverflow.ZERO
+            && sameBits(round(overflow.left()), overflow.left())
+            && sameBits(round(overflow.right()), overflow.right())
+            && sameBits(round(overflow.top()), overflow.top())
+            && sameBits(round(overflow.bottom()), overflow.bottom());
+    }
+
+    /** Bit-exact float equality: {@code -0.0} and {@code 0.0} differ, NaN equals NaN. */
+    private static boolean sameBits(float left, float right) {
+        return Float.floatToRawIntBits(left) == Float.floatToRawIntBits(right);
+    }
+
+    /**
+     * Mirrors {@code Layout}'s private {@code hasComputedScrollableOverflow()} predicate: a layout
+     * carries a computed rectangle unless its overflow component is {@code null} or the shared
+     * {@link ScrollableOverflow#ZERO} compatibility placeholder.
+     *
+     * <p>The no-op fast path must not keep a stored layout that carries the placeholder, because
+     * the full rebuild it replaces always installs a fresh rectangle and the two are distinguished
+     * by identity in {@code scrollWidth()}/{@code scrollHeight()}.</p>
+     */
+    private static boolean hasComputedScrollableOverflow(Layout layout) {
+        ScrollableOverflow overflow = layout.scrollableOverflow();
+        return overflow != null && overflow != ScrollableOverflow.ZERO;
     }
 
     // === Utility Methods ===
