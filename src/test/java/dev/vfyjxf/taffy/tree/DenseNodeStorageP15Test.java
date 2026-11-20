@@ -326,6 +326,59 @@ public class DenseNodeStorageP15Test {
     }
 
     @Test
+    @DisplayName("parent links round-trip through the spill map")
+    void parentLinksRoundTripThroughSpillMap() {
+        TaffyTree tree = new TaffyTree();
+        List<NodeId> filler = newLeaves(tree, 2_000);
+        for (int i = filler.size() - 1; i >= 0; i--) {
+            tree.remove(filler.get(i));
+        }
+        assertEquals(0, tree.totalNodeCount());
+
+        // Both ids are far above the array the removals left behind, so the parent link is spilled.
+        NodeId parent = tree.newLeaf(leaf(50f, 50f));
+        NodeId child = tree.newLeaf(leaf(10f, 10f));
+        assertTrue(tree.spilledNodeCount() >= 2);
+        tree.addChild(parent, child);
+
+        assertSame(parent, tree.getParent(child), "getParent returns the recorded NodeId instance");
+        assertEquals(List.of(child), tree.getChildren(parent));
+
+        tree.removeChild(parent, child);
+        assertNull(tree.getParent(child));
+
+        tree.addChild(parent, child);
+        assertSame(parent, tree.getParent(child));
+        tree.remove(parent);
+        assertFalse(tree.containsNode(parent));
+        assertNull(tree.getParent(child), "removing the parent detaches its children");
+        assertEquals(1, tree.totalNodeCount());
+    }
+
+    @Test
+    @DisplayName("spilled parent links migrate back into the array on growth")
+    void spilledParentLinksMigrateOnGrowth() {
+        TaffyTree tree = new TaffyTree();
+        List<NodeId> filler = newLeaves(tree, 2_000);
+        for (int i = filler.size() - 1; i >= 0; i--) {
+            tree.remove(filler.get(i));
+        }
+
+        NodeId parent = tree.newLeaf(leaf(50f, 50f));
+        NodeId child = tree.newLeaf(leaf(10f, 10f));
+        tree.addChild(parent, child);
+        assertTrue(tree.spilledNodeCount() > 0, "the ids start life spilled");
+
+        // Around id 2286 the growing live set makes the array cheap again, so growth resumes and
+        // pulls the spilled node data and the spilled parent link back into the arrays.
+        newLeaves(tree, 400);
+        assertTrue(tree.nodeSlotCapacity() > parent.getId(), "growth covers the spilled ids");
+        assertEquals(0, tree.spilledNodeCount(), "spilled parent links migrate with their nodes");
+        assertSame(parent, tree.getParent(child), "the migrated link survives the move");
+        assertEquals(402, tree.totalNodeCount());
+    }
+
+    @Test
     @DisplayName("layout runs over the array-backed storage with unchanged geometry")
     void layoutGeometryIsUnchanged() {
         TaffyTree tree = new TaffyTree();
