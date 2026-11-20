@@ -34,6 +34,7 @@ final class JavaTestWriter {
                 + "import dev.vfyjxf.taffy.geometry.*;\n"
                 + "import dev.vfyjxf.taffy.style.*;\n"
                 + "import dev.vfyjxf.taffy.tree.*;\n"
+                + "import dev.vfyjxf.taffy.util.MeasureFunc;\n"
                 + "import org.junit.jupiter.api.Test;\n"
                 + "import org.junit.jupiter.api.DisplayName;\n"
                 + "import static org.junit.jupiter.api.Assertions.*;\n\n"
@@ -47,8 +48,36 @@ final class JavaTestWriter {
                 + " * kept separate from taffy fixture-based tests.\n"
                 + " */\n"
                 + "public class " + className + " {\n\n"
-                + "    private static final float EPSILON = 0.5f;\n\n";
+                + "    private static final float EPSILON = 0.5f;\n"
+                + indent(WPT_REPLACED_MEASURE_HELPER, "    ")
+                + "\n";
     }
+
+    /**
+     * Intrinsic-size measure callback for a replaced leaf (an image-like box).
+     *
+     * <p>The generator knows the element's intrinsic size from the browser; the
+     * engine has no intrinsic sizing of its own, so this callback is the encoding
+     * of the replaced element's natural size. When one axis is already known (a
+     * flex/grid stretch, a percentage size resolved by the parent, ...) the other
+     * axis follows the intrinsic ratio, matching CSS replaced sizing.</p>
+     */
+    private static final String WPT_REPLACED_MEASURE_HELPER = """
+                private static MeasureFunc replacedIntrinsicSize(float intrinsicWidth, float intrinsicHeight) {
+                    return (knownDimensions, availableSpace) -> {
+                        float width = Float.isNaN(knownDimensions.width) ? intrinsicWidth : knownDimensions.width;
+                        float height = Float.isNaN(knownDimensions.height) ? intrinsicHeight : knownDimensions.height;
+                        if (!Float.isNaN(knownDimensions.width) && Float.isNaN(knownDimensions.height)
+                                && intrinsicWidth > 0f) {
+                            height = knownDimensions.width * intrinsicHeight / intrinsicWidth;
+                        } else if (!Float.isNaN(knownDimensions.height) && Float.isNaN(knownDimensions.width)
+                                && intrinsicHeight > 0f) {
+                            width = knownDimensions.height * intrinsicWidth / intrinsicHeight;
+                        }
+                        return new FloatSize(width, height);
+                    };
+                }
+                """;
 
     private static final String AHEM_MEASURE_HELPER = """
                 private static MeasureFunc ahemTextMeasure(String text, boolean vertical) {

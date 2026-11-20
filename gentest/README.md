@@ -27,6 +27,7 @@ discover files, map categories to packages, and extract layout/style data.
 | `TaffySource` | Discover `test_fixtures/`, drive Chrome, emit categories |
 | `WptSource` | Discover suites, collect DOM, map CSS, emit chunked classes |
 | `WptDomCollector` | Shared DOM/geometry JavaScript |
+| `WptSupport` | Feature-based supported/skipped classification + skip statistics |
 | `WptToFixtureConverter` | WPT HTML -> taffy fixture conversion |
 
 ## Requirements
@@ -288,8 +289,9 @@ fixture/generator change that caused the difference. Files compared through the
 allowlist use `CHECK FAILED: differs (after allowlisted methods):` as the
 header.
 
-`checkGeneratedFreshness` is taffy-only. WPT output is not committed, so
-`checkWpt` remains a separate explicit task.
+`checkGeneratedFreshness` stays taffy-only. WPT output is committed under
+`src/test/java/dev/vfyjxf/taffy/wpt/` and is verified by the separate explicit
+`checkWpt` task (regenerate into a temp tree, compare byte for byte).
 
 ## Legacy entry points
 
@@ -345,10 +347,14 @@ Results:
 * `flex_aspect_ratio`, `intrinsic` and `rtl` are committed but their fixture
   sources are not part of upstream taffy; they cannot be byte-checked from a
   pristine upstream checkout.
-* WPT self-contained sample: `genWpt` + `checkWpt` pass (1 file byte-identical).
-* Real sparse WPT checkout (`css/css-sizing/aspect-ratio`, 60 files): 300 tests
-  generated across 15 chunked classes, all compile with `javac`; a second run
-  is byte-identical.
+* Real sparse WPT checkout (`css/css-sizing/aspect-ratio`, 300 fixtures):
+  **191 tests generated across 10 chunked classes**, 109 fixtures skipped with a
+  per-file reason (see the WPT support policy below); `checkWpt` reports
+  `CHECK PASSED: 10 file(s) byte-identical`.
+* At the time this output was committed, 58 of the 191 tests still failed on
+  core aspect-ratio semantics (intrinsic contributions, flex/grid stretch,
+  0/infinity guards, abspos auto sizing). Those are tracked by the core layout
+  workstream; the generator no longer emits tests for unsupported features.
 * WPT-converted flex-aspect-ratio fixtures: 43 fixtures. New versus historical
   generator output differs only by 8 `flexBasis = TaffyDimension.content()`
   lines (the bug fix below).
@@ -357,6 +363,59 @@ Results:
 committed output. **WPT output is not committed and is deliberately not part of
 `:gentest:build` or the default check gate**; use `checkWpt`/`checkAll`
 explicitly once such output is checked in.
+
+## WPT support policy (skipped fixtures)
+
+The WPT adapter only emits tests for pages whose layout semantics taffy-java
+actually implements. Every other fixture is skipped with a per-file log line
+
+```text
+[skip] <root-relative path>: <reason>
+```
+
+and a per-reason summary at the end of the run:
+
+```text
+WPT skips: 109 fixture(s)
+  [skip] 28x inline-level test container requires a line box (display: inline)
+  ...
+WPT accepted: 191 test(s) from 300 fixture(s)
+```
+
+Skips are decided from immutable page features, never from assertion outcomes:
+
+| Reason | Why it is not modelled |
+| --- | --- |
+| table layout (`<table>`, `<td>`, `display: table`) | no table formatting implementation |
+| UA form controls (`<fieldset>`, `<select>`, `<input>`, `<button>`, ...) | UA intrinsic sizing / widget layout are browser-specific |
+| embedded content (`<svg>`, `<object>`, `<embed>`, `<iframe>`, `<audio>`, `<video>`) | intrinsic sizes and ratios are UA-defined and not collected |
+| vertical `writing-mode` | no writing-mode support; the axes would be transposed |
+| `contain: size` / `contain-intrinsic-size` | size containment has no layout effect in the engine |
+| multi-column (`columns`, `column-count`) | no fragmentation support |
+| replaced resource failed to load (`naturalWidth == 0`) | the browser falls back to alt text; the intrinsic size is unknown |
+| inline-level test container | a line box decides its x/y; inline formatting is not modelled |
+| inline-level/text content inside a block container | same line-box limitation (inline children of flex/grid containers are blockified and stay supported) |
+| test element is `<body>` / no layout test element | the generated root is the viewport-sized body; script-only or body-styles pages carry no layout tree |
+
+Mapped style features and known approximations:
+
+* `float` / `clear` -> `TaffyFloat` / `Clear` (`inline-start`/`inline-end`
+  resolve through `direction`).
+* `overflow` / `overflow-x` / `overflow-y` -> `Overflow`. CSS `auto` maps to
+  `Overflow.HIDDEN`: the engine's `SCROLL` always reserves a scrollbar gutter,
+  while `auto` without overflow reserves none.
+* `display: flow-root` -> `TaffyDisplay.FLOW_ROOT` (independent formatting
+  context / float containment).
+* Replaced elements (`<img>`, `<canvas>`): `itemIsReplaced = true` (consumed by
+  block/flex/grid stretch and minimum contributions), the natural ratio replaces
+  `aspect-ratio: auto ...`, and a `replacedIntrinsicSize` measure callback
+  supplies the natural size when both axes are auto.
+* Logical `inline-size`/`block-size` keep their computed physical size instead of
+  being overwritten with `auto` by the aspect-ratio normalisation.
+* `aspect-ratio: auto <ratio>` uses the natural ratio when the resource loaded
+  and the declared ratio otherwise.
+* Generated classes hold up to 20 *accepted* tests; chunking counts accepted
+  tests, not discovered fixtures, so a skipped fixture no longer leaves holes.
 
 ## Known limitations
 
@@ -371,8 +430,10 @@ explicitly once such output is checked in.
   so a full `--check` against current upstream will report differences. Two
   BK-13 expectations are accepted through `gentest/freshness-allowlist.txt`;
   the gate fails when such an entry becomes stale.
-* **WPT direct tests are not currently committed** under `src/test`; the WPT
-  adapter is verified with a self-contained sample and a sparse WPT checkout.
+* **WPT direct tests are committed** under `src/test/java/dev/vfyjxf/taffy/wpt/`.
+  The adapter only emits pages whose features taffy-java models and logs every
+  skipped fixture with a reason (see "WPT support policy" above); residual test
+  failures belong to core aspect-ratio semantics, not to the generator.
 * **Flex-aspect-ratio drift**: current WPT declares `flex-basis: content` on
   `flex-aspect-ratio-019..022`, while the committed
   `flex_aspect_ratio/FlexAspectRatioTest.java` contains that assignment only
