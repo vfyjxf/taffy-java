@@ -9,10 +9,6 @@ import dev.vfyjxf.taffy.tree.NodeId;
 import dev.vfyjxf.taffy.tree.ScrollableOverflow;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.List;
-
 /**
  * Utility class for rounding layout values to pixel boundaries.
  * This prevents anti-aliased "blurry" rendering that can occur with fractional pixel values.
@@ -40,79 +36,14 @@ public final class RoundLayout {
 
     /**
      * Rounds the calculated layout to whole pixels.
-     * Uses iterative BFS to avoid deep recursion stack overflow.
+     *
+     * <p>Delegates to {@link TaffyTree#roundLayout(NodeId)}, which owns the iterative
+     * (stack-based, non-recursive) pass and reads each node's unrounded layout and child list from
+     * a single {@code NodeData} lookup. Kept as the stable utility entry point; behavior is
+     * unchanged.</p>
      */
     public static void roundLayout(TaffyTree tree, NodeId nodeId) {
-        // Use a stack-based approach instead of recursion for better performance
-        // Store: [nodeId, cumulativeX, cumulativeY]
-        Deque<Object[]> stack = new ArrayDeque<>();
-        stack.push(new Object[]{nodeId, 0f, 0f});
-        
-        while (!stack.isEmpty()) {
-            Object[] item = stack.pop();
-            NodeId currentNode = (NodeId) item[0];
-            float cumulativeX = (Float) item[1];
-            float cumulativeY = (Float) item[2];
-            
-            Layout layout = tree.getUnroundedLayout(currentNode);
-            if (layout == null) continue;
-
-            FloatPoint location = layout.location();
-            FloatSize size = layout.size();
-
-            float nodeX = !Float.isNaN(location.x) ? location.x : 0f;
-            float nodeY = !Float.isNaN(location.y) ? location.y : 0f;
-            float nodeWidth = !Float.isNaN(size.width) ? size.width : 0f;
-            float nodeHeight = !Float.isNaN(size.height) ? size.height : 0f;
-
-            float absoluteX = cumulativeX + nodeX;
-            float absoluteY = cumulativeY + nodeY;
-
-            // Round the position in cumulative (absolute) coordinates, then convert back to a
-            // parent-relative offset: round(abs) - round(parent_abs). Rounding the relative
-            // offset directly made children of a parent at a fractional offset overlap or leave
-            // 1px gaps, because the parent's own rounded edge did not agree with the sum of the
-            // rounded children offsets (BK-13 / upstream #1189).
-            float roundedX = round(absoluteX) - round(cumulativeX);
-            float roundedY = round(absoluteY) - round(cumulativeY);
-
-            // Round size based on accumulated absolute position
-            float roundedWidth = round(absoluteX + nodeWidth) - round(absoluteX);
-            float roundedHeight = round(absoluteY + nodeHeight) - round(absoluteY);
-
-            FloatSize contentSize = layout.contentSize();
-            float contentWidth = (contentSize != null && !Float.isNaN(contentSize.width)) ? contentSize.width : 0f;
-            float contentHeight = (contentSize != null && !Float.isNaN(contentSize.height)) ? contentSize.height : 0f;
-            float roundedContentWidth = round(absoluteX + contentWidth) - round(absoluteX);
-            float roundedContentHeight = round(absoluteY + contentHeight) - round(absoluteY);
-
-            FloatSize scrollbarSize = layout.scrollbarSize();
-            float scrollbarWidth = (scrollbarSize != null && !Float.isNaN(scrollbarSize.width)) ? scrollbarSize.width : 0f;
-            float scrollbarHeight = (scrollbarSize != null && !Float.isNaN(scrollbarSize.height)) ? scrollbarSize.height : 0f;
-            FloatSize roundedScrollbarSize = new FloatSize(round(scrollbarWidth), round(scrollbarHeight));
-
-            // Apply rounding to layout
-            Layout roundedLayout = new Layout(
-                layout.order(),
-                new FloatPoint(roundedX, roundedY),
-                new FloatSize(roundedWidth, roundedHeight),
-                new FloatSize(roundedContentWidth, roundedContentHeight),
-                roundOverflow(layout.scrollableOverflow()),
-                roundedScrollbarSize,
-                roundRect(layout.border()),
-                roundRect(layout.padding()),
-                roundRect(layout.margin())
-            );
-
-            tree.setLayout(currentNode, roundedLayout);
-
-            // Push children to stack
-            List<NodeId> childList = tree.getChildren(currentNode);
-            // Process in reverse order to maintain original order when popping
-            for (int i = childList.size() - 1; i >= 0; i--) {
-                stack.push(new Object[]{childList.get(i), absoluteX, absoluteY});
-            }
-        }
+        tree.roundLayout(nodeId);
     }
 
     /**

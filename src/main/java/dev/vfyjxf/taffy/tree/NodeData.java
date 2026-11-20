@@ -2,6 +2,9 @@ package dev.vfyjxf.taffy.tree;
 
 import dev.vfyjxf.taffy.style.TaffyStyle;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Internal data structure for storing node data.
  */
@@ -9,6 +12,24 @@ public class NodeData {
     
     /** The layout strategy used by this node */
     private TaffyStyle style;
+
+    /**
+     * The children of this node, in layout order.
+     *
+     * <p>Child links live on the node itself instead of in a parallel id-to-list map so that a
+     * pass which already holds the {@code NodeData} (layout computation, rounding) can read the
+     * child list without a second hash lookup. The list is always allocated (empty for a leaf)
+     * and is only mutated by {@link TaffyTree}.</p>
+     */
+    private final List<NodeId> children = new ArrayList<>();
+
+    /**
+     * Returns the mutable child list of this node. Package-private: child links are owned and
+     * mutated exclusively by {@link TaffyTree}; layout passes read it without a map lookup.
+     */
+    List<NodeId> getChildren() {
+        return children;
+    }
     
     /** The always unrounded results of the layout computation */
     private Layout unroundedLayout;
