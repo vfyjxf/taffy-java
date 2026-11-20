@@ -337,9 +337,7 @@ final class WptSource {
         for (int i = 0; i < n; i++) {
             NodeStyle nodeStyle = styles.get(i).node;
             if (i == 0) {
-                nodeStyle.size = new Size(
-                        "TaffyDimension.length(" + vw + "f)",
-                        "TaffyDimension.length(" + vh + "f)");
+                nodeStyle.size = WptStyle.rootSize(vw, vh, nodeStyle);
             } else {
                 float[] browser = browserSizes.get(i);
                 if (browser != null) {
@@ -813,6 +811,23 @@ final class WptSource {
         /** The engine's default display is FLEX, so an unset display is a flex container. */
         private static boolean isFlexContainer(NodeStyle style) {
             return style.display == null || "FLEX".equals(style.display);
+        }
+
+        /**
+         * Root (body) size. A body without an explicit height has an auto used
+         * height in Chrome, so percentage heights in its subtree are
+         * indefinite; injecting the viewport height as a definite height would
+         * make them resolve against it (block-aspect-ratio-025). The body width
+         * stays the viewport width: it is definite in Chrome.
+         */
+        static Size rootSize(int viewportWidth, int viewportHeight, NodeStyle bodyStyle) {
+            boolean indefiniteHeight = bodyStyle == null
+                    || bodyStyle.size == null
+                    || bodyStyle.size.height() == null
+                    || "TaffyDimension.AUTO".equals(bodyStyle.size.height());
+            return new Size(
+                    "TaffyDimension.length(" + viewportWidth + "f)",
+                    indefiniteHeight ? "TaffyDimension.AUTO" : "TaffyDimension.length(" + viewportHeight + "f)");
         }
 
         private static boolean needsMeasure(NodeStyle style) {

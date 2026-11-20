@@ -50,7 +50,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -116,7 +116,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -182,7 +182,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -246,7 +246,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -310,7 +310,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -373,7 +373,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -437,7 +437,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -501,7 +501,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -594,7 +594,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -657,7 +657,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));
@@ -749,7 +749,7 @@ public class WptSizingAspectRatioTest_10 {
         s0.flexGrow = 0.0f;
         s0.flexShrink = 1.0f;
         s0.flexBasis = TaffyDimension.AUTO;
-        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.length(457f));
+        s0.size = new TaffySize<>(TaffyDimension.length(800f), TaffyDimension.AUTO);
         s0.minSize = new TaffySize<>(TaffyDimension.length(0.0f), TaffyDimension.length(0.0f));
         s0.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(0f));
         s0.margin = new TaffyRect<>(LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f), LengthPercentageAuto.length(0.0f));

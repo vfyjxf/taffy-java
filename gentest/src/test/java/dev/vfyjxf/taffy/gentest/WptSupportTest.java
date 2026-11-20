@@ -298,6 +298,28 @@ class WptSupportTest {
         assertEquals(width, style.size.width());
     }
 
+    @Test
+    void rootSizeKeepsBodyHeightIndefiniteWithoutExplicitHeight() {
+        StyleCodegen.NodeStyle body = new StyleCodegen.NodeStyle();
+        body.size = new StyleCodegen.Size("TaffyDimension.length(800.0f)", "TaffyDimension.AUTO");
+
+        StyleCodegen.Size root = WptSource.WptStyle.rootSize(800, 457, body);
+
+        assertEquals("TaffyDimension.length(800f)", root.width());
+        assertEquals("TaffyDimension.AUTO", root.height());
+    }
+
+    @Test
+    void rootSizeUsesViewportHeightForExplicitBodyHeight() {
+        StyleCodegen.NodeStyle body = new StyleCodegen.NodeStyle();
+        body.size = new StyleCodegen.Size("TaffyDimension.length(800.0f)", "TaffyDimension.length(100.0f)");
+
+        StyleCodegen.Size root = WptSource.WptStyle.rootSize(800, 457, body);
+
+        assertEquals("TaffyDimension.length(800f)", root.width());
+        assertEquals("TaffyDimension.length(457f)", root.height());
+    }
+
     private static WptSource.NodeInfo node(int index, int parent, String tag, String display,
                                            Map<String, String> extra) {
         return WptSource.NodeInfo.from(jsonNode(index, parent, tag, display, extra, false, 0, 0));

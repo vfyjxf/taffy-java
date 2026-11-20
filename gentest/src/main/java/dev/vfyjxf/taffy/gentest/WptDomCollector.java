@@ -163,6 +163,16 @@ return (function(){
         }
       }
     }
+    // The body box is auto-height unless the page gives it an explicit height:
+    // getComputedStyle() reports the *used* content height, and using that as a
+    // definite containing-block height would wrongly resolve descendant
+    // percentage heights (e.g. block-aspect-ratio-025's float with height:100%).
+    if (el === body) {
+      const specifiedHeight = original['height'] || original['block-size'];
+      if (!specifiedHeight || specifiedHeight.trim().toLowerCase() === 'auto') {
+        computed['height'] = 'auto';
+      }
+    }
     const size = intrinsicSize(el);
     nodes.push({
       index: idx,
