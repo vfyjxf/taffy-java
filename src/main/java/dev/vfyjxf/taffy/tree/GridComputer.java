@@ -107,6 +107,90 @@ public class GridComputer {
     private static final int MAX_CACHED_ITEMS = 1 << 16;
 
     /**
+     * A grid container's item list that survives from one layout pass to the next, stored on the
+     * container's {@link NodeData}.
+     *
+     * <p>An item list is a pure function of the direct children's styles and their order, the
+     * container's own alignment and expanded templates, its resolved direction and - only when some
+     * child value or the parsed placement resolves against it - the container's content-box size.
+     * The stamps captured here let a later pass reuse the list without resolving every child style
+     * again: the container's own content version, its child-list version, each in-flow direct
+     * child's content version, the resolved container direction and the inner-size basis are
+     * compared. A child style change therefore invalidates only its direct parent's list.</p>
+     *
+     * <p>Out-of-flow and {@code display: none} children are not part of the item list and only
+     * share their index ({@code order}) with it, so their content versions are not compared: a
+     * change of an out-of-flow badge's size must not rebuild the list of the grid that hosts it.
+     * Their in-flow membership is compared instead, because a child that enters the flow becomes
+     * an item.</p>
+     *
+     * <p>The item metadata has no direction-derived field ({@code align-self}/{@code justify-self}
+     * are kept as keywords and resolved against the live styles by {@code placeItems}), but the
+     * direction is part of the key anyway: it is inherited, so an ancestor's direction change is
+     * not visible in the direct child's content version.</p>
+     *
+     * <p>Only style-derived metadata is stored; the per-pass results are reset before the list is
+     * consumed again. Because so many nodes can belong to all item lists, the retained entries are
+     * bounded by construction: every entry names a distinct in-flow direct child, a node has one
+     * parent, and a container replaces (or drops) its list when it rebuilds, so the tree-wide total
+     * cannot exceed the live node count.</p>
+     */
+    static final class GridItemCache {
+        private final List<GridItem> items;
+        private final long containerVersion;
+        private final long childrenVersion;
+        private final long[] childVersions;
+        private final boolean[] childInFlow;
+        private final TaffyDirection direction;
+        private final float innerWidth;
+        private final float innerHeight;
+        private final boolean innerSizeIndependent;
+
+        private GridItemCache(List<GridItem> items, long containerVersion, long childrenVersion,
+                              long[] childVersions, boolean[] childInFlow, TaffyDirection direction,
+                              FloatSize innerSize, boolean innerSizeIndependent) {
+            this.items = items;
+            this.containerVersion = containerVersion;
+            this.childrenVersion = childrenVersion;
+            this.childVersions = childVersions;
+            this.childInFlow = childInFlow;
+            this.direction = direction;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        private boolean matches(NodeData container, List<NodeId> children, TaffyTree tree,
+                                FloatSize innerSize, TaffyDirection direction) {
+            if (containerVersion != container.getContentVersion()
+                || childrenVersion != container.getChildrenVersion()
+                || this.direction != direction
+                || childVersions.length != children.size()) {
+                return false;
+            }
+            if (!innerSizeIndependent
+                && (Float.floatToIntBits(innerWidth) != Float.floatToIntBits(innerSize.width)
+                    || Float.floatToIntBits(innerHeight) != Float.floatToIntBits(innerSize.height))) {
+                return false;
+            }
+            for (int i = 0; i < childVersions.length; i++) {
+                NodeData child = tree.getNodeData(children.get(i));
+                if (child == null) {
+                    return false;
+                }
+                boolean inFlow = isInFlowGridItem(child.getStyle());
+                if (inFlow != childInFlow[i]) {
+                    return false;
+                }
+                if (inFlow && childVersions[i] != child.getContentVersion()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
      * A grid container's item list kept for the duration of one layout pass.
      *
      * <p>A {@link GridComputer} is created per compute call (see {@code LayoutComputer}'s grid
@@ -2148,9 +2232,25 @@ public class GridComputer {
             return cached.items;
         }
 
+        // A list built by an earlier pass whose child styles, child list, in-flow membership,
+        // container direction and inner-size basis are all unchanged. Its style-derived metadata
+        // is still current; only the per-pass results have to be cleared.
+        List<NodeId> children = tree.getChildren(node);
+        TaffyDirection containerDirection = layoutComputer.resolveDirection(node);
+        NodeData containerData = tree.getNodeData(node);
+        if (containerData != null) {
+            GridItemCache persistent = containerData.getGridItemCache();
+            if (persistent != null
+                && persistent.matches(containerData, children, tree, nodeInnerSize, containerDirection)) {
+                List<GridItem> reused = persistent.items;
+                resetPerPassState(reused);
+                cache.store(node.getId(), reused, nodeInnerSize, persistent.innerSizeIndependent);
+                return reused;
+            }
+        }
+
         // Sized up front: a grid container commonly has one item per child, and growing the list
         // would copy it repeatedly for a large grid.
-        List<NodeId> children = tree.getChildren(node);
         List<GridItem> items = new ArrayList<>(children.size());
         // Whether every in-flow child's metadata resolves independently of the container's inner
         // size. The placement dependency is checked once after the loop (auto-repetition counts
@@ -2312,8 +2412,51 @@ public class GridComputer {
                                    && !templateHasAutoRepeat(containerStyle.gridTemplateRowsWithRepeat);
         if (!items.isEmpty()) {
             cache.store(node.getId(), items, nodeInnerSize, basisIndependent);
+            storeGridItemCache(tree, containerData, children, containerDirection, items, nodeInnerSize,
+                basisIndependent);
         }
         return items;
+    }
+
+    /**
+     * Stores a freshly built item list on the container's {@link NodeData} so a later pass can
+     * reuse it. The per-child stamps are read once per build; a node that vanished between the
+     * build and this store (or a list larger than the tree itself) simply leaves the container
+     * without a cache.
+     */
+    private static void storeGridItemCache(TaffyTree tree, NodeData containerData, List<NodeId> children,
+                                           TaffyDirection containerDirection, List<GridItem> items,
+                                           FloatSize innerSize, boolean innerSizeIndependent) {
+        if (containerData == null) {
+            return;
+        }
+        int childCount = children.size();
+        long[] childVersions = new long[childCount];
+        boolean[] childInFlow = new boolean[childCount];
+        for (int i = 0; i < childCount; i++) {
+            NodeData child = tree.getNodeData(children.get(i));
+            if (child == null) {
+                return;
+            }
+            boolean inFlow = isInFlowGridItem(child.getStyle());
+            childInFlow[i] = inFlow;
+            childVersions[i] = inFlow ? child.getContentVersion() : 0L;
+        }
+        if (items.size() > tree.totalNodeCount()) {
+            // Defensive: every cached entry is a distinct in-flow child of this container, so a
+            // list cannot be larger than the tree. Never let a bookkeeping mistake pin more.
+            return;
+        }
+        containerData.setGridItemCache(new GridItemCache(
+            items,
+            containerData.getContentVersion(),
+            containerData.getChildrenVersion(),
+            childVersions,
+            childInFlow,
+            containerDirection,
+            innerSize,
+            innerSizeIndependent
+        ));
     }
 
     /**

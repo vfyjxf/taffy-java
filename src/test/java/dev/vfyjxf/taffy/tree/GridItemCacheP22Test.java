@@ -10,6 +10,7 @@ import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
+import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import dev.vfyjxf.taffy.style.TaffyStyle;
@@ -21,6 +22,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
  * P22 tests for the pass-scoped grid item-list cache in {@link GridComputer}.
@@ -311,6 +314,131 @@ public class GridItemCacheP22Test {
 
         assertEquals(200f, tree.getLayout(measured).size().width, EPSILON);
         assertEquals(100f, tree.getLayout(measured).size().height, EPSILON);
+    }
+
+    // ------------------------------------------------------------- cross-pass cache
+
+    /**
+     * A later pass reuses the list stored on the container's {@link NodeData} while its content
+     * version, child versions, direction and inner-size basis are unchanged. The auto-sized root
+     * is laid out into two different available spaces, so the second pass really runs the grid
+     * algorithm instead of the tree-clean fast path.
+     */
+    @Test
+    void itemCacheIsReusedWhenNothingChanged() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId first = tree.newLeaf(leaf(20f, 10f));
+        NodeId second = tree.newLeaf(leaf(30f, 10f));
+        TaffyStyle rootStyle = grid();
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.auto(), TrackSizingFunction.auto());
+        NodeId root = tree.newWithChildren(rootStyle, new NodeId[]{first, second});
+
+        tree.computeLayout(root, layoutSize(400f, 300f));
+        GridComputer.GridItemCache firstCache = tree.getNodeData(root).getGridItemCache();
+        assertNotNull(firstCache);
+
+        tree.computeLayout(root, layoutSize(200f, 150f));
+        assertSame(firstCache, tree.getNodeData(root).getGridItemCache());
+        assertEquals(20f, tree.getLayout(first).size().width, EPSILON);
+        assertEquals(20f, tree.getLayout(second).location().x, EPSILON);
+    }
+
+    /**
+     * When a child value resolves against the container's inner size (here a percentage width),
+     * a pass with a different inner size must rebuild the list instead of reusing stale resolved
+     * metadata, and the percentage must resolve against the new basis.
+     */
+    @Test
+    void percentageMetadataInvalidatesOnInnerSizeChange() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId child = tree.newLeaf(percentLeaf(0.5f, 10f));
+        TaffyStyle rootStyle = grid();
+        rootStyle.size = new TaffySize<>(TaffyDimension.percent(0.5f), TaffyDimension.length(100f));
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.fr(1f));
+        NodeId root = tree.newWithChildren(rootStyle, new NodeId[]{child});
+
+        tree.computeLayout(root, layoutSize(400f, 100f));
+        GridComputer.GridItemCache firstCache = tree.getNodeData(root).getGridItemCache();
+        assertNotNull(firstCache);
+        assertEquals(100f, tree.getLayout(child).size().width, EPSILON);
+
+        tree.computeLayout(root, layoutSize(200f, 100f));
+        assertNotSame(firstCache, tree.getNodeData(root).getGridItemCache());
+        // Root width 200 * 50% = 100; the 1fr track is 100 wide, so the 50% child is 50 wide.
+        assertEquals(50f, tree.getLayout(child).size().width, EPSILON);
+    }
+
+    /**
+     * An out-of-flow child is not part of the in-flow item list and only shares its index with it,
+     * so changing its style must not rebuild the grid's list (an animated badge must not invalidate
+     * the whole grid).
+     */
+    @Test
+    void outOfFlowChildStyleChangeKeepsTheCache() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId inFlow = tree.newLeaf(leaf(20f, 10f));
+        TaffyStyle badgeStyle = leaf(5f, 5f);
+        badgeStyle.position = TaffyPosition.ABSOLUTE;
+        NodeId badge = tree.newLeaf(badgeStyle);
+        TaffyStyle rootStyle = grid();
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.auto());
+        NodeId root = tree.newWithChildren(rootStyle, new NodeId[]{inFlow, badge});
+
+        tree.computeLayout(root, layoutSize(200f, 100f));
+        GridComputer.GridItemCache firstCache = tree.getNodeData(root).getGridItemCache();
+        assertNotNull(firstCache);
+
+        TaffyStyle biggerBadge = leaf(15f, 6f);
+        biggerBadge.position = TaffyPosition.ABSOLUTE;
+        tree.setStyle(badge, biggerBadge);
+        tree.computeLayout(root, layoutSize(200f, 100f));
+        assertSame(firstCache, tree.getNodeData(root).getGridItemCache());
+        assertEquals(20f, tree.getLayout(inFlow).size().width, EPSILON);
+        assertEquals(15f, tree.getLayout(badge).size().width, EPSILON);
+    }
+
+    /**
+     * A direct child's style change, a child-list change and a direction change all invalidate the
+     * cross-pass list; a plain {@code clearCache} (layout-cache invalidation) does not, matching
+     * the flex item-list cache.
+     */
+    @Test
+    void cacheInvalidationMatchesTheItemListContract() {
+        TaffyTree tree = new TaffyTree();
+        tree.disableRounding();
+        NodeId first = tree.newLeaf(leaf(20f, 10f));
+        NodeId second = tree.newLeaf(leaf(30f, 10f));
+        TaffyStyle rootStyle = grid();
+        rootStyle.gridTemplateColumns = List.of(TrackSizingFunction.auto(), TrackSizingFunction.auto());
+        NodeId root = tree.newWithChildren(rootStyle, new NodeId[]{first, second});
+        tree.computeLayout(root, layoutSize(400f, 300f));
+        GridComputer.GridItemCache cache = tree.getNodeData(root).getGridItemCache();
+        assertNotNull(cache);
+
+        tree.clearCache(root);
+        tree.computeLayout(root, layoutSize(400f, 300f));
+        assertSame(cache, tree.getNodeData(root).getGridItemCache());
+
+        tree.setStyle(first, leaf(25f, 10f));
+        tree.computeLayout(root, layoutSize(400f, 300f));
+        GridComputer.GridItemCache afterStyle = tree.getNodeData(root).getGridItemCache();
+        assertNotSame(cache, afterStyle);
+        assertEquals(25f, tree.getLayout(first).size().width, EPSILON);
+
+        NodeId added = tree.newLeaf(leaf(7f, 7f));
+        tree.addChild(root, added);
+        tree.computeLayout(root, layoutSize(400f, 300f));
+        assertNotSame(afterStyle, tree.getNodeData(root).getGridItemCache());
+
+        GridComputer.GridItemCache afterChildList = tree.getNodeData(root).getGridItemCache();
+        TaffyStyle rtl = tree.getStyle(root);
+        rtl.direction = TaffyDirection.RTL;
+        tree.setStyle(root, rtl);
+        tree.computeLayout(root, layoutSize(400f, 300f));
+        assertNotSame(afterChildList, tree.getNodeData(root).getGridItemCache());
     }
 
     // ------------------------------------------------------------------- helpers
