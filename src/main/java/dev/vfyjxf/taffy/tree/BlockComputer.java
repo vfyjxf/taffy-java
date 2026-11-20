@@ -438,8 +438,13 @@ public class BlockComputer {
             !Float.isNaN(styledBasedKnownDimensions.height) ? styledBasedKnownDimensions.height - contentBoxInsetHeight : NaN
         );
 
+        // The container's own resolved direction. A child inherits it unless the child's style
+        // sets a direction of its own, so the item list needs this value to resolve the (default)
+        // inherited case without walking the parent chain once per child.
+        TaffyDirection direction = layoutComputer.resolveDirection(node);
+
         // Generate item list
-        List<BlockItem> items = generateItemList(node, containerContentBoxSize);
+        List<BlockItem> items = generateItemList(node, containerContentBoxSize, direction);
 
         // Compute container width
         float containerOuterWidth = styledBasedKnownDimensions.width;
@@ -531,8 +536,6 @@ public class BlockComputer {
             // block's own padding/border so content-box queries use the right edges.
             blockContext.applyContentBoxInset(contentBoxInset.left, contentBoxInset.right);
         }
-
-        TaffyDirection direction = layoutComputer.resolveDirection(node);
 
         InFlowLayoutResult layoutResult = performFinalLayoutOnChildren(
             items,
@@ -938,7 +941,8 @@ public class BlockComputer {
      */
     private record OutOfFlowOverflow(FloatRect scrollableOverflow, FloatSize contentSize) {}
 
-    private List<BlockItem> generateItemList(NodeId node, FloatSize nodeInnerSize) {
+    private List<BlockItem> generateItemList(
+        NodeId node, FloatSize nodeInnerSize, TaffyDirection containerDirection) {
         TaffyTree tree = layoutComputer.getTree();
         List<BlockItem> items = new ArrayList<>();
 
@@ -1004,7 +1008,13 @@ public class BlockComputer {
             item.display = childStyle.getDisplay();
             item.contain = childStyle.getContain();
             item.clear = childStyle.getClear();
-            item.direction = layoutComputer.resolveDirection(childId);
+            // Equivalent to {@code layoutComputer.resolveDirection(childId)}: an inherited
+            // direction resolves to the nearest ancestor's explicit value, which is exactly the
+            // container's own resolved direction, and the container's resolution already walked
+            // up to the root when it was inherited as well. Only a child that names its own
+            // direction bypasses that.
+            TaffyDirection childDirection = childStyle.getDirection();
+            item.direction = childDirection.isInherit() ? containerDirection : childDirection;
             item.widthIsAuto = childStyle.getSize().width.isAuto();
             // For compressible replaced items a percentage width/max-width resolves against a
             // zero-width containing block in the min-content contribution, so the item contributes
