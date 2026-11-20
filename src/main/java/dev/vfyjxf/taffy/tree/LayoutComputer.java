@@ -918,6 +918,15 @@ public class LayoutComputer {
      * {@link LayoutInput} can produce different floats depending on the ancestor BFC's current
      * segments, so such results bypass the layout cache. Other display types establish their own
      * formatting context and are handled by the ordinary cached path.</p>
+     *
+     * <p>One case is context-<em>independent</em> even with an inherited context: a plain
+     * {@code display: block} child that neither inherits floats nor places any has a layout that
+     * is a pure function of its {@link LayoutInput} and its own subtree, because the inherited
+     * context's position information is only consulted by float queries. Such a child is cached
+     * and reused (see {@link #computeContextFreeBlockChildLayout}), which is what lets an
+     * unchanged sibling block be skipped on the next pass instead of being re-laid-out. The
+     * moment any float exists - inherited before the call or placed by the child itself - the
+     * previous always-recompute behaviour is kept.</p>
      */
     public LayoutOutput computeChildLayout(NodeId node, LayoutInput inputs, BlockContext blockContext) {
         if (blockContext == null) {
@@ -931,23 +940,13 @@ public class LayoutComputer {
 
         TaffyStyle style = tree.getStyle(node);
         if (isBlockLayout(style.getDisplay())) {
+            if (canReuseContextFreeBlockChild(style, inputs, blockContext)) {
+                return computeContextFreeBlockChildLayout(node, inputs, blockContext);
+            }
             boolean hadFloats = blockContext.hasFloats();
             LayoutOutput output = computeLayoutUncached(node, inputs, blockContext);
             if (hadFloats || blockContext.hasFloats()) {
-                // The output depends on the inherited float state, so it must not be returned by
-                // an ordinary cache lookup. Still store it under a non-matching key: TaffyTree
-                // uses "cache is empty" as its dirty sentinel, and leaving the cache empty would
-                // stop a later style change from marking ancestors dirty.
-                LayoutInput staleMarker = new LayoutInput(
-                    RunMode.PERFORM_LAYOUT,
-                    inputs.sizingMode(),
-                    inputs.axis(),
-                    inputs.knownDimensions(),
-                    new FloatSize(-Float.MAX_VALUE, -Float.MAX_VALUE),
-                    inputs.availableSpace(),
-                    inputs.verticalMarginsAreCollapsible()
-                );
-                tree.storeCacheEntry(node, staleMarker, output);
+                storeStaleMarker(node, inputs, output);
             } else {
                 tree.storeCacheEntry(node, inputs, output);
             }
@@ -955,6 +954,105 @@ public class LayoutComputer {
         }
 
         return computeChildLayoutCached(node, inputs);
+    }
+
+    /**
+     * Whether a same-BFC block child's layout cannot depend on the inherited context's float state.
+     *
+     * <p>Every condition is a gate that would make the child's result depend on something the
+     * {@link LayoutInput} key does not describe:</p>
+     *
+     * <ul>
+     *   <li>{@link RunMode#PERFORM_LAYOUT} only: a {@code COMPUTE_SIZE} request returns
+     *       margin-collapse metadata that the final-layout reuse path does not model, and the
+     *       measure entries have their own (CR-02) rules.</li>
+     *   <li>{@code display: block} only: {@code flow-root} (and {@code display: block} with
+     *       scrollbar or layout/paint containment) establishes its own formatting context, so its
+     *       floats are contained instead of shared and its result is not the same kind of
+     *       context-free reuse. Those keep the previous always-recompute path.</li>
+     *   <li>Neither BFC-root nor float-BFC-root context: a root context is a fresh BFC whose
+     *       width is set from this block, and a float's context marks the child as laid out as a
+     *       float; in both cases the child is not a same-BFC child and the ordinary cached path
+     *       (or the always-recompute path) applies.</li>
+     *   <li>No floats in the inherited context: with an active float, the child's position and
+     *       size depend on the float segments, which the key does not describe.</li>
+     * </ul>
+     *
+     * <p>The remaining float gate - a child that places its own floats - can only be observed
+     * after the layout and is checked by the caller.</p>
+     */
+    private static boolean canReuseContextFreeBlockChild(
+        TaffyStyle style, LayoutInput inputs, BlockContext blockContext) {
+
+        return inputs.runMode() == RunMode.PERFORM_LAYOUT
+            && style.getDisplay() == TaffyDisplay.BLOCK
+            && !style.getOverflow().x.isScrollContainer()
+            && !style.getOverflow().y.isScrollContainer()
+            && !style.getContain().establishesIndependentFormattingContext()
+            && !blockContext.isBfcRoot()
+            && !blockContext.isFloatBfcRoot()
+            && !blockContext.hasFloats();
+    }
+
+    /**
+     * Computes (or reuses) a same-BFC block child whose layout is independent of the float state.
+     *
+     * <p>The inherited {@code BlockContext} passed by {@code BlockComputer} is the child's own
+     * per-child sub-context: {@code BlockComputer} derives a fresh {@link BlockContext#subContext}
+     * for every child on every pass and only reads its floated-content contribution afterwards, so
+     * neither a cache hit nor a miss can leak state into the parent's context. A hit also skips
+     * the {@link BlockContext#applyContentBoxInset} refinement that the child's own layout performs
+     * on that sub-context; the content-box insets are only read by the child's own float queries
+     * (during the layout that a hit reproduces), so the skipped refinement is unobservable.</p>
+     *
+     * <p>The result is only stored when the child placed no floats either: a float placed by the
+     * child would be visible to its later siblings through the shared {@link
+     * dev.vfyjxf.taffy.util.FloatContext}, so that pass must keep recomputing (and must keep
+     * leaving its floats in the shared context, which a hit would skip).</p>
+     */
+    private LayoutOutput computeContextFreeBlockChildLayout(
+        NodeId node, LayoutInput inputs, BlockContext blockContext) {
+
+        // The resolved direction is the one layout input that the key cannot describe: it is
+        // inherited from the ancestors, so an ancestor's direction change does not dirty this
+        // node. Keying the entry on it keeps a mirrored layout from being reused.
+        TaffyDirection direction = resolveDirection(node);
+        LayoutOutput cached = tree.getContextFreeCacheEntry(node, inputs, direction);
+        if (cached != null) {
+            return cached;
+        }
+
+        LayoutOutput output = computeLayoutUncached(node, inputs, blockContext);
+        if (!blockContext.hasFloats()) {
+            tree.storeContextFreeCacheEntry(node, inputs, output, direction);
+        } else {
+            // The child's own subtree placed floats. They stay in the shared context (the parent
+            // and the later siblings must observe them) and the result is float-dependent, so it
+            // is not reusable; store it under a non-matching key instead.
+            storeStaleMarker(node, inputs, output);
+        }
+        return output;
+    }
+
+    /**
+     * Stores a float-dependent result under a key no lookup can match.
+     *
+     * <p>The output depends on the inherited float state, so it must not be returned by an
+     * ordinary cache lookup. Still store it under a non-matching key: {@code TaffyTree} uses
+     * "cache is empty" as its dirty sentinel, and leaving the cache empty would stop a later style
+     * change from marking ancestors dirty.</p>
+     */
+    private void storeStaleMarker(NodeId node, LayoutInput inputs, LayoutOutput output) {
+        LayoutInput staleMarker = new LayoutInput(
+            RunMode.PERFORM_LAYOUT,
+            inputs.sizingMode(),
+            inputs.axis(),
+            inputs.knownDimensions(),
+            new FloatSize(-Float.MAX_VALUE, -Float.MAX_VALUE),
+            inputs.availableSpace(),
+            inputs.verticalMarginsAreCollapsible()
+        );
+        tree.storeCacheEntry(node, staleMarker, output);
     }
 
     /**

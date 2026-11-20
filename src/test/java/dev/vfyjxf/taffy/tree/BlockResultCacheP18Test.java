@@ -31,7 +31,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p><b>The cache is not implemented and not enabled.</b> These tests are the reproduction
  * deliverable of the rejected experiment: they pin the two observable facts that make the
- * proposed key unusable, so that a later attempt does not have to rediscover them.</p>
+ * proposed key unusable, so that a later attempt does not have to rediscover them. The second
+ * fact is no longer a fact for float-free panels: P19 implemented that follow-up by caching the
+ * same-BFC block child itself ({@code LayoutComputer#computeChildLayout(NodeId, LayoutInput,
+ * BlockContext)}, pinned by {@code SameBfcBlockLayoutCacheP19Test}), so an unchanged panel is now
+ * reused instead of being recomputed. The container-level result cache this experiment proposed
+ * is still not implemented.</p>
  *
  * <ol>
  *   <li>An unchanged layout request is already answered by the tree-clean fast path
@@ -153,16 +158,17 @@ class BlockResultCacheP18Test {
     }
 
     /**
-     * A single label style change rewrites every panel's and every row's stored layout, even
-     * though the untouched panels' values are unchanged.
+     * A single label style change rewrites the changed panel's stored layouts, while the
+     * untouched panels are reused, even though their values are unchanged.
      *
-     * <p>This is the exact state a container result cache would have to exploit - and precisely
-     * the state in which the proposed child-layout-version key cannot match, because the
-     * previous pass already rewrote those layouts. Note that the untouched panels were never
-     * dirty: they are recomputed only because they are same-BFC block children of the root.</p>
+     * <p>Before P19 the untouched panels were recomputed on every pass - they were never dirty,
+     * they were recomputed only because they are same-BFC block children of the root - and every
+     * row of theirs was rewritten with the same value. That is the state a child-layout-version
+     * key could not match, and the reason the container result cache stays unimplemented: the
+     * panel entry itself now answers the pass (P19).</p>
      */
     @Test
-    void singleLeafStyleChangeRewritesEveryContainerChildLayout() {
+    void singleLeafStyleChangeRelayoutsOnlyTheChangedPanel() {
         Shape shape = buildForm();
         TaffyTree tree = shape.tree();
         tree.computeLayout(shape.root(), space(WIDTH, HEIGHT));
@@ -180,13 +186,19 @@ class BlockResultCacheP18Test {
         tree.computeLayout(shape.root(), space(WIDTH, HEIGHT));
         tree.setLayoutChangeListener(null);
 
-        // Every panel is written by the root's commit, and every panel's rows are written by the
-        // panel's own commit: the row layouts of untouched panels are rewritten with the same
-        // values, which is what a version-keyed result cache would miss.
+        // Every panel is written by the root's commit. Only the changed panel runs its own layout;
+        // an untouched, float-free same-BFC panel is answered by its context-free final entry, so
+        // neither it nor its rows are written again (P19).
+        NodeId changedPanel = tree.getChildren(shape.root()).get(0);
         for (NodeId panel : tree.getChildren(shape.root())) {
             assertTrue(writes.count(panel) >= 1, "every panel receives a layout write");
             for (NodeId row : tree.getChildren(panel)) {
-                assertTrue(writes.count(row) >= 1, "every row receives a layout write");
+                if (panel.equals(changedPanel)) {
+                    assertTrue(writes.count(row) >= 1, "the changed panel's rows are written");
+                } else {
+                    assertEquals(0, writes.count(row),
+                        "a reused panel does not write its rows again");
+                }
             }
         }
         // The untouched panel keeps its size; only the shift of the preceding, taller panel moves
@@ -197,9 +209,7 @@ class BlockResultCacheP18Test {
             tree.getLayout(untouchedPanel).location().y, EPSILON,
             "the untouched panel only moves down by the taller first panel");
         assertEquals(untouchedRowBefore, tree.getLayout(untouchedRow),
-            "the untouched row's written layout is value-identical");
-        assertTrue(writes.allEqualForSubtree(tree, untouchedRow),
-            "every write below an untouched row carries the previous values");
+            "the untouched row keeps the identical layout");
 
         // The change itself is real: the padded label is 4px taller, so its row and panel grow.
         assertEquals(13f, tree.getLayout(shape.hoveredLabel()).size().height, EPSILON);
@@ -207,11 +217,11 @@ class BlockResultCacheP18Test {
     }
 
     /**
-     * A style write that changes no value (the same style instance is stored again) also rewrites
-     * every container's children: a version key cannot distinguish it from a real change.
+     * A style write that changes no value (the same style instance is stored again) still forces a
+     * real pass, and that pass rewrites the changed panel only: the untouched panels are reused.
      */
     @Test
-    void noOpStyleWriteStillRewritesEveryContainer() {
+    void noOpStyleWriteRelayoutsOnlyTheChangedPanel() {
         Shape shape = buildForm();
         TaffyTree tree = shape.tree();
         tree.computeLayout(shape.root(), space(WIDTH, HEIGHT));
@@ -224,14 +234,19 @@ class BlockResultCacheP18Test {
         tree.setLayoutChangeListener(null);
 
         assertEquals(passesBefore + 1, tree.layoutPassCount(), "the write forces a real pass");
+        NodeId changedPanel = tree.getChildren(shape.root()).get(0);
         for (NodeId panel : tree.getChildren(shape.root())) {
-            assertTrue(writes.count(panel) >= 1, "every panel is rewritten");
+            assertTrue(writes.count(panel) >= 1, "every panel is written by the root's commit");
             for (NodeId row : tree.getChildren(panel)) {
-                assertTrue(writes.count(row) >= 1, "every row is rewritten");
+                if (panel.equals(changedPanel)) {
+                    assertTrue(writes.count(row) >= 1, "the changed panel is laid out again");
+                } else {
+                    assertEquals(0, writes.count(row), "an untouched panel is reused");
+                }
             }
         }
         assertTrue(writes.allEqualForSubtree(tree, shape.root()),
-            "a no-op write rewrites the whole tree with unchanged values");
+            "the writes that happen all carry unchanged values");
     }
 
     /**
