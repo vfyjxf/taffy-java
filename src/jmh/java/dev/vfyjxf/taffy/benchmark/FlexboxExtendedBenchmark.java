@@ -34,15 +34,22 @@ public class FlexboxExtendedBenchmark {
     public static class WideTreeLargeState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"100000"})
         int nodeCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             Random rng = new Random(SEED);
             root = buildFlatHierarchy(tree, nodeCount, rng);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -58,15 +65,22 @@ public class FlexboxExtendedBenchmark {
     public static class DeepRandomLargeState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"100000"})
         int nodeCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             Random rng = new Random(SEED);
             root = buildDeepHierarchyRandom(tree, nodeCount, 2, rng);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -82,11 +96,18 @@ public class FlexboxExtendedBenchmark {
     public static class SuperDeep1000State {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildSuperDeepHierarchy(tree, 1000, 3);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
