@@ -53,6 +53,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   gated to final layout until FL-15/BL-01 lands).
 - Grid intrinsic measurement subtracts item margins from the available space
   (T24), and BFC float slots include the nested containing block insets.
+- The sized `grid-template-areas` value is named `TaffyGridTemplateAreas`
+  (renamed from `GridTemplateAreas`) so it does not collide with consumer classes
+  under `import dev.vfyjxf.taffy.style.*`.
+- LDLib2 regression run (523 tests, Java 21): all layout tests pass; the three
+  Mockito-initialization failures and one `FileDialogPathTest` failure are
+  environment/baseline issues unrelated to taffy. Downstream exhaustive switches
+  over the extended enums were migrated with `default` (Q2 source-break noted above).
 
 ### P7 additions (float, grid details, contain)
 

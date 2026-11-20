@@ -28,6 +28,8 @@ So there are **four full phases left (P4-P7) plus the P3 residual segment**.
 | --- | --- | --- |
 | `AlignSelf.START`, `AlignSelf.END` added (appended after `STRETCH`) | PA-02: `start/end` must stay distinct from `flex-start/flex-end` under `wrap-reverse` | Existing constants keep names/ordinals; exhaustive `switch` **expressions** over `AlignSelf` may need the new cases or a `default` (Q2-approved minor exception) |
 | `TaffyDisplay.FLOW_ROOT` added (appended after `NONE`) | BK-17: `display: flow-root` | Same enum caveat; `TaffyDisplay.DEFAULT` is still `FLEX` |
+| `NORMAL`, `SELF_START/END`, `SAFE_*` appended to `AlignItems`/`AlignSelf`/`AlignContent`/`JustifyContent`; `BALANCE`/`BALANCE_REVERSE` to `FlexWrap` | P5/P7 keyword model | Downstream **exhaustive `switch` expressions** need a `default`; verified against LDLib2 in the regression run (its icon/config switches were patched with defaults) |
+| New type is `TaffyGridTemplateAreas`, not `GridTemplateAreas` | GR-16 additive sized template-areas value | A top-level `GridTemplateAreas` collided with LDLib2's own class under `import dev.vfyjxf.taffy.style.*`; the `Taffy` prefix avoids wildcard ambiguity |
 | `Layout` gains component `scrollableOverflow` | T1/BL-03: new overflow contract | Old 8-arg constructor and `contentSize()` accessor retained; canonical record constructor, `equals/hashCode/toString` and JSON shape change |
 | `LayoutOutput` gains components `scrollableOverflow`, `baselines` | T1/BL-03 + T2/BL-02 | Old 6-arg constructor and `contentSize()`/`firstBaselines()` accessors retained; same record/JSON caveat |
 | `printTree` debug output format | CR-05: print every `Layout` field | Signature unchanged; output is debug-only, not a layout contract |
