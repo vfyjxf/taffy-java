@@ -52,18 +52,23 @@ public class MixedBenchmark {
         int width;
 
         private MeasureFunc measureFunc;
+        private NodeId[] nodes;
 
         @Setup(Level.Trial)
         public void setupTrial() {
             // Precompute word widths once per thread.
             this.measureFunc = new LoremIpsumMeasure(LOREM_IPSUM);
+            this.tree = new TaffyTree();
+            Random rng = new Random(SEED);
+            this.root = buildMixedTree(tree, depth, width, rng, true, measureFunc);
+            this.nodes = BenchSupport.collectNodes(tree, root);
         }
 
+        // Cold-layout semantics: invalidate every node's cache (upstream's mark_all_dirty) instead
+        // of rebuilding the tree, so each measured run is a full layout of the same tree.
         @Setup(Level.Invocation)
-        public void setupInvocation() {
-            tree = new TaffyTree();
-            Random rng = new Random(SEED);
-            root = buildMixedTree(tree, depth, width, rng, true, measureFunc);
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 

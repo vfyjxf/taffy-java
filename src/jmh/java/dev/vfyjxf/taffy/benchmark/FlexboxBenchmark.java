@@ -42,11 +42,12 @@ public class FlexboxBenchmark {
     public static class HugeNestedState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"1000", "10000", "100000"})
         int nodeCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             TaffyStyle style = new TaffyStyle();
@@ -54,6 +55,12 @@ public class FlexboxBenchmark {
             style.flexGrow = 1.0f;
 
             root = buildDeepHierarchy(tree, nodeCount, 10, style);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -71,15 +78,22 @@ public class FlexboxBenchmark {
     public static class WideTreeState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"1000", "10000", "100000"})
         int nodeCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             Random rng = new Random(SEED);
             root = buildFlatHierarchy(tree, nodeCount, rng);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -97,16 +111,23 @@ public class FlexboxBenchmark {
     public static class DeepRandomState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         // Rust uses (4000, "12-level"), (10_000, "14-level")
         @Param({"4000", "10000", "100000"})
         int nodeCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             Random rng = new Random(SEED);
             root = buildDeepHierarchyRandom(tree, nodeCount, 2, rng);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -124,11 +145,12 @@ public class FlexboxBenchmark {
     public static class DeepAutoState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"4000", "10000", "100000"})
         int nodeCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             TaffyStyle style = new TaffyStyle();
@@ -136,6 +158,12 @@ public class FlexboxBenchmark {
             style.margin = TaffyRect.all(LengthPercentageAuto.length(10f));
 
             root = buildDeepHierarchy(tree, nodeCount, 2, style);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -153,15 +181,22 @@ public class FlexboxBenchmark {
     public static class SuperDeepState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         // Rust uses [50, 100, 200] depth with 3 children per level
         @Param({"50", "100", "200"})
         int depth;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildSuperDeepHierarchy(tree, depth, 3);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
