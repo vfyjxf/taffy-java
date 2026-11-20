@@ -31,6 +31,7 @@ import dev.vfyjxf.taffy.util.ContentSizeUtil;
 import dev.vfyjxf.taffy.util.FloatContext;
 import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
+import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
 
 import java.util.ArrayList;
@@ -77,6 +78,14 @@ public class BlockComputer {
          * keywords are equal to the content size and therefore behave like {@code auto}.
          */
         TaffyDimension heightStyle;
+        /**
+         * The item's raw style {@code width}, kept so that a sizing keyword
+         * ({@code min-content}, {@code max-content}, {@code fit-content}, {@code stretch}) can be
+         * resolved in the containing block's layout context. A keyword resolves to
+         * {@link Float#NaN} in {@link #size} and therefore needs its own resolution pass.
+         * Upstream {@code resolve_sizing_keyword} (#1099/#1103/#1247).
+         */
+        TaffyDimension widthStyle;
         FloatSize size;
         FloatSize minSize;
         FloatSize maxSize;
@@ -896,6 +905,7 @@ public class BlockComputer {
             item.inset = childStyle.getInset();
             item.margin = childStyle.getMargin();
             item.heightStyle = childStyle.getSize().height;
+            item.widthStyle = childStyle.getSize().width;
             item.computedSize = new FloatSize(0f, 0f);
             item.staticPosition = new FloatPoint(0f, 0f);
             item.canBeCollapsedThrough = false;
@@ -952,11 +962,23 @@ public class BlockComputer {
             } else {
                 AvailableSpace adjustedAvailable = subtractFromAvailable(availableWidth, marginSum);
 
+                // An item whose width is a sizing keyword is measured under the constraint the
+                // keyword asks for (min-content / max-content / fit-content / stretch) instead of
+                // under the containing block's own available width. Upstream taffy resolves these
+                // keywords separately from the plain style size (#1099/#1103/#1247).
+                AvailableSpace itemAvailable = adjustedAvailable;
+                SizingKeyword.Resolution keyword = SizingKeyword.resolve(item.widthStyle, NaN, NaN);
+                if (keyword != null) {
+                    itemAvailable = keyword.isMeasure()
+                        ? keyword.getMeasureAvailableSpace()
+                        : AvailableSpace.definite(keyword.getExactValue());
+                }
+
                 LayoutOutput output = layoutComputer.performChildLayout(
                     item.nodeId,
                     knownDimensions,
                     new FloatSize(NaN, NaN),
-                    new TaffySize<>(adjustedAvailable, AvailableSpace.minContent()),
+                    new TaffySize<>(itemAvailable, AvailableSpace.minContent()),
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(true, true)
                 );
@@ -1261,34 +1283,42 @@ public class BlockComputer {
             if ((item.isTable || item.isCompressibleReplaced) && !isStretchJustifySelf) {
                 knownDimensions = new FloatSize(NaN, NaN);
             } else {
-                float width;
-                if (!Float.isNaN(item.size.width)) {
-                    width = item.size.width;
-                } else if (nonStretchJustifySelf != null && item.widthIsAuto) {
-                    // "The automatic width of a block-level box whose justify-self is neither
-                    // normal nor stretch is fit-content rather than stretch": measure the item
-                    // under the available width, which is upstream's Dimension::fit_content()
-                    // sizing-keyword resolution (upstream #1250).
-                    float fitContentAvailable = avoidsFloats
-                                               ? Math.max(0f, floatAvailableWidth)
-                                               : Math.max(0f, containerInnerWidth - itemNonAutoXMarginSum);
-                    FloatSize measured = layoutComputer.measureChildSize(
-                        item.nodeId,
-                        new FloatSize(NaN, NaN),
-                        parentSize,
-                        new TaffySize<>(
-                            AvailableSpace.definite(fitContentAvailable),
-                            AvailableSpace.maxContent()
-                        ),
-                        SizingMode.INHERENT_SIZE,
-                        new TaffyLine<>(true, true)
-                    );
-                    width = Float.isNaN(measured.width) ? fitContentAvailable : measured.width;
-                } else {
-                    width = avoidsFloats
-                            ? floatAvailableWidth
-                            : containerInnerWidth - itemNonAutoXMarginSum;
+                // The width this item would take if it were stretched to fill its containing
+                // block's content box (less the block margins that stay outside it).
+                float stretchWidth = Math.max(0f, avoidsFloats
+                                                  ? floatAvailableWidth
+                                                  : containerInnerWidth - itemNonAutoXMarginSum);
+                // "The automatic width of a block-level box whose justify-self is neither normal
+                // nor stretch is fit-content rather than stretch": express that as the
+                // fit-content sizing keyword, which resolves to a measurement under the stretch
+                // width (upstream #1250). An explicit sizing keyword on the item's own width
+                // (min-content, max-content, fit-content, fit-content(...), stretch) resolves
+                // either to an exact width or to a measurement under its own constraint
+                // (upstream #1099/#1103/#1247).
+                TaffyDimension widthStyle = nonStretchJustifySelf != null && item.widthIsAuto
+                                            ? TaffyDimension.fitContent()
+                                            : item.widthStyle;
+                SizingKeyword.Resolution keyword = SizingKeyword.resolve(
+                    widthStyle, stretchWidth, containerInnerWidth);
+                float keywordWidth = NaN;
+                if (keyword != null) {
+                    if (keyword.isExact()) {
+                        keywordWidth = keyword.getExactValue();
+                    } else {
+                        FloatSize measured = layoutComputer.measureChildSize(
+                            item.nodeId,
+                            new FloatSize(NaN, NaN),
+                            parentSize,
+                            new TaffySize<>(keyword.getMeasureAvailableSpace(), AvailableSpace.maxContent()),
+                            SizingMode.INHERENT_SIZE,
+                            new TaffyLine<>(true, true)
+                        );
+                        keywordWidth = measured.width;
+                    }
                 }
+                float width = !Float.isNaN(item.size.width)
+                              ? item.size.width
+                              : (!Float.isNaN(keywordWidth) ? keywordWidth : stretchWidth);
                 width = TaffyMath.clamp(width, item.minSize.width, item.maxSize.width);
                 // A `height: stretch` item fills this container's content box, minus the block
                 // margins that cannot collapse through the corresponding edge of the containing
