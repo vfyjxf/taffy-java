@@ -18,6 +18,7 @@ import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyFloat;
 import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
+import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.Overflow;
 import dev.vfyjxf.taffy.style.TaffyPosition;
@@ -33,7 +34,9 @@ import dev.vfyjxf.taffy.util.Resolve;
 import dev.vfyjxf.taffy.util.ScrollableOverflowUtil;
 import dev.vfyjxf.taffy.util.SizingKeyword;
 import dev.vfyjxf.taffy.util.TaffyMath;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,6 +54,32 @@ public class BlockComputer {
      * ever read, never mutated: the adjusted sizes built from it are fresh values.
      */
     private static final FloatSize ZERO_SIZE = new FloatSize(0f, 0f);
+
+    /**
+     * A shared all-zero rectangle, used by an item whose padding or border resolves to zero on
+     * every side. Only ever read: item geometry is never mutated after {@link #generateItemList}.
+     */
+    private static final FloatRect ZERO_RECT = new FloatRect(0f, 0f, 0f, 0f);
+
+    /**
+     * A shared fully-unresolved size (both axes {@link Float#NaN}), used by an item whose
+     * size/min-size/max-size cannot resolve in any basis ({@code auto} or an intrinsic keyword).
+     * Only ever read.
+     */
+    private static final FloatSize NONE_SIZE = new FloatSize(NaN, NaN);
+
+    /**
+     * The pass-scoped item-list cache; see {@link ItemListCache}.
+     */
+    private static final ThreadLocal<ItemListCache> ITEM_LIST_CACHE =
+        ThreadLocal.withInitial(ItemListCache::new);
+
+    /**
+     * The maximum number of {@link BlockItem}s one pass may pin in {@link #ITEM_LIST_CACHE}. The
+     * item metadata of the containers seen so far is only reclaimed at the next pass, so a large
+     * tree needs a bound; beyond it the cache is dropped and rebuilt (correct, just uncached).
+     */
+    private static final int MAX_CACHED_ITEMS = 1 << 16;
 
     public BlockComputer(LayoutComputer layoutComputer) {
         this.layoutComputer = layoutComputer;
@@ -186,6 +215,85 @@ public class BlockComputer {
          * written; the final layout commits them in one place. Upstream #971 (BK-01).
          */
         Layout finalLayout;
+    }
+
+    /**
+     * A container's item list kept for the duration of one layout pass.
+     *
+     * <p>A {@link BlockComputer} is created per compute call (see {@code LayoutComputer}'s block
+     * dispatch), so a pass-scoped cache cannot live on the instance: the pass is the lifetime of
+     * one {@link LayoutComputer} and of one direction epoch (the tree bumps it when a pass
+     * starts). The cache therefore lives on a thread-local keyed by the owning tree and epoch, so
+     * a later pass, another tree or a re-entrant pass discards it instead of observing styles that
+     * have since changed.</p>
+     *
+     * <p>Within a pass a container's item list is a pure function of its child styles, its child
+     * order, its inner size and its resolved direction, and none of those can change while the
+     * pass runs (styles only change through {@link TaffyTree#setStyle}, which starts a new epoch).
+     * Reusing the list is what keeps a measurement pass and the final layout from resolving the
+     * same child styles twice; the deferred per-child layout results filled in by the passes are
+     * reset before a reused list is handed out.</p>
+     */
+    private static final class CachedItemList {
+        final List<BlockItem> items;
+        final float innerWidth;
+        final float innerHeight;
+        final TaffyDirection direction;
+        /**
+         * Whether the item metadata was built from child styles that resolve against the
+         * container's inner size at all. When they do not (the common case: no percentage or
+         * {@code calc()} padding, border, size, min-size or max-size), the same list is valid for
+         * every inner size, so a measurement and a final layout at different known dimensions
+         * share it.
+         */
+        final boolean innerSizeIndependent;
+
+        CachedItemList(List<BlockItem> items, FloatSize innerSize, TaffyDirection direction,
+                       boolean innerSizeIndependent) {
+            this.items = items;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.direction = direction;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        boolean matches(FloatSize innerSize, TaffyDirection containerDirection) {
+            if (direction != containerDirection) {
+                return false;
+            }
+            return innerSizeIndependent
+                   || (Float.floatToIntBits(innerWidth) == Float.floatToIntBits(innerSize.width)
+                       && Float.floatToIntBits(innerHeight) == Float.floatToIntBits(innerSize.height));
+        }
+    }
+
+    /**
+     * The per-pass item-list cache. The owning tree is held weakly: the cached items reference
+     * nothing of the tree, so a caller that stops using a tree does not keep it alive through this
+     * thread-local. {@link #epoch} is the tree's direction epoch; a different value means the pass
+     * is over (or a style/child-list change happened) and the entries are dropped.
+     */
+    private static final class ItemListCache {
+        private WeakReference<TaffyTree> tree;
+        private long epoch = Long.MIN_VALUE;
+        private final Long2ObjectOpenHashMap<CachedItemList> lists = new Long2ObjectOpenHashMap<>();
+        private int cachedItems;
+
+        void store(long nodeId, List<BlockItem> items, FloatSize innerSize,
+                   TaffyDirection direction, boolean innerSizeIndependent) {
+            CachedItemList previous = lists.put(nodeId,
+                new CachedItemList(items, innerSize, direction, innerSizeIndependent));
+            if (previous != null) {
+                cachedItems -= previous.items.size();
+            }
+            cachedItems += items.size();
+            if (cachedItems > MAX_CACHED_ITEMS) {
+                // Bound the memory a single pass may pin: a list built once per container is only
+                // worth keeping while the pass is small enough to matter.
+                lists.clear();
+                cachedItems = 0;
+            }
+        }
     }
 
     /**
@@ -944,14 +1052,39 @@ public class BlockComputer {
     private List<BlockItem> generateItemList(
         NodeId node, FloatSize nodeInnerSize, TaffyDirection containerDirection) {
         TaffyTree tree = layoutComputer.getTree();
-        List<BlockItem> items = new ArrayList<>();
+        ItemListCache cache = itemListCache(tree);
+        CachedItemList cached = cache.lists.get(node.getId());
+        if (cached != null && cached.matches(nodeInnerSize, containerDirection)) {
+            // Reset the state the layout passes fill in before handing the list out again: the
+            // deferred child layout, the static position of an out-of-flow child and its
+            // collapse-through flag are per-pass results, not item metadata.
+            List<BlockItem> reused = cached.items;
+            for (int i = 0, size = reused.size(); i < size; i++) {
+                BlockItem item = reused.get(i);
+                item.finalLayout = null;
+                item.staticPosition = FloatPoint.ZERO;
+                item.canBeCollapsedThrough = false;
+            }
+            return reused;
+        }
+
+        // Whether the metadata resolved below depends on the container's inner size. When it does
+        // not, the list is valid for every inner size of this pass (a measurement at one known
+        // size and the final layout at another), which is the common case.
+        boolean innerSizeIndependent = true;
+        List<NodeId> children = tree.getChildren(node);
+        List<BlockItem> items = new ArrayList<>(children.size());
 
         int order = 0;
-        for (NodeId childId : tree.getChildren(node)) {
+        for (NodeId childId : children) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
                 continue;
+            }
+
+            if (innerSizeIndependent && hasInnerSizeDependentValues(childStyle)) {
+                innerSizeIndependent = false;
             }
 
             BlockItem item = new BlockItem();
@@ -959,25 +1092,23 @@ public class BlockComputer {
             item.order = order++;
 
             Float aspectRatio = childStyle.getAspectRatio();
-            FloatRect itemPadding = Resolve.resolveRectOrZero(childStyle.getPadding(), nodeInnerSize.width);
-            FloatRect itemBorder = Resolve.resolveRectOrZero(childStyle.getBorder(), nodeInnerSize.width);
+            TaffySize<TaffyDimension> childSize = childStyle.getSize();
+            FloatRect itemPadding = resolveZeroOrRect(childStyle.getPadding(), nodeInnerSize.width);
+            FloatRect itemBorder = resolveZeroOrRect(childStyle.getBorder(), nodeInnerSize.width);
             item.padding = itemPadding;
             item.border = itemBorder;
-            item.paddingBorderSum = new FloatSize(
-                itemPadding.left + itemPadding.right + itemBorder.left + itemBorder.right,
-                itemPadding.top + itemPadding.bottom + itemBorder.top + itemBorder.bottom
-            );
+            item.paddingBorderSum = paddingBorderSum(itemPadding, itemBorder);
 
             FloatSize boxSizingAdj = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
                                      ? item.paddingBorderSum
                                      : ZERO_SIZE;
 
-            FloatSize size2 = Resolve.maybeResolveSize(childStyle.getSize(), nodeInnerSize);
+            FloatSize size2 = resolveSizeOrNone(childSize, nodeInnerSize);
             // The item's min/max constraints are not transferred through its aspect ratio; see
             // the note in compute() (only the used size transfers between axes).
-            FloatSize size1 = Resolve.maybeResolveSize(childStyle.getMinSize(), nodeInnerSize);
+            FloatSize size1 = resolveSizeOrNone(childStyle.getMinSize(), nodeInnerSize);
             item.minSize = addBoxSizingAdjustment(size1, boxSizingAdj);
-            FloatSize size = Resolve.maybeResolveSize(childStyle.getMaxSize(), nodeInnerSize);
+            FloatSize size = resolveSizeOrNone(childStyle.getMaxSize(), nodeInnerSize);
             item.maxSize = addBoxSizingAdjustment(size, boxSizingAdj);
             // Clamp the item's specified size in its own axis by its own min/max first, then
             // transfer the remaining definite axis through the ratio (css-sizing-4). Deriving
@@ -995,8 +1126,8 @@ public class BlockComputer {
             item.position = childStyle.getPosition();
             item.inset = childStyle.getInset();
             item.margin = childStyle.getMargin();
-            item.heightStyle = childStyle.getSize().height;
-            item.widthStyle = childStyle.getSize().width;
+            item.heightStyle = childSize.height;
+            item.widthStyle = childSize.width;
             item.aspectRatio = aspectRatio;
             item.staticPosition = FloatPoint.ZERO;
             item.canBeCollapsedThrough = false;
@@ -1015,13 +1146,13 @@ public class BlockComputer {
             // direction bypasses that.
             TaffyDirection childDirection = childStyle.getDirection();
             item.direction = childDirection.isInherit() ? containerDirection : childDirection;
-            item.widthIsAuto = childStyle.getSize().width.isAuto();
+            item.widthIsAuto = childSize.width.isAuto();
             // For compressible replaced items a percentage width/max-width resolves against a
             // zero-width containing block in the min-content contribution, so the item contributes
             // at most this cap. Upstream #1401 (4aca4f49).
             if (item.isCompressibleReplaced) {
                 FloatSize resolvedWidth = Resolve.maybeResolveSize(
-                    childStyle.getSize(), new FloatSize(0f, NaN));
+                    childSize, new FloatSize(0f, NaN));
                 FloatSize resolvedMaxWidth = Resolve.maybeResolveSize(
                     childStyle.getMaxSize(), new FloatSize(0f, NaN));
                 float width = resolvedWidth.width;
@@ -1035,7 +1166,57 @@ public class BlockComputer {
             items.add(item);
         }
 
+        cache.store(node.getId(), items, nodeInnerSize, containerDirection, innerSizeIndependent);
         return items;
+    }
+
+    /**
+     * Returns the pass-scoped item-list cache for {@code tree}, discarding the entries of a
+     * previous pass (a different tree or a new direction epoch).
+     */
+    private static ItemListCache itemListCache(TaffyTree tree) {
+        ItemListCache cache = ITEM_LIST_CACHE.get();
+        long epoch = tree.currentDirectionEpoch();
+        TaffyTree cachedTree = cache.tree == null ? null : cache.tree.get();
+        if (cachedTree != tree || cache.epoch != epoch) {
+            cache.lists.clear();
+            cache.cachedItems = 0;
+            cache.tree = new WeakReference<>(tree);
+            cache.epoch = epoch;
+        }
+        return cache;
+    }
+
+    /**
+     * Whether any child-style value this class resolves against the container's inner size can
+     * actually depend on it.
+     *
+     * <p>{@link #generateItemList} resolves the child's padding and border against the container's
+     * content-box width and its size/min-size/max-size against the content-box size; a
+     * {@code length} ignores that basis, whereas a percentage or a {@code calc()} expression (which
+     * may embed one) does not. Style height/width keywords and {@code auto} resolve to
+     * {@link Float#NaN} regardless of the basis, so they are basis-independent too. When this
+     * method returns {@code false} the item list may be shared across the different known
+     * dimensions a single pass lays the container out with.</p>
+     */
+    private static boolean hasInnerSizeDependentValues(TaffyStyle style) {
+        return rectDependsOnInnerSize(style.getPadding())
+               || rectDependsOnInnerSize(style.getBorder())
+               || sizeDependsOnInnerSize(style.getSize())
+               || sizeDependsOnInnerSize(style.getMinSize())
+               || sizeDependsOnInnerSize(style.getMaxSize());
+    }
+
+    private static boolean rectDependsOnInnerSize(TaffyRect<LengthPercentage> rect) {
+        return rect.left.isPercent() || rect.left.isCalc()
+               || rect.right.isPercent() || rect.right.isCalc()
+               || rect.top.isPercent() || rect.top.isCalc()
+               || rect.bottom.isPercent() || rect.bottom.isCalc();
+    }
+
+    private static boolean sizeDependsOnInnerSize(TaffySize<TaffyDimension> size) {
+        return size.width.isPercent() || size.width.isCalc()
+               || size.height.isPercent() || size.height.isCalc();
     }
 
     private float determineContentBasedContainerWidth(List<BlockItem> items, AvailableSpace availableWidth) {
@@ -2619,6 +2800,58 @@ public class BlockComputer {
     }
 
     // Helper methods
+
+    /**
+     * Resolves a padding/border rectangle against the container's content-box width, returning the
+     * shared {@link #ZERO_RECT} when every side is a zero length.
+     *
+     * <p>A style without padding or border stores four shared zero lengths, so this is the common
+     * case and avoids one rectangle per item per side set.</p>
+     */
+    private static FloatRect resolveZeroOrRect(TaffyRect<LengthPercentage> rect, float contextWidth) {
+        if (isZeroLength(rect.left) && isZeroLength(rect.right)
+            && isZeroLength(rect.top) && isZeroLength(rect.bottom)) {
+            return ZERO_RECT;
+        }
+        return Resolve.resolveRectOrZero(rect, contextWidth);
+    }
+
+    private static boolean isZeroLength(LengthPercentage value) {
+        return value == LengthPercentage.ZERO || (value.isLength() && value.getValue() == 0f);
+    }
+
+    /**
+     * Sums an item's resolved padding and border, returning the shared {@link #ZERO_SIZE} when the
+     * result is zero on both axes (the common case, and the result is only ever read).
+     */
+    private static FloatSize paddingBorderSum(FloatRect padding, FloatRect border) {
+        float width = padding.left + padding.right + border.left + border.right;
+        float height = padding.top + padding.bottom + border.top + border.bottom;
+        return width == 0f && height == 0f ? ZERO_SIZE : new FloatSize(width, height);
+    }
+
+    /**
+     * Resolves an item's size/min-size/max-size against the container's content box, returning the
+     * shared {@link #NONE_SIZE} when neither axis can resolve in any basis.
+     *
+     * <p>{@code auto} and the intrinsic sizing keywords resolve to {@link Float#NaN} regardless of
+     * the basis ({@link TaffyDimension#maybeResolve}), which is the common case for a block child
+     * without an explicit size constraint; a percentage or {@code calc()} expression does depend on
+     * the basis and always allocates.</p>
+     */
+    private static FloatSize resolveSizeOrNone(TaffySize<TaffyDimension> size, FloatSize parentSize) {
+        if (resolvesToNothing(size.width) && resolvesToNothing(size.height)) {
+            return NONE_SIZE;
+        }
+        return Resolve.maybeResolveSize(size, parentSize);
+    }
+
+    private static boolean resolvesToNothing(TaffyDimension dimension) {
+        return switch (dimension.getType()) {
+            case AUTO, MIN_CONTENT, MAX_CONTENT, FIT_CONTENT, STRETCH, CONTENT -> true;
+            case LENGTH, PERCENT, CALC -> false;
+        };
+    }
 
     /**
      * Adds a box-sizing adjustment to a resolved size.
