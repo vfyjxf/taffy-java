@@ -57,7 +57,10 @@ public class BlockComputer {
 
     /**
      * A shared all-zero rectangle, used by an item whose padding or border resolves to zero on
-     * every side. Only ever read: item geometry is never mutated after {@link #generateItemList}.
+     * every side, and for a reported {@code Layout.margin} whose four components are all zero.
+     * Only ever read: item geometry is never mutated after {@link #generateItemList}, and every
+     * consumer of a reported layout only reads its rectangles (rounding rebuilds them through
+     * {@code roundRect} instead of mutating them).
      */
     private static final FloatRect ZERO_RECT = new FloatRect(0f, 0f, 0f, 0f);
 
@@ -1013,7 +1016,12 @@ public class BlockComputer {
         // measured from the client area (#1007): the reachable content extent then excludes the
         // leading border, which is exactly the term the symmetric scroll-size formula adds back.
         // Upstream #1007. 2.0 removes the component entirely.
-        FloatSize inFlowContentSize = FloatSize.zero();
+        // The running maximum is kept as two primitives: ContentSizeUtil.max would allocate one
+        // FloatSize per in-flow child, and the legacy content size is only needed as a value at
+        // the end of this loop. A NaN contribution counts as zero, exactly as ContentSizeUtil
+        // sanitises it. P18.
+        float inFlowContentWidth = 0f;
+        float inFlowContentHeight = 0f;
         for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
             BlockItem item = items.get(itemIndex);
             Layout childLayout = item.finalLayout;
@@ -1021,6 +1029,13 @@ public class BlockComputer {
             if (childLayout == null) continue;
 
             FloatRect childMargin = childLayout.margin();
+            // Block layout hands only the non-positive part of the child's margin to the overflow
+            // contribution, and a box without negative margins contributes the shared zero
+            // rectangle instead of a fresh one (the consumer only reads it). P18.
+            float overflowMarginLeft = nonPositive(childMargin.left);
+            float overflowMarginRight = nonPositive(childMargin.right);
+            float overflowMarginTop = nonPositive(childMargin.top);
+            float overflowMarginBottom = nonPositive(childMargin.bottom);
             accumulatedOverflow = ScrollableOverflowUtil.union(
                 accumulatedOverflow,
                 ScrollableOverflowUtil.computeContribution(
@@ -1033,19 +1048,23 @@ public class BlockComputer {
                     childLayout.border(),
                     item.overflow,
                     inFlowOverflowContainer,
-                    new FloatRect(
-                        nonPositive(childMargin.left),
-                        nonPositive(childMargin.right),
-                        nonPositive(childMargin.top),
-                        nonPositive(childMargin.bottom)
-                    )
+                    overflowMarginLeft == 0f && overflowMarginRight == 0f
+                        && overflowMarginTop == 0f && overflowMarginBottom == 0f
+                    ? ZERO_RECT
+                    : new FloatRect(
+                        overflowMarginLeft, overflowMarginRight,
+                        overflowMarginTop, overflowMarginBottom)
                 )
             );
 
-            inFlowContentSize = ContentSizeUtil.max(inFlowContentSize,
-                contentSizeContribution(childLayout, item.overflow, rtl, containerOuterWidth,
-                    resolvedBorder, scrollbarGutter));
+            FloatSize contribution = contentSizeContribution(
+                childLayout, item.overflow, rtl, containerOuterWidth, resolvedBorder, scrollbarGutter);
+            float contributionWidth = Float.isNaN(contribution.width) ? 0f : contribution.width;
+            float contributionHeight = Float.isNaN(contribution.height) ? 0f : contribution.height;
+            if (contributionWidth > inFlowContentWidth) inFlowContentWidth = contributionWidth;
+            if (contributionHeight > inFlowContentHeight) inFlowContentHeight = contributionHeight;
         }
+        FloatSize inFlowContentSize = new FloatSize(inFlowContentWidth, inFlowContentHeight);
 
         // A scroll container's own end padding is part of its reachable region: the start padding
         // is already covered by the child positions, the end padding is not. A non-scroll box does
@@ -1721,10 +1740,7 @@ public class BlockComputer {
                     y += relativeInsetY(item.inset, childPercentageResolutionHeight);
                 }
 
-                FloatSize scrollbarSize = new FloatSize(
-                    item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                    item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-                );
+                FloatSize scrollbarSize = scrollbarSize(item);
                 item.finalLayout = new Layout(
                     item.order,
                     new FloatPoint(x, y),
@@ -2030,12 +2046,16 @@ public class BlockComputer {
             // not the box's own margin; reporting them leaked the parent's collapsed margin into
             // the child's margin. Auto margins report 0 here: the resolved auto size is only
             // consumed by the positioning maths. BK-10 / upstream #1287.
-            FloatRect resolvedMargin = new FloatRect(
-                Float.isNaN(marginLeft) ? xAxisAutoMarginSize : marginLeft,
-                Float.isNaN(marginRight) ? xAxisAutoMarginSize : marginRight,
-                nonAutoMarginTop,
-                nonAutoMarginBottom
-            );
+            float resolvedMarginLeft = Float.isNaN(marginLeft) ? xAxisAutoMarginSize : marginLeft;
+            float resolvedMarginRight = Float.isNaN(marginRight) ? xAxisAutoMarginSize : marginRight;
+            // A box whose four reported margin components are all zero shares the read-only zero
+            // rectangle with the other zero geometry it already receives (padding/border), instead
+            // of allocating one per child. P18.
+            FloatRect resolvedMargin = resolvedMarginLeft == 0f && resolvedMarginRight == 0f
+                                       && nonAutoMarginTop == 0f && nonAutoMarginBottom == 0f
+                                       ? ZERO_RECT
+                                       : new FloatRect(resolvedMarginLeft, resolvedMarginRight,
+                                                       nonAutoMarginTop, nonAutoMarginBottom);
 
             // Resolve item inset. Only `position: relative` applies its inset as a correction
             // offset. Static and sticky boxes are laid out in normal flow without a relative
@@ -2173,10 +2193,7 @@ public class BlockComputer {
                     itemOutput, y - insetOffsetY, item.overflow.y.isScrollContainer());
             }
 
-            FloatSize scrollbarSize = new FloatSize(
-                item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-            );
+            FloatSize scrollbarSize = scrollbarSize(item);
 
             // The child's own scrollable overflow is carried into its layout so that this
             // container can fold it into its own contribution (SO-01): the value is relative to
@@ -2601,10 +2618,7 @@ public class BlockComputer {
                 containerOverflow.y.isScrollContainer()
             ));
 
-            FloatSize scrollbarSize = new FloatSize(
-                item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-            );
+            FloatSize scrollbarSize = scrollbarSize(item);
 
             Layout layout = new Layout(
                 item.order,
@@ -3049,6 +3063,20 @@ public class BlockComputer {
 
     private static boolean isZeroLength(LengthPercentage value) {
         return value == LengthPercentage.ZERO || (value.isLength() && value.getValue() == 0f);
+    }
+
+    /**
+     * The item's scrollbar size, or the shared {@link #ZERO_SIZE} when neither axis reserves a
+     * gutter.
+     *
+     * <p>Most boxes do not scroll, so the common case avoids one {@link FloatSize} per reported
+     * {@link Layout}. The constant is the same read-only one this class already reports as a
+     * zero padding/border sum. P18.</p>
+     */
+    private static FloatSize scrollbarSize(BlockItem item) {
+        float width = item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f;
+        float height = item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f;
+        return width == 0f && height == 0f ? ZERO_SIZE : new FloatSize(width, height);
     }
 
     /**
