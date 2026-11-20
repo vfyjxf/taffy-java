@@ -397,15 +397,15 @@ public class LeafMarginP8Test {
     }
 
     /**
-     * Documented residual: the grid <em>intrinsic contribution</em> paths measure the item with the
-     * whole grid area as available space ({@code GridComputer} passes the unmodified grid area),
-     * while upstream subtracts the item's margins there too ({@code available_space_minus_margins},
-     * diff-grid T24). Before X2 the removed leaf deduction masked the difference; this test pins
-     * the current value so the grid side can flip it together with T24.
+     * T24 is fixed: the grid <em>intrinsic contribution</em> paths now subtract the item's margins
+     * from the definite available space too ({@code available_space_minus_margins}, upstream
+     * #1234 / diff-grid T24), exactly like the final position pass. The item's 10px margins turn
+     * the 200px grid area into 180px of available space for the measured leaf; before T24 the
+     * intrinsic-contribution measurement still saw the whole 200px track.
      */
     @Test
-    @DisplayName("residual T24: the grid intrinsic-contribution pass sees the whole grid area")
-    void gridIntrinsicContributionStillSeesTheWholeGridArea() {
+    @DisplayName("T24 fixed: the grid intrinsic-contribution pass sees the grid area net of margins")
+    void gridIntrinsicContributionSeesTheGridAreaMinusMargins() {
         List<TaffySize<AvailableSpace>> captures = capturing();
         TaffyStyle childStyle = allMargins(block(), 10f);
         childStyle.justifySelf = AlignItems.CENTER;
@@ -419,10 +419,11 @@ public class LeafMarginP8Test {
 
         layout(tree, root);
 
-        // Upstream would report 180 here (200 - 2 * 10); the intrinsic-contribution measurement
-        // still sees the full track size.
-        assertTrue(definiteValues(captures, true).contains(200f),
-            "grid intrinsic contribution still measures under the whole grid area (T24 residual)");
+        // 200 - 2 * 10 = 180: the intrinsic-contribution measurement is net of the item's margins.
+        assertTrue(definiteValues(captures, true).contains(180f),
+            "grid intrinsic contribution must measure under the grid area minus margins (T24)");
+        assertFalse(definiteValues(captures, true).contains(200f),
+            "no grid intrinsic measurement may see the undeducted grid area (T24)");
     }
 
     // ------------------------------------------------------------------

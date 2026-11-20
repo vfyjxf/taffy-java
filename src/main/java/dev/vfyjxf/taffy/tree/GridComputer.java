@@ -386,6 +386,34 @@ public class GridComputer {
             return rawMargin != null ? Resolve.resolveRectLpaOrZero(rawMargin, gridAreaSize.width) : FloatRect.zero();
         }
 
+        /**
+         * Subtract the item's margins (and baseline shim) from the definite axes of the space
+         * available to the item's margin box, giving the available space handed to the item itself
+         * (upstream {@code available_space_minus_margins}, #1234 / GR-06 T24).
+         * <p>
+         * A definite available space is always the space available to a node's <em>border box</em>:
+         * the parent subtracts the child's margins before passing it, and the child never subtracts
+         * its own margins again. The grid intrinsic-contribution measurements are the item's parent,
+         * so they must subtract the item's margins instead of measuring against the raw grid area.
+         * As in the final position pass, all four margins resolve against the grid area's inline
+         * size and an {@code auto} margin is treated as zero.
+         *
+         * @param availableSpace the space available to the item's margin box, NaN for an indefinite axis
+         * @param gridAreaSize   the item's grid area, used as the margin percentage basis
+         * @return the available space net of margins, floored at zero on each definite axis
+         */
+        FloatSize availableSpaceMinusMargins(FloatSize availableSpace, FloatSize gridAreaSize) {
+            if (Float.isNaN(availableSpace.width) && Float.isNaN(availableSpace.height)) {
+                return availableSpace;
+            }
+            FloatRect margin = resolveMargin(gridAreaSize);
+            float horizontal = margin.left + margin.right;
+            float vertical = margin.top + margin.bottom + baselineShim;
+            return new FloatSize(
+                Float.isNaN(availableSpace.width) ? NaN : Math.max(availableSpace.width - horizontal, 0f),
+                Float.isNaN(availableSpace.height) ? NaN : Math.max(availableSpace.height - vertical, 0f)
+            );
+        }
 
         /**
          * Get min content contribution for width, using cache if available.
@@ -451,9 +479,13 @@ public class GridComputer {
             // Build available space for measurement - match Rust's available_space.map() logic.
             // Upstream calls this with grid_area_size.with(axis, None), so the sized axis is
             // unconstrained (min-content here) and the other axis is definite when the grid area is.
+            // The definite axis is then net of the item's margins (upstream available_space_minus_margins,
+            // #1234 / T24): a definite available space is the space available to the item's border box.
+            FloatSize availableSpace = availableSpaceMinusMargins(
+                new FloatSize(NaN, gridAreaSize.height), gridAreaSize);
             AvailableSpace widthAvail = AvailableSpace.minContent();
-            AvailableSpace heightAvail = !Float.isNaN(gridAreaSize.height)
-                                         ? AvailableSpace.definite(gridAreaSize.height)
+            AvailableSpace heightAvail = !Float.isNaN(availableSpace.height)
+                                         ? AvailableSpace.definite(availableSpace.height)
                                          : AvailableSpace.minContent();
 
             // Use measureChildSize for efficient sizing (returns just size, no full layout).
@@ -489,10 +521,13 @@ public class GridComputer {
             FloatSize knownDimensions = computeKnownDimensionsCached(gridAreaSize);
 
             // Build available space for measurement - match Rust's available_space.map() logic.
-            // See the min-content path: the sized axis is unconstrained (max-content here).
+            // See the min-content path: the sized axis is unconstrained (max-content here) and the
+            // definite axis is net of the item's margins (upstream #1234 / T24).
+            FloatSize availableSpace = availableSpaceMinusMargins(
+                new FloatSize(NaN, gridAreaSize.height), gridAreaSize);
             AvailableSpace widthAvail = AvailableSpace.maxContent();
-            AvailableSpace heightAvail = !Float.isNaN(gridAreaSize.height)
-                                         ? AvailableSpace.definite(gridAreaSize.height)
+            AvailableSpace heightAvail = !Float.isNaN(availableSpace.height)
+                                         ? AvailableSpace.definite(availableSpace.height)
                                          : AvailableSpace.maxContent();
 
             FloatSize measuredSize = layoutComputer.measureChildSize(
@@ -527,9 +562,12 @@ public class GridComputer {
 
             // Build available space for measurement - match Rust's available_space.map() logic.
             // See the inline-axis paths: the sized axis is unconstrained (max-content here) and
-            // the grid area's other dimension is definite when available.
-            AvailableSpace widthAvail = !Float.isNaN(gridAreaSize.width)
-                                        ? AvailableSpace.definite(gridAreaSize.width)
+            // the grid area's other dimension is definite when available. That definite axis is
+            // net of the item's margins (upstream #1234 / T24).
+            FloatSize availableSpace = availableSpaceMinusMargins(
+                new FloatSize(gridAreaSize.width, NaN), gridAreaSize);
+            AvailableSpace widthAvail = !Float.isNaN(availableSpace.width)
+                                        ? AvailableSpace.definite(availableSpace.width)
                                         : AvailableSpace.maxContent();
             AvailableSpace heightAvail = AvailableSpace.maxContent();
 
@@ -1018,12 +1056,18 @@ public class GridComputer {
                     newMinContentContribution = preferredSize.width + marginAxisSums.width;
                 } else {
                     FloatSize itemKnownDims = item.computeKnownDimensions(itemGridAreaSize);
+                    // The definite (block) axis is net of the item's margins, like the cached
+                    // contribution paths (upstream available_space_minus_margins, #1234 / T24).
+                    FloatSize itemAvailableSpace = item.availableSpaceMinusMargins(
+                        new FloatSize(NaN, itemHeight), itemGridAreaSize);
                     FloatSize measuredSize = layoutComputer.measureChildSize(
                         item.nodeId,
                         itemKnownDims,
                         itemGridAreaSize,
                         new TaffySize<>(AvailableSpace.minContent(),
-                            !Float.isNaN(itemHeight) ? AvailableSpace.definite(itemHeight) : AvailableSpace.minContent()),
+                            !Float.isNaN(itemAvailableSpace.height)
+                                ? AvailableSpace.definite(itemAvailableSpace.height)
+                                : AvailableSpace.minContent()),
                         SizingMode.INHERENT_SIZE,
                         TaffyLine.FALSE
                     );
@@ -1127,11 +1171,17 @@ public class GridComputer {
                         newMinContentContribution = preferredSize.height + marginAxisSums.height;
                     } else {
                         FloatSize itemKnownDims = item.computeKnownDimensions(itemGridAreaSize);
+                        // The definite (inline) axis is net of the item's margins, like the cached
+                        // contribution paths (upstream available_space_minus_margins, #1234 / T24).
+                        FloatSize itemAvailableSpace = item.availableSpaceMinusMargins(
+                            new FloatSize(itemWidth, NaN), itemGridAreaSize);
                         FloatSize measuredSize = layoutComputer.measureChildSize(
                             item.nodeId,
                             itemKnownDims,
                             itemGridAreaSize,
-                            new TaffySize<>(!Float.isNaN(itemWidth) ? AvailableSpace.definite(itemWidth) : AvailableSpace.minContent(),
+                            new TaffySize<>(!Float.isNaN(itemAvailableSpace.width)
+                                ? AvailableSpace.definite(itemAvailableSpace.width)
+                                : AvailableSpace.minContent(),
                                 AvailableSpace.minContent()),
                             SizingMode.INHERENT_SIZE,
                             TaffyLine.FALSE
