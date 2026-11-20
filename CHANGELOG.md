@@ -115,7 +115,14 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   the pass would compute and keeps it when they match, avoiding a `Layout` and
   geometry allocation per node; fractional layouts whose stored result is already
   stable get the same treatment. Block item lists are rebuilt only once per layout
-  pass and are reused across the pass's measurement and final-layout calls.
+  pass and are reused across the pass's measurement and final-layout calls; the
+  list is also kept on `NodeData` across passes and invalidated by the container
+  style/children versions and each child's style version, so changing one leaf no
+  longer rebuilds every ancestor's item list.
+- The final-layout cache entry now stores an exact packed key (three `long`s built
+  with `floatToIntBits`/available-space type codes) instead of comparing six fields
+  per lookup; `NaN`, `-0.0`, known-axis and parent-size semantics are unchanged.
+
 
 ### P7 additions (float, grid details, contain)
 
