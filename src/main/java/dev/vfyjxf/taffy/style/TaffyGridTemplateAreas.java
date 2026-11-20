@@ -15,7 +15,7 @@ import java.util.Objects;
  * template size therefore cannot be derived from the named areas alone; this type carries it
  * explicitly.
  * <p>
- * This is the additive counterpart of upstream taffy's {@code GridTemplateAreas} struct
+ * This is the additive counterpart of upstream taffy's {@code grid-template-areas} struct
  * (upstream #1024 / GR-16). {@link TaffyStyle#gridTemplateAreas} keeps its historical
  * {@code List<GridTemplateArea>} type for source and binary compatibility, so the template size is
  * carried by two extra fields on the style ({@link TaffyStyle#gridTemplateAreaRowCount} and
@@ -27,7 +27,7 @@ import java.util.Objects;
  * @see <a href="https://www.w3.org/TR/css-grid-1/#grid-template-areas-property">CSS Grid 1:
  *      grid-template-areas</a>
  */
-public final class GridTemplateAreas {
+public final class TaffyGridTemplateAreas {
 
     /**
      * Sentinel for {@link TaffyStyle#gridTemplateAreaRowCount} and
@@ -49,7 +49,7 @@ public final class GridTemplateAreas {
      * @param columnCount the number of columns of the area template (at least 0)
      * @throws IllegalArgumentException if a count is negative or an area is {@code null}
      */
-    public GridTemplateAreas(List<GridTemplateArea> areas, int rowCount, int columnCount) {
+    public TaffyGridTemplateAreas(List<GridTemplateArea> areas, int rowCount, int columnCount) {
         if (rowCount < 0) {
             throw new IllegalArgumentException("grid-template-areas row count must not be negative: " + rowCount);
         }
@@ -72,8 +72,8 @@ public final class GridTemplateAreas {
     }
 
     /** A template with no named area and no explicit track (the CSS initial value). */
-    public static GridTemplateAreas empty() {
-        return new GridTemplateAreas(List.of(), 0, 0);
+    public static TaffyGridTemplateAreas empty() {
+        return new TaffyGridTemplateAreas(List.of(), 0, 0);
     }
 
     /**
@@ -82,8 +82,8 @@ public final class GridTemplateAreas {
      *
      * @param areas the named grid areas; {@code null} is treated as an empty list
      */
-    public static GridTemplateAreas fromAreas(List<GridTemplateArea> areas) {
-        return new GridTemplateAreas(areas, derivedRowCount(areas), derivedColumnCount(areas));
+    public static TaffyGridTemplateAreas fromAreas(List<GridTemplateArea> areas) {
+        return new TaffyGridTemplateAreas(areas, derivedRowCount(areas), derivedColumnCount(areas));
     }
 
     /**
@@ -92,9 +92,9 @@ public final class GridTemplateAreas {
      *
      * @param style the style to read; must not be {@code null}
      */
-    public static GridTemplateAreas from(TaffyStyle style) {
+    public static TaffyGridTemplateAreas from(TaffyStyle style) {
         Objects.requireNonNull(style, "style cannot be null");
-        return new GridTemplateAreas(style.gridTemplateAreas,
+        return new TaffyGridTemplateAreas(style.gridTemplateAreas,
             style.getGridTemplateAreaRowCount(), style.getGridTemplateAreaColumnCount());
     }
 
@@ -177,7 +177,7 @@ public final class GridTemplateAreas {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        GridTemplateAreas that = (GridTemplateAreas) o;
+        TaffyGridTemplateAreas that = (TaffyGridTemplateAreas) o;
         return rowCount == that.rowCount && columnCount == that.columnCount && areas.equals(that.areas);
     }
 
@@ -188,6 +188,6 @@ public final class GridTemplateAreas {
 
     @Override
     public String toString() {
-        return "GridTemplateAreas{areas=" + areas + ", rows=" + rowCount + ", columns=" + columnCount + "}";
+        return "TaffyGridTemplateAreas{areas=" + areas + ", rows=" + rowCount + ", columns=" + columnCount + "}";
     }
 }
