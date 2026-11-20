@@ -128,6 +128,12 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   and is only visible to the context-free lookup; the ordinary cache lookup refuses
   it, and any float in the inherited context or in the child's subtree falls back
   to the previous always-recompute path.
+- Flex item lists are reused within a pass and across passes: the cached list is
+  keyed by the container style/children versions, each child's style version and
+  resolved direction, and the inner size when child styles contain percentages or
+  calc. Reuse resets the per-pass flex sizing fields first, so cold layouts, resize
+  and repeated measure/layout passes stop re-parsing and re-allocating every item.
+
 
 
 
