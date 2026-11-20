@@ -41,7 +41,9 @@ import it.unimi.dsi.fastutil.ints.Int2FloatMap;
 import it.unimi.dsi.fastutil.ints.Int2FloatOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -90,6 +92,195 @@ public class GridComputer {
     static final int MAX_OZ_LINE = MAX_GRID_TRACKS;
 
     private final LayoutComputer layoutComputer;
+
+    /**
+     * The pass-scoped grid item-list cache; see {@link CachedGridItemList}.
+     */
+    private static final ThreadLocal<GridItemListCache> ITEM_LIST_CACHE =
+        ThreadLocal.withInitial(GridItemListCache::new);
+
+    /**
+     * The maximum number of {@link GridItem}s one pass may pin in {@link #ITEM_LIST_CACHE}. A large
+     * tree is bound rather than allowed to retain every container's item metadata until the pass
+     * ends; beyond the bound the cache is dropped and rebuilt (correct, just uncached).
+     */
+    private static final int MAX_CACHED_ITEMS = 1 << 16;
+
+    /**
+     * A grid container's item list that survives from one layout pass to the next, stored on the
+     * container's {@link NodeData}.
+     *
+     * <p>An item list is a pure function of the direct children's styles and their order, the
+     * container's own alignment and expanded templates, its resolved direction and - only when some
+     * child value or the parsed placement resolves against it - the container's content-box size.
+     * The stamps captured here let a later pass reuse the list without resolving every child style
+     * again: the container's own content version, its child-list version, each in-flow direct
+     * child's content version, the resolved container direction and the inner-size basis are
+     * compared. A child style change therefore invalidates only its direct parent's list.</p>
+     *
+     * <p>Out-of-flow and {@code display: none} children are not part of the item list and only
+     * share their index ({@code order}) with it, so their content versions are not compared: a
+     * change of an out-of-flow badge's size must not rebuild the list of the grid that hosts it.
+     * Their in-flow membership is compared instead, because a child that enters the flow becomes
+     * an item.</p>
+     *
+     * <p>The item metadata has no direction-derived field ({@code align-self}/{@code justify-self}
+     * are kept as keywords and resolved against the live styles by {@code placeItems}), but the
+     * direction is part of the key anyway: it is inherited, so an ancestor's direction change is
+     * not visible in the direct child's content version.</p>
+     *
+     * <p>Only style-derived metadata is stored; the per-pass results are reset before the list is
+     * consumed again. Because so many nodes can belong to all item lists, the retained entries are
+     * bounded by construction: every entry names a distinct in-flow direct child, a node has one
+     * parent, and a container replaces (or drops) its list when it rebuilds, so the tree-wide total
+     * cannot exceed the live node count.</p>
+     */
+    static final class GridItemCache {
+        private final List<GridItem> items;
+        private final long containerVersion;
+        private final long childrenVersion;
+        private final long[] childVersions;
+        private final boolean[] childInFlow;
+        private final TaffyDirection direction;
+        private final float innerWidth;
+        private final float innerHeight;
+        private final boolean innerSizeIndependent;
+
+        private GridItemCache(List<GridItem> items, long containerVersion, long childrenVersion,
+                              long[] childVersions, boolean[] childInFlow, TaffyDirection direction,
+                              FloatSize innerSize, boolean innerSizeIndependent) {
+            this.items = items;
+            this.containerVersion = containerVersion;
+            this.childrenVersion = childrenVersion;
+            this.childVersions = childVersions;
+            this.childInFlow = childInFlow;
+            this.direction = direction;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        private boolean matches(NodeData container, List<NodeId> children, TaffyTree tree,
+                                FloatSize innerSize, TaffyDirection direction) {
+            if (containerVersion != container.getContentVersion()
+                || childrenVersion != container.getChildrenVersion()
+                || this.direction != direction
+                || childVersions.length != children.size()) {
+                return false;
+            }
+            if (!innerSizeIndependent
+                && (Float.floatToIntBits(innerWidth) != Float.floatToIntBits(innerSize.width)
+                    || Float.floatToIntBits(innerHeight) != Float.floatToIntBits(innerSize.height))) {
+                return false;
+            }
+            for (int i = 0; i < childVersions.length; i++) {
+                NodeData child = tree.getNodeData(children.get(i));
+                if (child == null) {
+                    return false;
+                }
+                boolean inFlow = isInFlowGridItem(child.getStyle());
+                if (inFlow != childInFlow[i]) {
+                    return false;
+                }
+                if (inFlow && childVersions[i] != child.getContentVersion()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
+     * A grid container's item list kept for the duration of one layout pass.
+     *
+     * <p>A {@link GridComputer} is created per compute call (see {@code LayoutComputer}'s grid
+     * dispatch), so a pass-scoped cache cannot live on the instance: the pass is the lifetime of
+     * one {@link LayoutComputer} and of one direction epoch (the tree bumps it when a pass starts
+     * or a style/child list changes). The cache therefore lives on a thread-local keyed by the
+     * owning tree and epoch, so a later pass, another tree or a re-entrant pass discards it instead
+     * of observing styles that have since changed.</p>
+     *
+     * <p>Within a pass a container's item list is a pure function of its child styles, its child
+     * order, its expanded templates (auto-repetition counts), its own alignment and - only when a
+     * child value or the placement resolves against it - its inner size. None of those can change
+     * while the pass runs. Reusing the list is what keeps a container measured at several known
+     * sizes during track sizing (a 1x1 grid chain is generated once per measurement, up to ~45
+     * times in a single pass) from resolving every child style again. Only per-pass results are
+     * reset before a reused list is handed out; the style-derived metadata is kept.</p>
+     */
+    private static final class CachedGridItemList {
+        final List<GridItem> items;
+        final float innerWidth;
+        final float innerHeight;
+        /**
+         * Whether the item metadata and the parsed placements are independent of the container's
+         * inner size. When they are (the common case: no percentage or {@code calc()} child
+         * padding, border, size, min-size, max-size or margin, and no {@code auto-fill}/{@code
+         * auto-fit} template), the same list is valid for every inner size, so the measurements and
+         * the final layout of one pass share it.
+         */
+        final boolean innerSizeIndependent;
+
+        CachedGridItemList(List<GridItem> items, FloatSize innerSize, boolean innerSizeIndependent) {
+            this.items = items;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        boolean matches(FloatSize innerSize) {
+            if (innerSizeIndependent) {
+                return true;
+            }
+            return Float.floatToIntBits(innerWidth) == Float.floatToIntBits(innerSize.width)
+                   && Float.floatToIntBits(innerHeight) == Float.floatToIntBits(innerSize.height);
+        }
+    }
+
+    /**
+     * The per-pass grid item-list cache. The owning tree is held weakly: the cached items reference
+     * nothing of the tree, so a caller that stops using a tree does not keep it alive through this
+     * thread-local. {@link #epoch} is the tree's direction epoch; a different value means the pass
+     * is over (or a style/child-list change happened) and the entries are dropped.
+     */
+    private static final class GridItemListCache {
+        private WeakReference<TaffyTree> tree;
+        private long epoch = Long.MIN_VALUE;
+        private final Long2ObjectOpenHashMap<CachedGridItemList> lists = new Long2ObjectOpenHashMap<>();
+        private int cachedItems;
+
+        void store(long nodeId, List<GridItem> items, FloatSize innerSize, boolean innerSizeIndependent) {
+            CachedGridItemList previous = lists.put(nodeId,
+                new CachedGridItemList(items, innerSize, innerSizeIndependent));
+            if (previous != null) {
+                cachedItems -= previous.items.size();
+            }
+            cachedItems += items.size();
+            if (cachedItems > MAX_CACHED_ITEMS) {
+                // Bound the memory a single pass may pin. The list handed to the caller stays
+                // valid; only later lookups in this pass fall back to a rebuild.
+                lists.clear();
+                cachedItems = 0;
+            }
+        }
+    }
+
+    /**
+     * Returns the pass-scoped item-list cache for {@code tree}, discarding the entries of a
+     * previous pass (a different tree or a new direction epoch).
+     */
+    private static GridItemListCache itemListCache(TaffyTree tree) {
+        GridItemListCache cache = ITEM_LIST_CACHE.get();
+        long epoch = tree.currentDirectionEpoch();
+        TaffyTree cachedTree = cache.tree == null ? null : cache.tree.get();
+        if (cachedTree != tree || cache.epoch != epoch) {
+            cache.lists.clear();
+            cache.cachedItems = 0;
+            cache.tree = new WeakReference<>(tree);
+            cache.epoch = epoch;
+        }
+        return cache;
+    }
 
     public GridComputer(LayoutComputer layoutComputer) {
         this.layoutComputer = layoutComputer;
@@ -150,6 +341,15 @@ public class GridComputer {
         FloatRect margin;
         FloatRect padding;
         FloatRect border;
+        // The style-derived values captured when the item was built, restored before a reused item
+        // list is handed out. placeItems re-resolves padding/border/margin against the grid area
+        // and autoPlaceItems assigns the auto-positioned column/row start, so a reused item has to
+        // arrive in the same state as a freshly built one.
+        FloatRect basePadding;
+        FloatRect baseBorder;
+        FloatRect baseMargin;
+        Integer baseColumnStart;
+        Integer baseRowStart;
         TaffyPoint<Overflow> overflow;
         float scrollbarWidth;
         Float aspectRatio;
@@ -2021,10 +2221,41 @@ public class GridComputer {
     private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
                                              NamedLineResolver namedLineResolver) {
         TaffyTree tree = layoutComputer.getTree();
+
+        // A pass lays the same container out at several known sizes (track sizing measurements,
+        // then the final layout). The style-derived metadata and placements were built once; only
+        // the per-pass results have to be restored before the list is consumed again.
+        GridItemListCache cache = itemListCache(tree);
+        CachedGridItemList cached = cache.lists.get(node.getId());
+        if (cached != null && cached.matches(nodeInnerSize)) {
+            resetPerPassState(cached.items);
+            return cached.items;
+        }
+
+        // A list built by an earlier pass whose child styles, child list, in-flow membership,
+        // container direction and inner-size basis are all unchanged. Its style-derived metadata
+        // is still current; only the per-pass results have to be cleared.
+        List<NodeId> children = tree.getChildren(node);
+        TaffyDirection containerDirection = layoutComputer.resolveDirection(node);
+        NodeData containerData = tree.getNodeData(node);
+        if (containerData != null) {
+            GridItemCache persistent = containerData.getGridItemCache();
+            if (persistent != null
+                && persistent.matches(containerData, children, tree, nodeInnerSize, containerDirection)) {
+                List<GridItem> reused = persistent.items;
+                resetPerPassState(reused);
+                cache.store(node.getId(), reused, nodeInnerSize, persistent.innerSizeIndependent);
+                return reused;
+            }
+        }
+
         // Sized up front: a grid container commonly has one item per child, and growing the list
         // would copy it repeatedly for a large grid.
-        List<NodeId> children = tree.getChildren(node);
         List<GridItem> items = new ArrayList<>(children.size());
+        // Whether every in-flow child's metadata resolves independently of the container's inner
+        // size. The placement dependency is checked once after the loop (auto-repetition counts
+        // are the only size-dependent input of the parsed placements).
+        boolean innerSizeIndependent = true;
 
         // Explicit track counts for negative line number resolution. They come from the resolver so
         // that in-flow items, absolutely positioned items and named-line fallbacks all number their
@@ -2054,6 +2285,8 @@ public class GridComputer {
             FloatRect itemBorder = Resolve.resolveRectOrZero(childStyle.getBorder(), nodeInnerSize.width);
             item.padding = itemPadding;
             item.border = itemBorder;
+            item.basePadding = itemPadding;
+            item.baseBorder = itemBorder;
             // Keep the raw styles: percentage padding/border/size/min/max/margin resolve against the
             // grid area during intrinsic sizing and placement (GR-06 / upstream #960).
             item.rawPadding = childStyle.getPadding();
@@ -2090,6 +2323,7 @@ public class GridComputer {
 
             item.rawMargin = childStyle.getMargin();
             item.margin = Resolve.resolveRectLpaOrZero(childStyle.getMargin(), nodeInnerSize.width);
+            item.baseMargin = item.margin;
             item.inset = childStyle.getInset();
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
@@ -2157,16 +2391,185 @@ public class GridComputer {
             item.rowStart = rowPlacement.startIndex;
             item.rowEnd = rowPlacement.endIndex;
             item.rowSpan = rowPlacement.span;
+            // autoPlaceItems assigns an auto-positioned item's start line during the pass; the
+            // parsed (possibly null) placement is the state a reused item must start from.
+            item.baseColumnStart = item.columnStart;
+            item.baseRowStart = item.rowStart;
 
             item.computedSize = new FloatSize(0f, 0f);
             item.location = new FloatPoint(0f, 0f);
 
             if (!item.position.isOutOfFlow()) {
                 items.add(item);
+                if (innerSizeIndependent && hasInnerSizeDependentValues(childStyle)) {
+                    innerSizeIndependent = false;
+                }
             }
         }
 
+        boolean basisIndependent = innerSizeIndependent
+                                   && !templateHasAutoRepeat(containerStyle.gridTemplateColumnsWithRepeat)
+                                   && !templateHasAutoRepeat(containerStyle.gridTemplateRowsWithRepeat);
+        if (!items.isEmpty()) {
+            cache.store(node.getId(), items, nodeInnerSize, basisIndependent);
+            storeGridItemCache(tree, containerData, children, containerDirection, items, nodeInnerSize,
+                basisIndependent);
+        }
         return items;
+    }
+
+    /**
+     * Stores a freshly built item list on the container's {@link NodeData} so a later pass can
+     * reuse it. The per-child stamps are read once per build; a node that vanished between the
+     * build and this store (or a list larger than the tree itself) simply leaves the container
+     * without a cache.
+     */
+    private static void storeGridItemCache(TaffyTree tree, NodeData containerData, List<NodeId> children,
+                                           TaffyDirection containerDirection, List<GridItem> items,
+                                           FloatSize innerSize, boolean innerSizeIndependent) {
+        if (containerData == null) {
+            return;
+        }
+        int childCount = children.size();
+        long[] childVersions = new long[childCount];
+        boolean[] childInFlow = new boolean[childCount];
+        for (int i = 0; i < childCount; i++) {
+            NodeData child = tree.getNodeData(children.get(i));
+            if (child == null) {
+                return;
+            }
+            boolean inFlow = isInFlowGridItem(child.getStyle());
+            childInFlow[i] = inFlow;
+            childVersions[i] = inFlow ? child.getContentVersion() : 0L;
+        }
+        if (items.size() > tree.totalNodeCount()) {
+            // Defensive: every cached entry is a distinct in-flow child of this container, so a
+            // list cannot be larger than the tree. Never let a bookkeeping mistake pin more.
+            return;
+        }
+        containerData.setGridItemCache(new GridItemCache(
+            items,
+            containerData.getContentVersion(),
+            containerData.getChildrenVersion(),
+            childVersions,
+            childInFlow,
+            containerDirection,
+            innerSize,
+            innerSizeIndependent
+        ));
+    }
+
+    /**
+     * Clears the per-pass results the grid layout stages fill into an item list before the list is
+     * handed out again. A fresh item starts at zero in every layout-result field and at its
+     * style-resolved padding/border/margin and parsed placement; a reused item must arrive in the
+     * same state, because {@code autoPlaceItems} assigns auto-positioned start lines,
+     * {@code resolveItemBaselines} writes baselines and shims, the re-run checks fill the
+     * contribution caches and {@code placeItems} re-resolves padding/border/margin and writes the
+     * final size, location, scrollable overflow and baseline.
+     */
+    private static void resetPerPassState(List<GridItem> items) {
+        for (int i = 0, size = items.size(); i < size; i++) {
+            GridItem item = items.get(i);
+            // Style-derived metadata, restored to the values the build resolved.
+            item.padding = item.basePadding;
+            item.border = item.baseBorder;
+            item.margin = item.baseMargin;
+            item.columnStart = item.baseColumnStart;
+            item.rowStart = item.baseRowStart;
+
+            // Layout results, back to the fresh-item defaults.
+            item.computedSize = new FloatSize(0f, 0f);
+            item.location = new FloatPoint(0f, 0f);
+            item.scrollableOverflow = ScrollableOverflow.ZERO;
+            item.baseline = NaN;
+            item.baselineShim = 0f;
+            item.yPosition = 0f;
+            item.crossesIntrinsicColumn = false;
+            item.crossesFlexibleColumn = false;
+            item.crossesIntrinsicRow = false;
+            item.crossesFlexibleRow = false;
+
+            // Track-sizing caches. They are only valid for one run of the track-sizing algorithm.
+            item.inlineContributionInputCache = null;
+            item.blockContributionInputCache = null;
+            item.knownDimensionsCacheGridArea = null;
+            item.knownDimensionsCache = null;
+            item.minContentContributionWidth = null;
+            item.minContentContributionHeight = null;
+            item.maxContentContributionWidth = null;
+            item.maxContentContributionHeight = null;
+            item.minimumContributionWidth = null;
+            item.minimumContributionHeight = null;
+        }
+    }
+
+    /**
+     * Whether any child-style value {@link #generateGridItems} resolves against the container's
+     * inner size can actually depend on it.
+     *
+     * <p>The build resolves the child's padding and border against the container's content-box
+     * width and its size/min-size/max-size and margin against the content-box size; a {@code
+     * length} ignores that basis, whereas a percentage or a {@code calc()} expression (which may
+     * embed one) does not. Style keywords and {@code auto} resolve to {@link Float#NaN} regardless
+     * of the basis, so they are basis-independent too. The inset is kept as a raw style and is
+     * resolved against the grid area later, so it does not affect the cached metadata.</p>
+     */
+    private static boolean hasInnerSizeDependentValues(TaffyStyle style) {
+        return rectDependsOnInnerSize(style.getPadding())
+               || rectDependsOnInnerSize(style.getBorder())
+               || sizeDependsOnInnerSize(style.getSize())
+               || sizeDependsOnInnerSize(style.getMinSize())
+               || sizeDependsOnInnerSize(style.getMaxSize())
+               || lpaRectDependsOnInnerSize(style.getMargin());
+    }
+
+    private static boolean rectDependsOnInnerSize(TaffyRect<LengthPercentage> rect) {
+        return rect.left.isPercent() || rect.left.isCalc()
+               || rect.right.isPercent() || rect.right.isCalc()
+               || rect.top.isPercent() || rect.top.isCalc()
+               || rect.bottom.isPercent() || rect.bottom.isCalc();
+    }
+
+    private static boolean lpaRectDependsOnInnerSize(TaffyRect<LengthPercentageAuto> rect) {
+        return rect.left.isPercent() || rect.left.isCalc()
+               || rect.right.isPercent() || rect.right.isCalc()
+               || rect.top.isPercent() || rect.top.isCalc()
+               || rect.bottom.isPercent() || rect.bottom.isCalc();
+    }
+
+    private static boolean sizeDependsOnInnerSize(TaffySize<TaffyDimension> size) {
+        return size.width.isPercent() || size.width.isCalc()
+               || size.height.isPercent() || size.height.isCalc();
+    }
+
+    /**
+     * Whether a {@code repeat(auto-fill, ...)} / {@code repeat(auto-fit, ...)} component makes the
+     * expanded template - and therefore the explicit grid line count and the resolved named lines
+     * - depend on the container's inner size. A fixed-count repetition does not.
+     */
+    private static boolean templateHasAutoRepeat(List<GridTemplateComponent> template) {
+        if (template == null) {
+            return false;
+        }
+        for (int i = 0, size = template.size(); i < size; i++) {
+            GridTemplateComponent component = template.get(i);
+            if (component.isRepeat() && component.getRepeat().isAutoRepetition()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a child contributes a {@link GridItem} to the container's in-flow item list:
+     * {@code display: none} children are skipped and out-of-flow children are built but not added.
+     * Only {@code order} (the child's index) is shared with the in-flow items, so an out-of-flow
+     * child's style can change without affecting them.
+     */
+    private static boolean isInFlowGridItem(TaffyStyle childStyle) {
+        return childStyle.getBoxGenerationMode() != BoxGenerationMode.NONE
+               && !childStyle.getPosition().isOutOfFlow();
     }
 
     /**

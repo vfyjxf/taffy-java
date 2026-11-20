@@ -83,6 +83,16 @@ public class NodeData {
     private FlexboxComputer.FlexItemCache flexItemCache;
 
     /**
+     * Cross-pass grid item-list cache owned by {@link GridComputer}, or {@code null} when this
+     * node has none (not a grid container, or invalidated).
+     *
+     * <p>Stored on the node for the same reason as {@link #blockItemCache}: the list must survive
+     * from one layout pass to the next. Package-private through the accessors below: this is
+     * internal layout state, not part of the public API.</p>
+     */
+    private GridComputer.GridItemCache gridItemCache;
+
+    /**
      * Returns the mutable child list of this node. Package-private: child links are owned and
      * mutated exclusively by {@link TaffyTree}; layout passes read it without a map lookup.
      */
@@ -107,6 +117,7 @@ public class NodeData {
         childrenVersion++;
         blockItemCache = null;
         flexItemCache = null;
+        gridItemCache = null;
     }
 
     /** Returns the cross-pass block item cache, or {@code null} when there is none. */
@@ -137,6 +148,21 @@ public class NodeData {
     /** Drops the cross-pass flex item list without touching any version stamp. */
     void clearFlexItemCache() {
         this.flexItemCache = null;
+    }
+
+    /** Returns the cross-pass grid item cache, or {@code null} when there is none. */
+    GridComputer.GridItemCache getGridItemCache() {
+        return gridItemCache;
+    }
+
+    /** Stores a freshly built cross-pass grid item list. */
+    void setGridItemCache(GridComputer.GridItemCache cache) {
+        this.gridItemCache = cache;
+    }
+
+    /** Drops the cross-pass grid item list without touching any version stamp. */
+    void clearGridItemCache() {
+        this.gridItemCache = null;
     }
     
     /** The always unrounded results of the layout computation */
@@ -201,6 +227,7 @@ public class NodeData {
         this.contentVersion++;
         this.blockItemCache = null;
         this.flexItemCache = null;
+        this.gridItemCache = null;
     }
 
     /**
@@ -349,6 +376,7 @@ public class NodeData {
         this.contentVersion++;
         this.blockItemCache = null;
         this.flexItemCache = null;
+        this.gridItemCache = null;
         return cache.clear();
     }
 
@@ -365,6 +393,7 @@ public class NodeData {
     boolean markDirtyForChildListChange() {
         this.blockItemCache = null;
         this.flexItemCache = null;
+        this.gridItemCache = null;
         return cache.clear();
     }
 
