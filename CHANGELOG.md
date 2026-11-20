@@ -133,6 +133,14 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   resolved direction, and the inner size when child styles contain percentages or
   calc. Reuse resets the per-pass flex sizing fields first, so cold layouts, resize
   and repeated measure/layout passes stop re-parsing and re-allocating every item.
+- Grid item lists are reused the same way. The pass-scoped list is keyed by the
+  container and inner size (size-independent when no percent/calc child values or
+  auto-repeat templates are involved) and is also cached on `NodeData` across
+  passes; out-of-flow children are compared by index only, so an animated badge
+  does not invalidate its host grid. Retained entries are bounded by the live node
+  count. Sizing, placement, baseline and contribution scratch fields are reset on
+  reuse.
+
 
 
 
