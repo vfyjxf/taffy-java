@@ -2021,7 +2021,10 @@ public class GridComputer {
     private List<GridItem> generateGridItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
                                              NamedLineResolver namedLineResolver) {
         TaffyTree tree = layoutComputer.getTree();
-        List<GridItem> items = new ArrayList<>();
+        // Sized up front: a grid container commonly has one item per child, and growing the list
+        // would copy it repeatedly for a large grid.
+        List<NodeId> children = tree.getChildren(node);
+        List<GridItem> items = new ArrayList<>(children.size());
 
         // Explicit track counts for negative line number resolution. They come from the resolver so
         // that in-flow items, absolutely positioned items and named-line fallbacks all number their
@@ -2030,7 +2033,7 @@ public class GridComputer {
         int explicitRowCount = namedLineResolver.getExplicitRowCount();
 
         int order = 0;
-        for (NodeId childId : tree.getChildren(node)) {
+        for (NodeId childId : children) {
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
@@ -5733,8 +5736,11 @@ public class GridComputer {
                 // - Vertical percentage margins resolve against the grid area's inline size
                 FloatSize marginAxisSums = item.getMarginAxisSumsWithBaselineShims(gridAreaSize.width);
 
-                // Compute known dimensions using the proper method that respects item's percentage sizes
-                FloatSize itemKnownDimensions = item.computeKnownDimensions(gridAreaSize);
+                // Compute known dimensions using the proper method that respects item's percentage sizes.
+                // The cached variant performs the same computation, and it is what this item's
+                // intrinsic contribution below uses, so the known dimensions of one grid area are
+                // resolved once per item instead of twice.
+                FloatSize itemKnownDimensions = item.computeKnownDimensionsCached(gridAreaSize);
 
                 // If item has explicit height (from its size or computed from aspect ratio)
                 if (!Float.isNaN(itemKnownDimensions.height)) {
