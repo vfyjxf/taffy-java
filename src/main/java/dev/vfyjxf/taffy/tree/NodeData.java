@@ -1,5 +1,6 @@
 package dev.vfyjxf.taffy.tree;
 
+import dev.vfyjxf.taffy.style.TaffyDirection;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 
 import java.util.ArrayList;
@@ -12,6 +13,24 @@ public class NodeData {
     
     /** The layout strategy used by this node */
     private TaffyStyle style;
+
+    /**
+     * Memoized resolved direction, valid only while {@link #resolvedDirectionEpoch} equals the
+     * owning tree's current direction epoch.
+     *
+     * <p>{@code direction} is an inherited CSS property: a node styled {@code INHERIT} takes the
+     * nearest ancestor's resolved direction (LTR when no ancestor states one). Resolving that
+     * parent chain on every query is O(depth) id-to-style lookups, and layout algorithms ask for
+     * every flex/grid/block child and every measured leaf, so the result is memoized here instead
+     * of being recomputed. The tree bumps its direction epoch when a layout pass starts and after
+     * every style or child-list change, and a stamp from any other epoch is ignored, so the cache
+     * self-invalidates without a descendant walk and nothing is ever written back to the style.
+     * Internal layout state only: not exposed through the public API.</p>
+     */
+    private TaffyDirection resolvedDirection = TaffyDirection.DEFAULT;
+
+    /** The direction epoch {@link #resolvedDirection} was computed for ({@code -1} when never). */
+    private long resolvedDirectionEpoch = -1L;
 
     /**
      * The children of this node, in layout order.
@@ -74,6 +93,32 @@ public class NodeData {
     
     public void setStyle(TaffyStyle style) {
         this.style = style;
+    }
+
+    /**
+     * Returns the memoized resolved direction.
+     *
+     * <p>The value is only meaningful while {@link #getResolvedDirectionEpoch()} equals the
+     * owning tree's current direction epoch; {@code TaffyTree} checks that stamp before using it.
+     * Package-private: the cache is layout-internal state, not part of the public API.</p>
+     */
+    TaffyDirection getResolvedDirection() {
+        return resolvedDirection;
+    }
+
+    /**
+     * Returns the direction epoch {@link #getResolvedDirection()} was computed for.
+     */
+    long getResolvedDirectionEpoch() {
+        return resolvedDirectionEpoch;
+    }
+
+    /**
+     * Memoizes a resolved direction for the given direction epoch.
+     */
+    void setResolvedDirection(TaffyDirection direction, long epoch) {
+        this.resolvedDirection = direction;
+        this.resolvedDirectionEpoch = epoch;
     }
     
     public Layout getUnroundedLayout() {
