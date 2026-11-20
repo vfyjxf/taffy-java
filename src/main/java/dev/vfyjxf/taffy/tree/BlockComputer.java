@@ -57,7 +57,10 @@ public class BlockComputer {
 
     /**
      * A shared all-zero rectangle, used by an item whose padding or border resolves to zero on
-     * every side. Only ever read: item geometry is never mutated after {@link #generateItemList}.
+     * every side, and for a reported {@code Layout.margin} whose four components are all zero.
+     * Only ever read: item geometry is never mutated after {@link #generateItemList}, and every
+     * consumer of a reported layout only reads its rectangles (rounding rebuilds them through
+     * {@code roundRect} instead of mutating them).
      */
     private static final FloatRect ZERO_RECT = new FloatRect(0f, 0f, 0f, 0f);
 
@@ -138,6 +141,41 @@ public class BlockComputer {
         TaffyPosition position;
         TaffyRect<LengthPercentageAuto> inset;
         TaffyRect<LengthPercentageAuto> margin;
+        /**
+         * The item's margins as pre-resolved at item-build time when their used value cannot
+         * depend on the containing block's content-box width, i.e. a {@code length} (kept as is)
+         * or an {@code auto}/intrinsic-keyword side (which resolves to nothing, so
+         * {@link Float#NaN}). A {@code percent} or {@code calc()} component does depend on that
+         * width and stays unresolved here; the matching {@code margin*Basis} flag says so.
+         *
+         * <p>Resolving them once per item instead of once per layout pass removes four
+         * {@link LengthPercentageAuto#maybeResolve} and two {@link LengthPercentageAuto#isAuto}
+         * calls per child from {@link #performFinalLayoutOnChildren}, which the block profile of
+         * {@code formPerFrameStyleChange} reported as the largest self-time there (P18). The
+         * values are style-derived item metadata, so they are immutable for the lifetime of the
+         * item and reset by nothing in {@link #resetPerPassState}.</p>
+         */
+        float marginLeft = NaN;
+        float marginRight = NaN;
+        float marginTop = NaN;
+        float marginBottom = NaN;
+        /**
+         * Whether the matching margin side is {@code auto}: the resolved used value is only known
+         * after layout (an auto inline-axis margin absorbs the free space).
+         */
+        boolean marginLeftIsAuto;
+        boolean marginRightIsAuto;
+        /** Whether the matching margin side still needs the container's inner width at layout time. */
+        boolean marginLeftNeedsInnerWidth;
+        boolean marginRightNeedsInnerWidth;
+        boolean marginTopNeedsInnerWidth;
+        boolean marginBottomNeedsInnerWidth;
+        /**
+         * Whether all four margins were pre-resolved, i.e. the layout-time margin resolution reads
+         * the four primitives and never touches the style object. This is the common case (a
+         * child with plain lengths or no margins at all).
+         */
+        boolean marginsPreResolved;
         FloatRect padding;
         FloatRect border;
         FloatSize paddingBorderSum;
@@ -814,7 +852,10 @@ public class BlockComputer {
             float groupOffset = blockAlignContentOffset(alignContent, freeSpace);
 
             if (groupOffset != 0f) {
-                for (BlockItem item : items) {
+                // Index access: the item list is an ArrayList, so the hot loops avoid an
+                // iterator allocation and its per-element concurrent-modification check (P18).
+                for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+                    BlockItem item = items.get(itemIndex);
                     if (item.finalLayout != null) {
                         Layout shifted = item.finalLayout.copy();
                         shifted.location().y += groupOffset;
@@ -881,7 +922,9 @@ public class BlockComputer {
         // Commit the deferred in-flow layouts. This must stay *after* the ComputeSize return
         // above: measuring a node must never write layout state to the tree.
         // Upstream #971 (BK-01).
-        for (BlockItem item : items) {
+        // Index access: see the note on the align-content shift loop above (P18).
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (item.finalLayout != null) {
                 tree.setUnroundedLayout(item.nodeId, item.finalLayout);
             }
@@ -973,13 +1016,26 @@ public class BlockComputer {
         // measured from the client area (#1007): the reachable content extent then excludes the
         // leading border, which is exactly the term the symmetric scroll-size formula adds back.
         // Upstream #1007. 2.0 removes the component entirely.
-        FloatSize inFlowContentSize = FloatSize.zero();
-        for (BlockItem item : items) {
+        // The running maximum is kept as two primitives: ContentSizeUtil.max would allocate one
+        // FloatSize per in-flow child, and the legacy content size is only needed as a value at
+        // the end of this loop. A NaN contribution counts as zero, exactly as ContentSizeUtil
+        // sanitises it. P18.
+        float inFlowContentWidth = 0f;
+        float inFlowContentHeight = 0f;
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             Layout childLayout = item.finalLayout;
             // Out-of-flow children were accumulated by the absolute pass above.
             if (childLayout == null) continue;
 
             FloatRect childMargin = childLayout.margin();
+            // Block layout hands only the non-positive part of the child's margin to the overflow
+            // contribution, and a box without negative margins contributes the shared zero
+            // rectangle instead of a fresh one (the consumer only reads it). P18.
+            float overflowMarginLeft = nonPositive(childMargin.left);
+            float overflowMarginRight = nonPositive(childMargin.right);
+            float overflowMarginTop = nonPositive(childMargin.top);
+            float overflowMarginBottom = nonPositive(childMargin.bottom);
             accumulatedOverflow = ScrollableOverflowUtil.union(
                 accumulatedOverflow,
                 ScrollableOverflowUtil.computeContribution(
@@ -992,19 +1048,23 @@ public class BlockComputer {
                     childLayout.border(),
                     item.overflow,
                     inFlowOverflowContainer,
-                    new FloatRect(
-                        nonPositive(childMargin.left),
-                        nonPositive(childMargin.right),
-                        nonPositive(childMargin.top),
-                        nonPositive(childMargin.bottom)
-                    )
+                    overflowMarginLeft == 0f && overflowMarginRight == 0f
+                        && overflowMarginTop == 0f && overflowMarginBottom == 0f
+                    ? ZERO_RECT
+                    : new FloatRect(
+                        overflowMarginLeft, overflowMarginRight,
+                        overflowMarginTop, overflowMarginBottom)
                 )
             );
 
-            inFlowContentSize = ContentSizeUtil.max(inFlowContentSize,
-                contentSizeContribution(childLayout, item.overflow, rtl, containerOuterWidth,
-                    resolvedBorder, scrollbarGutter));
+            FloatSize contribution = contentSizeContribution(
+                childLayout, item.overflow, rtl, containerOuterWidth, resolvedBorder, scrollbarGutter);
+            float contributionWidth = Float.isNaN(contribution.width) ? 0f : contribution.width;
+            float contributionHeight = Float.isNaN(contribution.height) ? 0f : contribution.height;
+            if (contributionWidth > inFlowContentWidth) inFlowContentWidth = contributionWidth;
+            if (contributionHeight > inFlowContentHeight) inFlowContentHeight = contributionHeight;
         }
+        FloatSize inFlowContentSize = new FloatSize(inFlowContentWidth, inFlowContentHeight);
 
         // A scroll container's own end padding is part of its reachable region: the start padding
         // is already covered by the child positions, the end padding is not. A non-scroll box does
@@ -1214,7 +1274,28 @@ public class BlockComputer {
             item.scrollbarWidth = childStyle.getScrollbarWidth();
             item.position = childStyle.getPosition();
             item.inset = childStyle.getInset();
-            item.margin = childStyle.getMargin();
+            TaffyRect<LengthPercentageAuto> itemMargin = childStyle.getMargin();
+            item.margin = itemMargin;
+            // Classify the four margin sides once, here, instead of resolving them on every layout
+            // pass: only a percent or calc() component needs the containing block's width (a
+            // container-specific basis), while a length is its own value and auto/intrinsic
+            // components resolve to nothing. The layout-time resolution in
+            // performFinalLayoutOnChildren then reads the primitives alone whenever no side needs
+            // the basis. P18.
+            item.marginLeftNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.left);
+            item.marginRightNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.right);
+            item.marginTopNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.top);
+            item.marginBottomNeedsInnerWidth = marginNeedsInnerWidth(itemMargin.bottom);
+            item.marginLeft = item.marginLeftNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.left);
+            item.marginRight = item.marginRightNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.right);
+            item.marginTop = item.marginTopNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.top);
+            item.marginBottom = item.marginBottomNeedsInnerWidth ? NaN : staticMarginValue(itemMargin.bottom);
+            item.marginLeftIsAuto = itemMargin.left.isAuto();
+            item.marginRightIsAuto = itemMargin.right.isAuto();
+            item.marginsPreResolved = !item.marginLeftNeedsInnerWidth
+                                      && !item.marginRightNeedsInnerWidth
+                                      && !item.marginTopNeedsInnerWidth
+                                      && !item.marginBottomNeedsInnerWidth;
             item.heightStyle = childSize.height;
             item.widthStyle = childSize.width;
             item.aspectRatio = aspectRatio;
@@ -1352,12 +1433,13 @@ public class BlockComputer {
         FloatContext.IntrinsicWidthCalculator floatCalculator =
             new FloatContext.IntrinsicWidthCalculator(availableWidth);
 
-        for (BlockItem item : items) {
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (item.position.isOutOfFlow()) continue;
 
             FloatSize knownDimensions = maybeClamp(item.size, item.minSize, item.maxSize);
-            float marginSum = resolveMarginSumOrZero(
-                item.margin, availableWidth.isDefinite() ? availableWidth.getValue() : NaN);
+            float marginSum = resolveInlineMarginSum(
+                item, availableWidth.isDefinite() ? availableWidth.getValue() : NaN);
 
             // An inline size derived from the block size through a preferred aspect ratio is not a
             // specified width: the item still contributes its content, floored by the transferred
@@ -1503,7 +1585,11 @@ public class BlockComputer {
         // Check RTL once at the start
         boolean isRtl = direction != null && direction.isRtl();
 
-        for (BlockItem item : items) {
+        // Index access on the ArrayList item list: this is the per-child hot loop of block
+        // layout, so it avoids the iterator allocation and its per-element concurrent-modification
+        // check. P18.
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (item.position.isOutOfFlow()) {
                 // The static-position rectangle of an out-of-flow child spans the container's
                 // content box in the inline axis, and is a zero-height line at the child's
@@ -1534,25 +1620,40 @@ public class BlockComputer {
                 continue;
             }
 
-            // Resolve margins once.
+            // Resolve margins.
             //
             // Percentage (auto-margin-free) margins resolve against the containing block's
             // inline size, i.e. this container's *content box* width, not its outer width.
             // BK-21 / upstream #990 (86d93d95).
             //
-            // The resolved values are kept as primitives because three consumers read them: the
-            // geometry the box is laid out with (stretch height, BFC slot search, sub-context
-            // insets), the margin-collapse sets, and the {@code Layout.margin} reported back to
-            // the tree. Only the last one needs a rectangle, and only after the used size of an
-            // auto margin is known, so nothing is materialised before then. An auto (or
-            // unresolvable) component stays {@link Float#NaN} until that point.
-            TaffyRect<LengthPercentageAuto> marginStyle = item.margin;
-            boolean autoMarginLeft = marginStyle.left.isAuto();
-            boolean autoMarginRight = marginStyle.right.isAuto();
-            float marginLeft = autoMarginLeft ? NaN : marginStyle.left.maybeResolve(containerInnerWidth);
-            float marginRight = autoMarginRight ? NaN : marginStyle.right.maybeResolve(containerInnerWidth);
-            float marginTop = marginStyle.top.isAuto() ? NaN : marginStyle.top.maybeResolve(containerInnerWidth);
-            float marginBottom = marginStyle.bottom.isAuto() ? NaN : marginStyle.bottom.maybeResolve(containerInnerWidth);
+            // The classification and all basis-independent values were captured when the item was
+            // built (see #generateItemList), so a child with plain lengths, auto margins or no
+            // margins at all reads four primitives here and never touches the style object; only a
+            // percent or calc() side resolves against the content-box width. An auto (or
+            // unresolvable) component stays {@link Float#NaN} until its used value is known.
+            // P18.
+            float marginLeft;
+            float marginRight;
+            float marginTop;
+            float marginBottom;
+            if (item.marginsPreResolved) {
+                marginLeft = item.marginLeft;
+                marginRight = item.marginRight;
+                marginTop = item.marginTop;
+                marginBottom = item.marginBottom;
+            } else {
+                TaffyRect<LengthPercentageAuto> marginStyle = item.margin;
+                marginLeft = item.marginLeftNeedsInnerWidth
+                             ? marginStyle.left.maybeResolve(containerInnerWidth) : item.marginLeft;
+                marginRight = item.marginRightNeedsInnerWidth
+                              ? marginStyle.right.maybeResolve(containerInnerWidth) : item.marginRight;
+                marginTop = item.marginTopNeedsInnerWidth
+                            ? marginStyle.top.maybeResolve(containerInnerWidth) : item.marginTop;
+                marginBottom = item.marginBottomNeedsInnerWidth
+                               ? marginStyle.bottom.maybeResolve(containerInnerWidth) : item.marginBottom;
+            }
+            boolean autoMarginLeft = item.marginLeftIsAuto;
+            boolean autoMarginRight = item.marginRightIsAuto;
             // Placement uses the non-auto margins only: an auto margin contributes nothing to the
             // box's outer size until it is resolved to its used value after layout.
             float nonAutoMarginLeft = Float.isNaN(marginLeft) ? 0f : marginLeft;
@@ -1639,10 +1740,7 @@ public class BlockComputer {
                     y += relativeInsetY(item.inset, childPercentageResolutionHeight);
                 }
 
-                FloatSize scrollbarSize = new FloatSize(
-                    item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                    item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-                );
+                FloatSize scrollbarSize = scrollbarSize(item);
                 item.finalLayout = new Layout(
                     item.order,
                     new FloatPoint(x, y),
@@ -1948,12 +2046,16 @@ public class BlockComputer {
             // not the box's own margin; reporting them leaked the parent's collapsed margin into
             // the child's margin. Auto margins report 0 here: the resolved auto size is only
             // consumed by the positioning maths. BK-10 / upstream #1287.
-            FloatRect resolvedMargin = new FloatRect(
-                Float.isNaN(marginLeft) ? xAxisAutoMarginSize : marginLeft,
-                Float.isNaN(marginRight) ? xAxisAutoMarginSize : marginRight,
-                nonAutoMarginTop,
-                nonAutoMarginBottom
-            );
+            float resolvedMarginLeft = Float.isNaN(marginLeft) ? xAxisAutoMarginSize : marginLeft;
+            float resolvedMarginRight = Float.isNaN(marginRight) ? xAxisAutoMarginSize : marginRight;
+            // A box whose four reported margin components are all zero shares the read-only zero
+            // rectangle with the other zero geometry it already receives (padding/border), instead
+            // of allocating one per child. P18.
+            FloatRect resolvedMargin = resolvedMarginLeft == 0f && resolvedMarginRight == 0f
+                                       && nonAutoMarginTop == 0f && nonAutoMarginBottom == 0f
+                                       ? ZERO_RECT
+                                       : new FloatRect(resolvedMarginLeft, resolvedMarginRight,
+                                                       nonAutoMarginTop, nonAutoMarginBottom);
 
             // Resolve item inset. Only `position: relative` applies its inset as a correction
             // offset. Static and sticky boxes are laid out in normal flow without a relative
@@ -2091,10 +2193,7 @@ public class BlockComputer {
                     itemOutput, y - insetOffsetY, item.overflow.y.isScrollContainer());
             }
 
-            FloatSize scrollbarSize = new FloatSize(
-                item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-            );
+            FloatSize scrollbarSize = scrollbarSize(item);
 
             // The child's own scrollable overflow is carried into its layout so that this
             // container can fold it into its own contribution (SO-01): the value is relative to
@@ -2239,7 +2338,8 @@ public class BlockComputer {
         FloatRect accumulatedOverflow = FloatRect.zero();
         FloatSize contentSize = FloatSize.zero();
 
-        for (BlockItem item : items) {
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (!item.position.isOutOfFlow()) continue;
 
             TaffyStyle childStyle = tree.getStyle(item.nodeId);
@@ -2518,10 +2618,7 @@ public class BlockComputer {
                 containerOverflow.y.isScrollContainer()
             ));
 
-            FloatSize scrollbarSize = new FloatSize(
-                item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-            );
+            FloatSize scrollbarSize = scrollbarSize(item);
 
             Layout layout = new Layout(
                 item.order,
@@ -2928,6 +3025,28 @@ public class BlockComputer {
     // Helper methods
 
     /**
+     * Whether a margin component's used value depends on the containing block's content-box width.
+     *
+     * <p>Only a {@code percent} component scales with that width and only a {@code calc()}
+     * expression can embed one, so those two stay unresolved until layout. A {@code length} is its
+     * own value and {@code auto}/intrinsic keywords resolve to nothing, both independent of the
+     * basis. {@code CalcExpression} has no basis-dependence query (it only exposes
+     * {@code resolve(float)}), so every {@code calc()} is conservatively treated as dependent.</p>
+     */
+    private static boolean marginNeedsInnerWidth(LengthPercentageAuto margin) {
+        return margin.isPercent() || margin.isCalc();
+    }
+
+    /**
+     * The basis-independent value of a margin component: the length itself, or {@link Float#NaN}
+     * for {@code auto} and the intrinsic sizing keywords, which are exactly the values
+     * {@link LengthPercentageAuto#maybeResolve(float)} returns for any basis.
+     */
+    private static float staticMarginValue(LengthPercentageAuto margin) {
+        return margin.isLength() ? margin.getValue() : NaN;
+    }
+
+    /**
      * Resolves a padding/border rectangle against the container's content-box width, returning the
      * shared {@link #ZERO_RECT} when every side is a zero length.
      *
@@ -2944,6 +3063,20 @@ public class BlockComputer {
 
     private static boolean isZeroLength(LengthPercentage value) {
         return value == LengthPercentage.ZERO || (value.isLength() && value.getValue() == 0f);
+    }
+
+    /**
+     * The item's scrollbar size, or the shared {@link #ZERO_SIZE} when neither axis reserves a
+     * gutter.
+     *
+     * <p>Most boxes do not scroll, so the common case avoids one {@link FloatSize} per reported
+     * {@link Layout}. The constant is the same read-only one this class already reports as a
+     * zero padding/border sum. P18.</p>
+     */
+    private static FloatSize scrollbarSize(BlockItem item) {
+        float width = item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f;
+        float height = item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f;
+        return width == 0f && height == 0f ? ZERO_SIZE : new FloatSize(width, height);
     }
 
     /**
@@ -3051,9 +3184,22 @@ public class BlockComputer {
         return available;
     }
 
-    private float resolveMarginSumOrZero(TaffyRect<LengthPercentageAuto> margin, float contextWidth) {
-        float left = margin.left.isAuto() ? 0f : margin.left.resolveOrZero(contextWidth);
-        float right = margin.right.isAuto() ? 0f : margin.right.resolveOrZero(contextWidth);
+    /**
+     * Resolves an item's inline-axis margin sum against {@code contextWidth}, returning zero for
+     * every component that resolves to nothing.
+     *
+     * <p>Reads the pre-resolved primitives for a side whose value cannot depend on a basis (a
+     * length, {@code auto} or an intrinsic keyword); only a percent or calc() side resolves here.
+     * The result equals the {@code resolveOrZero} sum of the style values, with {@code auto}
+     * counting as zero. P18.</p>
+     */
+    private static float resolveInlineMarginSum(BlockItem item, float contextWidth) {
+        float left = item.marginLeftNeedsInnerWidth
+                     ? item.margin.left.resolveOrZero(contextWidth)
+                     : (Float.isNaN(item.marginLeft) ? 0f : item.marginLeft);
+        float right = item.marginRightNeedsInnerWidth
+                      ? item.margin.right.resolveOrZero(contextWidth)
+                      : (Float.isNaN(item.marginRight) ? 0f : item.marginRight);
         return left + right;
     }
 }
