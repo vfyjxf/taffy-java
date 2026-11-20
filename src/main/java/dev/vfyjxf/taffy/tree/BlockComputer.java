@@ -1892,9 +1892,11 @@ public class BlockComputer {
             float top = insetStyle.top.maybeResolve(areaHeight);
             float bottom = insetStyle.bottom.maybeResolve(areaHeight);
 
-            // Compute size from style
+            // Compute size from style. The aspect ratio is applied after the specified size has
+            // been clamped in its own axis, and min/max are not transferred across axes (see the
+            // note in compute()).
             FloatSize size2 = Resolve.maybeResolveSize(childStyle.getSize(), new FloatSize(areaWidth, areaHeight));
-            FloatSize styleSize = maybeAdd(Resolve.maybeApplyAspectRatio(size2, aspectRatio), boxSizingAdj);
+            FloatSize styleSize = maybeAdd(size2, boxSizingAdj);
             FloatSize size1 = Resolve.maybeResolveSize(childStyle.getMinSize(), new FloatSize(areaWidth, areaHeight));
             FloatSize minSz = maybeAdd(Resolve.maybeApplyAspectRatio(size1, aspectRatio), boxSizingAdj);
             minSz = maybeMax(minSz, paddingBorderSum);
@@ -1902,6 +1904,38 @@ public class BlockComputer {
             FloatSize maxSz = maybeAdd(Resolve.maybeApplyAspectRatio(size, aspectRatio), boxSizingAdj);
 
             FloatSize knownDimensions = maybeClamp(styleSize, minSz, maxSz);
+            // A missing axis is transferred through the ratio from the other axis' used size. When
+            // the other axis is not specified either, a definite max constraint is used as the
+            // basis: an absolutely positioned box with `max-height: 100%` and no size transfers
+            // that bound into its inline size (WPT abspos-008/014).
+            boolean widthFromAspectRatio = false;
+            boolean heightFromAspectRatio = false;
+            if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
+                // A percentage max constraint also acts as a definite used size when no size is
+                // specified: an absolutely positioned box with `max-height: 100%` and no height
+                // transfers that bound into its inline size (WPT abspos-008/014). A length max
+                // constraint is only a cap and does not transfer (the generated upstream
+                // block_absolute_aspect_ratio_fill_max_* fixtures pin that behaviour).
+                float basisWidth = knownDimensions.width;
+                float basisHeight = knownDimensions.height;
+                if (Float.isNaN(basisHeight) && childStyle.getMaxSize().height.isPercent()) {
+                    basisHeight = maxSz.height;
+                }
+                if (Float.isNaN(basisWidth) && childStyle.getMaxSize().width.isPercent()) {
+                    basisWidth = maxSz.width;
+                }
+                FloatSize contentBasis = new FloatSize(basisWidth - boxSizingAdj.width,
+                    basisHeight - boxSizingAdj.height);
+                FloatSize transferred = maybeAdd(
+                    Resolve.maybeApplyAspectRatio(contentBasis, aspectRatio), boxSizingAdj);
+                FloatSize next = new FloatSize(
+                    !Float.isNaN(knownDimensions.width) ? knownDimensions.width : transferred.width,
+                    !Float.isNaN(knownDimensions.height) ? knownDimensions.height : transferred.height
+                );
+                widthFromAspectRatio = Float.isNaN(knownDimensions.width) && !Float.isNaN(next.width);
+                heightFromAspectRatio = Float.isNaN(knownDimensions.height) && !Float.isNaN(next.height);
+                knownDimensions = maybeMax(maybeClamp(next, minSz, maxSz), paddingBorderSum);
+            }
 
             // For calculating width from inset, use non-auto margins only
             float nonAutoMarginLeft = Float.isNaN(marginOpt.left) ? 0f : marginOpt.left;
@@ -1941,6 +1975,56 @@ public class BlockComputer {
                 SizingMode.CONTENT_SIZE,
                 new TaffyLine<>(false, false)
             );
+
+            // css-sizing-4 automatic minimum size, out-of-flow flavour: an axis transferred
+            // through the ratio is floored by the content-based minimum (min-content inline, the
+            // content height in the block axis) unless an explicit min-size overrides it.
+            // WPT abspos-012/013 need the content floors, abspos-008/014 the transferred bound.
+            boolean autoMinimumSizeApplies =
+                !childStyle.getOverflow().x.isScrollContainer()
+                && !childStyle.getOverflow().y.isScrollContainer();
+            FloatSize knownWithFloor = knownDimensions;
+            if (widthFromAspectRatio
+                && autoMinimumSizeApplies
+                && (Float.isNaN(minSz.width) || minSz.width <= paddingBorderSum.width)) {
+                FloatSize minContent = layoutComputer.measureChildSize(
+                    item.nodeId,
+                    new FloatSize(NaN, NaN),
+                    new FloatSize(areaWidth, areaHeight),
+                    new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
+                    SizingMode.INHERENT_SIZE,
+                    new TaffyLine<>(false, false)
+                );
+                if (!Float.isNaN(minContent.width)) {
+                    knownWithFloor = new FloatSize(
+                        Math.max(Math.max(knownWithFloor.width, minContent.width), paddingBorderSum.width),
+                        knownWithFloor.height);
+                }
+            }
+            if (heightFromAspectRatio
+                && autoMinimumSizeApplies
+                && (Float.isNaN(minSz.height) || minSz.height <= paddingBorderSum.height)) {
+                FloatSize contentHeightProbe = layoutComputer.measureChildSize(
+                    item.nodeId,
+                    new FloatSize(!Float.isNaN(knownWithFloor.width) ? knownWithFloor.width : NaN, NaN),
+                    new FloatSize(areaWidth, areaHeight),
+                    new TaffySize<>(
+                        !Float.isNaN(knownWithFloor.width)
+                            ? AvailableSpace.definite(knownWithFloor.width)
+                            : AvailableSpace.maxContent(),
+                        AvailableSpace.maxContent()),
+                    SizingMode.INHERENT_SIZE,
+                    new TaffyLine<>(false, false)
+                );
+                if (!Float.isNaN(contentHeightProbe.height)) {
+                    knownWithFloor = new FloatSize(knownWithFloor.width,
+                        Math.max(Math.max(knownWithFloor.height, contentHeightProbe.height),
+                            paddingBorderSum.height));
+                }
+            }
+            knownDimensions = maybeClamp(knownWithFloor, minSz, maxSz);
+            knownDimensions = new FloatSize(Math.max(knownDimensions.width, paddingBorderSum.width),
+                Math.max(knownDimensions.height, paddingBorderSum.height));
 
             FloatSize finalSize = maybeClamp(
                 new FloatSize(
