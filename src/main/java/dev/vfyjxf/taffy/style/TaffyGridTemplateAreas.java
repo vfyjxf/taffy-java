@@ -15,7 +15,13 @@ import java.util.Objects;
  * template size therefore cannot be derived from the named areas alone; this type carries it
  * explicitly.
  * <p>
- * This is the additive counterpart of upstream taffy's {@code grid-template-areas} struct
+ * <p><b>Name.</b> The {@code Taffy} prefix follows the same collision-driven convention as
+ * {@link TaffyFloat}, {@link TaffyDimension} and {@link TaffyPosition}: a top-level
+ * {@code GridTemplateAreas} would be ambiguous with consumer types under
+ * {@code import dev.vfyjxf.taffy.style.*} (the LDLib2 regression found exactly that), just as
+ * {@code Float} would shadow {@link java.lang.Float}.
+ *
+ * <p>This is the additive counterpart of upstream taffy's {@code grid-template-areas} struct
  * (upstream #1024 / GR-16). {@link TaffyStyle#gridTemplateAreas} keeps its historical
  * {@code List<GridTemplateArea>} type for source and binary compatibility, so the template size is
  * carried by two extra fields on the style ({@link TaffyStyle#gridTemplateAreaRowCount} and
