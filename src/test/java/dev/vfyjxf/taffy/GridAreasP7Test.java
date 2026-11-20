@@ -6,7 +6,7 @@ import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.GridPlacement;
 import dev.vfyjxf.taffy.style.GridTemplateArea;
-import dev.vfyjxf.taffy.style.TaffyGridTemplateAreas;
+import dev.vfyjxf.taffy.style.GridTemplateAreas;
 import dev.vfyjxf.taffy.style.LengthPercentage;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * extending past the track template.
  *
  * <p>Upstream taffy #1024 ({@code 9d1c5ca}) replaced {@code Style::grid_template_areas:
- * Vec<GridTemplateArea>} with {@code Option<TaffyGridTemplateAreas>}, where the new struct bundles the
+ * Vec<GridTemplateArea>} with {@code Option<GridTemplateAreas>}, where the new struct bundles the
  * named areas with the overall size of the area template ({@code row_count}/{@code column_count}).
  * The size cannot be derived from the named areas because unnamed ({@code .}) cells still create
  * explicit tracks (e.g. {@code "a ."} is a one row by two column template), and the resolver now
@@ -41,9 +41,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>The Java API keeps {@link TaffyStyle#gridTemplateAreas} as a {@code List<GridTemplateArea>}
  * for source/binary compatibility (JCC), so the template size is additive:
- * {@link TaffyGridTemplateAreas} is the value type and
+ * {@link GridTemplateAreas} is the value type and
  * {@link TaffyStyle#gridTemplateAreaRowCount}/{@link TaffyStyle#gridTemplateAreaColumnCount} carry
- * the size (default {@link TaffyGridTemplateAreas#DERIVE} = derive from the named areas, the pre-GR-16
+ * the size (default {@link GridTemplateAreas#DERIVE} = derive from the named areas, the pre-GR-16
  * behavior). The tests below pin the new behavior, and compare it with the legacy derived-size
  * behavior where the two differ (old/new is noted in each such test).</p>
  */
@@ -128,43 +128,43 @@ class GridAreasP7Test {
     @Test
     void templateCarriesItsSizeIndependentlyOfTheNamedAreas() {
         GridTemplateArea area = new GridTemplateArea("a", 1, 2, 1, 2);
-        TaffyGridTemplateAreas template = new TaffyGridTemplateAreas(List.of(area), 1, 2);
+        GridTemplateAreas template = new GridTemplateAreas(List.of(area), 1, 2);
 
         assertEquals(List.of(area), template.getAreas());
         assertEquals(1, template.getRowCount());
         assertEquals(2, template.getColumnCount());
-        assertEquals(new TaffyGridTemplateAreas(List.of(area), 1, 2), template);
-        assertEquals(new TaffyGridTemplateAreas(List.of(area), 1, 2).hashCode(), template.hashCode());
-        assertNotEquals(template, new TaffyGridTemplateAreas(List.of(area), 1, 3));
-        assertNotEquals(template, new TaffyGridTemplateAreas(List.of(area), 2, 2));
+        assertEquals(new GridTemplateAreas(List.of(area), 1, 2), template);
+        assertEquals(new GridTemplateAreas(List.of(area), 1, 2).hashCode(), template.hashCode());
+        assertNotEquals(template, new GridTemplateAreas(List.of(area), 1, 3));
+        assertNotEquals(template, new GridTemplateAreas(List.of(area), 2, 2));
         assertTrue(template.toString().contains("rows=1"), template.toString());
         assertTrue(template.toString().contains("columns=2"), template.toString());
 
         // Deriving from the extents is the legacy behavior, and is what an unset size uses.
-        assertEquals(1, TaffyGridTemplateAreas.derivedRowCount(List.of(area)));
-        assertEquals(1, TaffyGridTemplateAreas.derivedColumnCount(List.of(area)));
-        assertEquals(new TaffyGridTemplateAreas(List.of(area), 1, 1), TaffyGridTemplateAreas.fromAreas(List.of(area)));
+        assertEquals(1, GridTemplateAreas.derivedRowCount(List.of(area)));
+        assertEquals(1, GridTemplateAreas.derivedColumnCount(List.of(area)));
+        assertEquals(new GridTemplateAreas(List.of(area), 1, 1), GridTemplateAreas.fromAreas(List.of(area)));
         // A non-positive area line contributes zero (upstream's row_end.max(1) - 1).
-        assertEquals(0, TaffyGridTemplateAreas.derivedRowCount(List.of(new GridTemplateArea("z", 1, 0, 1, 0))));
+        assertEquals(0, GridTemplateAreas.derivedRowCount(List.of(new GridTemplateArea("z", 1, 0, 1, 0))));
 
         // "." cells: a template can have a size with no named area at all.
-        TaffyGridTemplateAreas dots = new TaffyGridTemplateAreas(List.of(), 2, 3);
+        GridTemplateAreas dots = new GridTemplateAreas(List.of(), 2, 3);
         assertEquals(2, dots.getRowCount());
         assertEquals(3, dots.getColumnCount());
-        assertEquals(TaffyGridTemplateAreas.empty(), TaffyGridTemplateAreas.fromAreas(null));
-        assertEquals(new TaffyGridTemplateAreas(null, 0, 0), TaffyGridTemplateAreas.empty());
+        assertEquals(GridTemplateAreas.empty(), GridTemplateAreas.fromAreas(null));
+        assertEquals(new GridTemplateAreas(null, 0, 0), GridTemplateAreas.empty());
 
         // The areas list is copied defensively and cannot be mutated through the value.
         List<GridTemplateArea> areas = new ArrayList<>(List.of(area));
-        TaffyGridTemplateAreas copied = new TaffyGridTemplateAreas(areas, 1, 1);
+        GridTemplateAreas copied = new GridTemplateAreas(areas, 1, 1);
         areas.add(new GridTemplateArea("b", 2, 3, 1, 2));
         assertEquals(1, copied.getAreas().size());
         assertThrows(UnsupportedOperationException.class, () -> copied.getAreas().add(area));
 
-        assertThrows(IllegalArgumentException.class, () -> new TaffyGridTemplateAreas(List.of(), -1, 1));
-        assertThrows(IllegalArgumentException.class, () -> new TaffyGridTemplateAreas(List.of(), 1, -1));
+        assertThrows(IllegalArgumentException.class, () -> new GridTemplateAreas(List.of(), -1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new GridTemplateAreas(List.of(), 1, -1));
         assertThrows(IllegalArgumentException.class,
-            () -> new TaffyGridTemplateAreas(Arrays.asList((GridTemplateArea) null), 1, 1));
+            () -> new GridTemplateAreas(Arrays.asList((GridTemplateArea) null), 1, 1));
     }
 
     /**
@@ -174,8 +174,8 @@ class GridAreasP7Test {
     @Test
     void styleDerivesTheTemplateSizeUntilItIsSet() {
         TaffyStyle style = new TaffyStyle();
-        assertEquals(TaffyGridTemplateAreas.DERIVE, style.gridTemplateAreaRowCount);
-        assertEquals(TaffyGridTemplateAreas.DERIVE, style.gridTemplateAreaColumnCount);
+        assertEquals(GridTemplateAreas.DERIVE, style.gridTemplateAreaRowCount);
+        assertEquals(GridTemplateAreas.DERIVE, style.gridTemplateAreaColumnCount);
         assertEquals(0, style.getGridTemplateAreaRowCount());
         assertEquals(0, style.getGridTemplateAreaColumnCount());
 
@@ -185,10 +185,10 @@ class GridAreasP7Test {
             new GridTemplateArea("tall", 4, 6, 1, 2));
         assertEquals(5, style.getGridTemplateAreaRowCount());
         assertEquals(4, style.getGridTemplateAreaColumnCount());
-        assertEquals(TaffyGridTemplateAreas.fromAreas(style.gridTemplateAreas), style.getGridTemplateAreaTemplate());
+        assertEquals(GridTemplateAreas.fromAreas(style.gridTemplateAreas), style.getGridTemplateAreaTemplate());
 
         // Additive path: the template size is explicit and wins over the extents.
-        TaffyGridTemplateAreas template = new TaffyGridTemplateAreas(style.gridTemplateAreas, 7, 6);
+        GridTemplateAreas template = new GridTemplateAreas(style.gridTemplateAreas, 7, 6);
         style.setGridTemplateAreaTemplate(template);
         assertEquals(7, style.getGridTemplateAreaRowCount());
         assertEquals(6, style.getGridTemplateAreaColumnCount());
@@ -203,7 +203,7 @@ class GridAreasP7Test {
         assertEquals(template, copy.getGridTemplateAreaTemplate());
 
         // 0 is a real template size (an empty template), distinct from the DERIVE sentinel.
-        style.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(style.gridTemplateAreas, 0, 0));
+        style.setGridTemplateAreaTemplate(new GridTemplateAreas(style.gridTemplateAreas, 0, 0));
         assertEquals(0, style.gridTemplateAreaRowCount);
         assertEquals(0, style.getGridTemplateAreaRowCount());
         assertEquals(0, style.getGridTemplateAreaColumnCount());
@@ -213,7 +213,7 @@ class GridAreasP7Test {
         assertEquals(0, style.getGridTemplateAreaRowCount());
         assertEquals(0, style.getGridTemplateAreaColumnCount());
         assertTrue(style.gridTemplateAreas.isEmpty());
-        assertEquals(TaffyGridTemplateAreas.empty(), style.getGridTemplateAreaTemplate());
+        assertEquals(GridTemplateAreas.empty(), style.getGridTemplateAreaTemplate());
     }
 
     /**
@@ -236,7 +236,7 @@ class GridAreasP7Test {
         assertEquals(4, style.getGridTemplateAreaColumnCount());
         assertEquals(5, style.getGridTemplateAreaRowCount());
 
-        style.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(style.gridTemplateAreas, 7, 8));
+        style.setGridTemplateAreaTemplate(new GridTemplateAreas(style.gridTemplateAreas, 7, 8));
         assertEquals(8, style.getGridTemplateAreaColumnCount());
         assertEquals(7, style.getGridTemplateAreaRowCount());
     }
@@ -250,7 +250,7 @@ class GridAreasP7Test {
     void areaLinesSaturateWhenConvertedToGridLines() {
         TaffyStyle style = new TaffyStyle();
         style.gridTemplateAreas = List.of(new GridTemplateArea("area", 1, 2, 65_535, 65_535));
-        style.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(style.gridTemplateAreas, 1, 65_535));
+        style.setGridTemplateAreaTemplate(new GridTemplateAreas(style.gridTemplateAreas, 1, 65_535));
         assertEquals(65_535, style.getGridTemplateAreaColumnCount());
 
         NamedLineResolver resolver = new NamedLineResolver(style);
@@ -277,7 +277,7 @@ class GridAreasP7Test {
         rootStyle.gap = new TaffySize<>(LengthPercentage.length(10f), LengthPercentage.length(0f));
         rootStyle.gridAutoColumns = List.of(px(20f));
         rootStyle.gridAutoRows = List.of(px(10f));
-        rootStyle.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(
+        rootStyle.setGridTemplateAreaTemplate(new GridTemplateAreas(
             List.of(new GridTemplateArea("a", 1, 2, 1, 2)), 1, 2));
         NodeId root = tree.newLeaf(rootStyle);
 
@@ -318,7 +318,7 @@ class GridAreasP7Test {
         rootStyle.gap = new TaffySize<>(LengthPercentage.length(0f), LengthPercentage.length(10f));
         rootStyle.gridAutoColumns = List.of(px(10f));
         rootStyle.gridAutoRows = List.of(px(20f));
-        rootStyle.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(
+        rootStyle.setGridTemplateAreaTemplate(new GridTemplateAreas(
             List.of(new GridTemplateArea("a", 1, 2, 1, 2)), 2, 1));
         NodeId root = tree.newLeaf(rootStyle);
 
@@ -364,7 +364,7 @@ class GridAreasP7Test {
         rootStyle.size = new TaffySize<>(TaffyDimension.length(100f), TaffyDimension.auto());
         rootStyle.gridAutoColumns = List.of(px(20f));
         rootStyle.gridAutoRows = List.of(px(10f));
-        rootStyle.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(List.of(), 2, 3));
+        rootStyle.setGridTemplateAreaTemplate(new GridTemplateAreas(List.of(), 2, 3));
         NodeId root = tree.newLeaf(rootStyle);
 
         NodeId first = addItem(tree, root, autoLine(), autoLine());
@@ -393,7 +393,7 @@ class GridAreasP7Test {
     void explicitTemplateSizeWinsOverTheAreaExtents() {
         TaffyStyle style = gridContainer();
         style.gridTemplateAreas = List.of(new GridTemplateArea("a", 1, 3, 1, 2));
-        style.setGridTemplateAreaTemplate(new TaffyGridTemplateAreas(style.gridTemplateAreas, 1, 1));
+        style.setGridTemplateAreaTemplate(new GridTemplateAreas(style.gridTemplateAreas, 1, 1));
         assertEquals(1, style.getGridTemplateAreaRowCount(), "the explicit size, not the area extents (2)");
 
         TaffyTree tree = new TaffyTree();
@@ -554,7 +554,7 @@ class GridAreasP7Test {
             new GridTemplateArea("footer", 3, 4, 1, 4));
 
         // Derived size = extents, and no explicit size is set.
-        assertEquals(TaffyGridTemplateAreas.DERIVE, rootStyle.gridTemplateAreaRowCount);
+        assertEquals(GridTemplateAreas.DERIVE, rootStyle.gridTemplateAreaRowCount);
         assertEquals(3, rootStyle.getGridTemplateAreaRowCount());
         assertEquals(3, rootStyle.getGridTemplateAreaColumnCount());
 

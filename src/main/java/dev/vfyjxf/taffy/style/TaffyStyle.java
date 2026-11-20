@@ -458,10 +458,10 @@ public final class TaffyStyle {
      * The size of the area template is not derived from these extents: it is carried by
      * {@link #gridTemplateAreaRowCount} and {@link #gridTemplateAreaColumnCount}, so that unnamed
      * ({@code .}) cells beyond the extents of the named areas still contribute to the explicit
-     * grid. When those two fields are left at {@link TaffyGridTemplateAreas#DERIVE} (the default), the
+     * grid. When those two fields are left at {@link GridTemplateAreas#DERIVE} (the default), the
      * size is derived from these extents, which is the historical behavior.
      * <p>
-     * Rust equivalent: grid_template_areas: Option&lt;TaffyGridTemplateAreas&gt; (upstream #1024 /
+     * Rust equivalent: grid_template_areas: Option&lt;GridTemplateAreas&gt; (upstream #1024 /
      * GR-16). This field keeps the pre-GR-16 {@code Vec<GridTemplateArea>} shape; use
      * {@link #setGridTemplateAreaTemplate} to set the areas and the template size together.
      */
@@ -469,27 +469,27 @@ public final class TaffyStyle {
 
     /**
      * The number of rows of the {@code grid-template-areas} template, or
-     * {@link TaffyGridTemplateAreas#DERIVE} to derive it from the extents of {@link #gridTemplateAreas}.
+     * {@link GridTemplateAreas#DERIVE} to derive it from the extents of {@link #gridTemplateAreas}.
      * <p>
      * The template may be larger than the extents of the named areas because of unnamed ({@code .})
      * cells, and such cells still contribute to the size of the explicit grid (for example
      * {@code "a ."} is a one row by two column template). A value of {@code 0} is a template with
-     * no explicit row, while {@link TaffyGridTemplateAreas#DERIVE} (the default, {@code -1}) keeps the
+     * no explicit row, while {@link GridTemplateAreas#DERIVE} (the default, {@code -1}) keeps the
      * historical behavior of deriving the row count from the named areas.
      * <p>
-     * Rust equivalent: TaffyGridTemplateAreas::row_count (upstream #1024 / GR-16).
+     * Rust equivalent: GridTemplateAreas::row_count (upstream #1024 / GR-16).
      */
-    public int gridTemplateAreaRowCount = TaffyGridTemplateAreas.DERIVE;
+    public int gridTemplateAreaRowCount = GridTemplateAreas.DERIVE;
 
     /**
      * The number of columns of the {@code grid-template-areas} template, or
-     * {@link TaffyGridTemplateAreas#DERIVE} to derive it from the extents of {@link #gridTemplateAreas}.
+     * {@link GridTemplateAreas#DERIVE} to derive it from the extents of {@link #gridTemplateAreas}.
      * <p>
-     * Rust equivalent: TaffyGridTemplateAreas::column_count (upstream #1024 / GR-16).
+     * Rust equivalent: GridTemplateAreas::column_count (upstream #1024 / GR-16).
      *
      * @see #gridTemplateAreaRowCount
      */
-    public int gridTemplateAreaColumnCount = TaffyGridTemplateAreas.DERIVE;
+    public int gridTemplateAreaColumnCount = GridTemplateAreas.DERIVE;
 
     /**
      * Defines named lines for grid columns.
@@ -800,7 +800,7 @@ public final class TaffyStyle {
         if (gridTemplateAreaRowCount >= 0) {
             return gridTemplateAreaRowCount;
         }
-        return TaffyGridTemplateAreas.derivedRowCount(gridTemplateAreas);
+        return GridTemplateAreas.derivedRowCount(gridTemplateAreas);
     }
 
     /**
@@ -812,7 +812,7 @@ public final class TaffyStyle {
         if (gridTemplateAreaColumnCount >= 0) {
             return gridTemplateAreaColumnCount;
         }
-        return TaffyGridTemplateAreas.derivedColumnCount(gridTemplateAreas);
+        return GridTemplateAreas.derivedColumnCount(gridTemplateAreas);
     }
 
     /**
@@ -820,10 +820,10 @@ public final class TaffyStyle {
      * the template size (explicitly configured, or derived from the areas' extents when unset).
      * <p>
      * The returned value is never {@code null}; a style without an area template reads back as
-     * {@link TaffyGridTemplateAreas#empty()}.
+     * {@link GridTemplateAreas#empty()}.
      */
-    public TaffyGridTemplateAreas getGridTemplateAreaTemplate() {
-        return TaffyGridTemplateAreas.from(this);
+    public GridTemplateAreas getGridTemplateAreaTemplate() {
+        return GridTemplateAreas.from(this);
     }
 
     /**
@@ -837,11 +837,11 @@ public final class TaffyStyle {
      * @param template the template to apply, or {@code null} to clear it
      * @return this style, for chaining
      */
-    public TaffyStyle setGridTemplateAreaTemplate(TaffyGridTemplateAreas template) {
+    public TaffyStyle setGridTemplateAreaTemplate(GridTemplateAreas template) {
         if (template == null) {
             this.gridTemplateAreas = new ArrayList<>();
-            this.gridTemplateAreaRowCount = TaffyGridTemplateAreas.DERIVE;
-            this.gridTemplateAreaColumnCount = TaffyGridTemplateAreas.DERIVE;
+            this.gridTemplateAreaRowCount = GridTemplateAreas.DERIVE;
+            this.gridTemplateAreaColumnCount = GridTemplateAreas.DERIVE;
         } else {
             template.applyTo(this);
         }
