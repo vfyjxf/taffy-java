@@ -849,7 +849,10 @@ public class BlockComputer {
             float groupOffset = blockAlignContentOffset(alignContent, freeSpace);
 
             if (groupOffset != 0f) {
-                for (BlockItem item : items) {
+                // Index access: the item list is an ArrayList, so the hot loops avoid an
+                // iterator allocation and its per-element concurrent-modification check (P18).
+                for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+                    BlockItem item = items.get(itemIndex);
                     if (item.finalLayout != null) {
                         Layout shifted = item.finalLayout.copy();
                         shifted.location().y += groupOffset;
@@ -916,7 +919,9 @@ public class BlockComputer {
         // Commit the deferred in-flow layouts. This must stay *after* the ComputeSize return
         // above: measuring a node must never write layout state to the tree.
         // Upstream #971 (BK-01).
-        for (BlockItem item : items) {
+        // Index access: see the note on the align-content shift loop above (P18).
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (item.finalLayout != null) {
                 tree.setUnroundedLayout(item.nodeId, item.finalLayout);
             }
@@ -1009,7 +1014,8 @@ public class BlockComputer {
         // leading border, which is exactly the term the symmetric scroll-size formula adds back.
         // Upstream #1007. 2.0 removes the component entirely.
         FloatSize inFlowContentSize = FloatSize.zero();
-        for (BlockItem item : items) {
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             Layout childLayout = item.finalLayout;
             // Out-of-flow children were accumulated by the absolute pass above.
             if (childLayout == null) continue;
@@ -1408,7 +1414,8 @@ public class BlockComputer {
         FloatContext.IntrinsicWidthCalculator floatCalculator =
             new FloatContext.IntrinsicWidthCalculator(availableWidth);
 
-        for (BlockItem item : items) {
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (item.position.isOutOfFlow()) continue;
 
             FloatSize knownDimensions = maybeClamp(item.size, item.minSize, item.maxSize);
@@ -1559,7 +1566,11 @@ public class BlockComputer {
         // Check RTL once at the start
         boolean isRtl = direction != null && direction.isRtl();
 
-        for (BlockItem item : items) {
+        // Index access on the ArrayList item list: this is the per-child hot loop of block
+        // layout, so it avoids the iterator allocation and its per-element concurrent-modification
+        // check. P18.
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (item.position.isOutOfFlow()) {
                 // The static-position rectangle of an out-of-flow child spans the container's
                 // content box in the inline axis, and is a zero-height line at the child's
@@ -2310,7 +2321,8 @@ public class BlockComputer {
         FloatRect accumulatedOverflow = FloatRect.zero();
         FloatSize contentSize = FloatSize.zero();
 
-        for (BlockItem item : items) {
+        for (int itemIndex = 0, itemCount = items.size(); itemIndex < itemCount; itemIndex++) {
+            BlockItem item = items.get(itemIndex);
             if (!item.position.isOutOfFlow()) continue;
 
             TaffyStyle childStyle = tree.getStyle(item.nodeId);
