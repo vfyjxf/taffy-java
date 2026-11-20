@@ -43,8 +43,8 @@ public class NodeData {
     private final List<NodeId> children = new ArrayList<>();
 
     /**
-     * Version of this node's layout-affecting inputs, as observed by a parent's cached block item
-     * list.
+     * Version of this node's layout-affecting inputs, as observed by a parent's cached block or
+     * flex item list.
      *
      * <p>Bumped by {@link #setStyle} and by a <em>direct</em> {@link #markDirty()} call (which is
      * also how the measure-callback and node-context setters invalidate a node, and how an in-place
@@ -57,8 +57,8 @@ public class NodeData {
 
     /**
      * Version of this node's child list. Bumped whenever {@link TaffyTree} adds, inserts, removes
-     * or replaces a child, so a cached block item list can reject a stale child order without
-     * comparing ids.
+     * or replaces a child, so a cached block or flex item list can reject a stale child order
+     * without comparing ids.
      */
     private long childrenVersion;
 
@@ -71,6 +71,16 @@ public class NodeData {
      * layout state, not part of the public API.</p>
      */
     private BlockComputer.BlockItemCache blockItemCache;
+
+    /**
+     * Cross-pass flex item-list cache owned by {@link FlexboxComputer}, or {@code null} when this
+     * node has none (not a flex container, or invalidated).
+     *
+     * <p>Stored on the node for the same reason as {@link #blockItemCache}: the list must survive
+     * from one layout pass to the next. Package-private through the accessors below: this is
+     * internal layout state, not part of the public API.</p>
+     */
+    private FlexboxComputer.FlexItemCache flexItemCache;
 
     /**
      * Returns the mutable child list of this node. Package-private: child links are owned and
@@ -96,6 +106,7 @@ public class NodeData {
     void bumpChildrenVersion() {
         childrenVersion++;
         blockItemCache = null;
+        flexItemCache = null;
     }
 
     /** Returns the cross-pass block item cache, or {@code null} when there is none. */
@@ -111,6 +122,21 @@ public class NodeData {
     /** Drops the cross-pass block item list without touching any version stamp. */
     void clearBlockItemCache() {
         this.blockItemCache = null;
+    }
+
+    /** Returns the cross-pass flex item cache, or {@code null} when there is none. */
+    FlexboxComputer.FlexItemCache getFlexItemCache() {
+        return flexItemCache;
+    }
+
+    /** Stores a freshly built cross-pass flex item list. */
+    void setFlexItemCache(FlexboxComputer.FlexItemCache cache) {
+        this.flexItemCache = cache;
+    }
+
+    /** Drops the cross-pass flex item list without touching any version stamp. */
+    void clearFlexItemCache() {
+        this.flexItemCache = null;
     }
     
     /** The always unrounded results of the layout computation */
@@ -174,6 +200,7 @@ public class NodeData {
         // intentionally not touched; their lists only depend on their direct children's stamps.
         this.contentVersion++;
         this.blockItemCache = null;
+        this.flexItemCache = null;
     }
 
     /**
@@ -321,6 +348,7 @@ public class NodeData {
     public boolean markDirty() {
         this.contentVersion++;
         this.blockItemCache = null;
+        this.flexItemCache = null;
         return cache.clear();
     }
 
@@ -336,6 +364,7 @@ public class NodeData {
      */
     boolean markDirtyForChildListChange() {
         this.blockItemCache = null;
+        this.flexItemCache = null;
         return cache.clear();
     }
 
