@@ -20,14 +20,19 @@ import dev.vfyjxf.taffy.style.AvailableSpace;
  * drops the margin-collapse metadata, so measure results that carry such metadata (or that were
  * computed while vertical margins were collapsible) are not cached (CR-02).
  *
- * <p>Implementation note: an entry stores the key fields themselves, so a lookup compares the
- * {@link LayoutInput}'s values in place and never allocates a probe object. Measure lookups
- * first compare a 32-bit key fingerprint and only run the full per-axis comparison when the
- * fingerprints match; the fingerprint is a pure fast-path filter and a matching fingerprint is
- * always re-validated, so collisions cannot turn a miss into a hit. Entries are reused in place
- * instead of being reallocated on every store, including after {@link #clear()}: clearing
- * releases the cached results but keeps the (now invalid) entry shells, which keeps repeated
- * cold layouts allocation-free.
+ * <p>Implementation note: an entry stores an exact packed key of the {@link LayoutInput}'s
+ * values, so a lookup compares three {@code long}s in place, allocates no probe object and needs
+ * no field-by-field re-validation. The packed key keeps every relevant bit: a known axis stores
+ * its {@link Float#floatToIntBits} value behind a "known" bit, an unknown axis stores the
+ * available-space type and, for a definite space, its value bits, and the parent size packs both
+ * dimensions. {@code floatToIntBits} canonicalizes NaNs, which matches the {@link Float#compare}
+ * semantics the cache had when it compared the fields individually (every NaN compares equal,
+ * while {@code -0.0f} and {@code 0.0f} differ). The single final layout entry compares the packed
+ * key directly; the nine measure entries additionally keep a 32-bit fingerprint, because one
+ * {@code int} comparison rejects the eight entries that usually do not match without loading
+ * their key words. Entries are reused in place instead of being reallocated on every store,
+ * including after {@link #clear()}: clearing releases the cached results but keeps the (now
+ * invalid) entry shells, which keeps repeated cold layouts allocation-free.
  */
 public final class LayoutCache {
 
@@ -114,83 +119,65 @@ public final class LayoutCache {
     }
 
     /**
-     * A single cache entry: the cache key of the layout pass (BL-04) plus the cached result.
+     * A single cache entry: the packed cache key of the layout pass (BL-04) plus the cached
+     * result.
      *
      * <p>Each axis holds either the known dimension (when one is set) or the available space, so
      * that available space is ignored in a known axis (CR-01). The parent size is always part of
-     * the key because it is used to resolve percentages. The fields are stored directly (instead
-     * of in a separate key object) and an entry is reused in place by the store path.
+     * the key because it is used to resolve percentages. The key is stored as two per-axis
+     * {@code long}s plus one parent-size {@code long} (see {@link #axisKey} and
+     * {@link #parentKey}), so comparing an entry with a lookup is three exact integer
+     * comparisons: no key bit is lost and there is nothing left to re-validate. An entry is
+     * reused in place by the store path.
+     *
+     * <p>Both axes and both parent dimensions are part of the key. Upstream taffy (#911)
+     * deliberately compares only the x-axis parent size for measure entries as a performance
+     * trade-off ("not fully correct"). This port keys on both axes, because its
+     * {@link LayoutInput} has no {@code known_dimensions_are_definite} component and percentage
+     * sizes can depend on the parent height. The extra misses can be narrowed when that
+     * component is added.
      */
     private static final class CacheEntry<T> {
-        private float knownWidth;
-        private float knownHeight;
-        private AvailableSpace availableSpaceWidth;
-        private AvailableSpace availableSpaceHeight;
-        private float parentWidth;
-        private float parentHeight;
+        /** Exact key of the horizontal axis, see {@link #axisKey}. */
+        private long axisKeyWidth;
+        /** Exact key of the vertical axis, see {@link #axisKey}. */
+        private long axisKeyHeight;
+        /** Exact key of the parent size, see {@link #parentKey}. */
+        private long parentKey;
         /**
-         * Fast-path fingerprint of the key fields; equal keys always have equal fingerprints,
-         * but equal fingerprints are re-validated with {@link #matches}.
+         * Fast-path fingerprint of the packed key, used only to reject measure entries before
+         * the exact comparison. Equal keys always have equal fingerprints, but equal
+         * fingerprints are re-validated against the packed key.
          */
         private int keyHash;
         /** Whether the entry currently holds a result; clearing a cache invalidates without deallocating. */
         private boolean valid;
         private T content;
 
-        private void set(FloatSize known, TaffySize<AvailableSpace> availableSpace, FloatSize parent,
-                         int keyHash, T content) {
-            this.knownWidth = known.width;
-            this.knownHeight = known.height;
-            this.availableSpaceWidth = availableSpace.width;
-            this.availableSpaceHeight = availableSpace.height;
-            this.parentWidth = parent.width;
-            this.parentHeight = parent.height;
+        private void set(long axisKeyWidth, long axisKeyHeight, long parentKey, int keyHash, T content) {
+            this.axisKeyWidth = axisKeyWidth;
+            this.axisKeyHeight = axisKeyHeight;
+            this.parentKey = parentKey;
             this.keyHash = keyHash;
             this.valid = true;
             this.content = content;
         }
 
         /**
-         * Whether this entry can be used for the given {@code PERFORM_LAYOUT} input.
+         * Whether this entry holds exactly the given packed key.
          *
-         * <p>Measure entries use the same comparison. Upstream taffy (#911) deliberately compares
-         * only the x-axis parent size for measure entries as a performance trade-off ("not fully
-         * correct"). This port keys on both axes, because its {@link LayoutInput} has no
-         * {@code known_dimensions_are_definite} component and percentage sizes can depend on the
-         * parent height. The extra misses can be narrowed when that component is added.
+         * <p>{@link LayoutCache#axisKey} and {@link LayoutCache#parentKey} encode every value the
+         * cache keys on, so a match of the three packed words is a match of the whole key.
          */
-        private boolean matches(FloatSize known, TaffySize<AvailableSpace> availableSpace, FloatSize parent) {
-            return matchesAxis(knownWidth, availableSpaceWidth, known.width, availableSpace.width)
-                && matchesAxis(knownHeight, availableSpaceHeight, known.height, availableSpace.height)
-                && Float.compare(parentWidth, parent.width) == 0
-                && Float.compare(parentHeight, parent.height) == 0;
+        private boolean matches(long axisKeyWidth, long axisKeyHeight, long parentKey) {
+            return this.axisKeyWidth == axisKeyWidth
+                && this.axisKeyHeight == axisKeyHeight
+                && this.parentKey == parentKey;
         }
 
         private void invalidate() {
             valid = false;
             content = null;
-        }
-
-        /**
-         * Compares one axis exactly as the cache key did before entries stored the fields
-         * directly. {@code Float.compare} is deliberately kept: it distinguishes {@code -0.0}
-         * from {@code 0.0} and treats every NaN as equal.
-         */
-        private static boolean matchesAxis(float knownDimension, AvailableSpace availableSpace,
-                                           float otherKnownDimension, AvailableSpace otherAvailableSpace) {
-            boolean hasKnownDimension = !Float.isNaN(knownDimension);
-            boolean otherHasKnownDimension = !Float.isNaN(otherKnownDimension);
-            if (hasKnownDimension || otherHasKnownDimension) {
-                // A known dimension replaces the available space in the key: the available space
-                // may change without causing a miss, but a known dimension on only one side means
-                // the two inputs differ.
-                return hasKnownDimension == otherHasKnownDimension
-                    && Float.compare(knownDimension, otherKnownDimension) == 0;
-            }
-            if (availableSpace == null || otherAvailableSpace == null) {
-                return availableSpace == otherAvailableSpace;
-            }
-            return availableSpace.equals(otherAvailableSpace);
         }
     }
 
@@ -229,7 +216,14 @@ public final class LayoutCache {
         if (entry == null || !entry.valid) {
             return null;
         }
-        return entry.matches(inputs.knownDimensions(), inputs.availableSpace(), inputs.parentSize())
+        // There is exactly one final entry: compare the exact packed key directly. The key is
+        // collision-free, so no separate field comparison is needed after a match.
+        FloatSize known = inputs.knownDimensions();
+        TaffySize<AvailableSpace> availableSpace = inputs.availableSpace();
+        return entry.matches(
+                axisKey(known.width, availableSpace.width),
+                axisKey(known.height, availableSpace.height),
+                parentKey(inputs.parentSize()))
             ? entry.content
             : null;
     }
@@ -242,13 +236,16 @@ public final class LayoutCache {
         FloatSize known = inputs.knownDimensions();
         TaffySize<AvailableSpace> availableSpace = inputs.availableSpace();
         FloatSize parent = inputs.parentSize();
-        int keyHash = keyHash(known, availableSpace, parent);
+        long axisKeyWidth = axisKey(known.width, availableSpace.width);
+        long axisKeyHeight = axisKey(known.height, availableSpace.height);
+        long parentKey = parentKey(parent);
+        int keyHash = keyHash(axisKeyWidth, axisKeyHeight, parentKey);
 
         int last = lastMeasureEntry;
         if (last >= 0) {
             CacheEntry<FloatSize> entry = measureEntries[last];
             if (entry != null && entry.valid && entry.keyHash == keyHash
-                && entry.matches(known, availableSpace, parent)) {
+                && entry.matches(axisKeyWidth, axisKeyHeight, parentKey)) {
                 recentlyUsedEntries |= 1 << last;
                 return LayoutOutput.fromOuterSize(entry.content);
             }
@@ -256,12 +253,13 @@ public final class LayoutCache {
 
         for (int i = 0; i < CACHE_SIZE; i++) {
             CacheEntry<FloatSize> entry = measureEntries[i];
-            // The fingerprint rejects almost every non-matching slot without touching its key
-            // fields; a fingerprint match is still fully re-validated below.
+            // The fingerprint rejects almost every non-matching slot with one integer
+            // comparison, before its key words are touched; a fingerprint match is still
+            // fully re-validated against the packed key below.
             if (entry == null || !entry.valid || entry.keyHash != keyHash) {
                 continue;
             }
-            if (entry.matches(known, availableSpace, parent)) {
+            if (entry.matches(axisKeyWidth, axisKeyHeight, parentKey)) {
                 // Mark the entry as used so that the clock does not evict a hot entry.
                 recentlyUsedEntries |= 1 << i;
                 lastMeasureEntry = i;
@@ -295,7 +293,10 @@ public final class LayoutCache {
         FloatSize known = inputs.knownDimensions();
         TaffySize<AvailableSpace> availableSpace = inputs.availableSpace();
         FloatSize parent = inputs.parentSize();
-        int keyHash = keyHash(known, availableSpace, parent);
+        long axisKeyWidth = axisKey(known.width, availableSpace.width);
+        long axisKeyHeight = axisKey(known.height, availableSpace.height);
+        long parentKey = parentKey(parent);
+        int keyHash = keyHash(axisKeyWidth, axisKeyHeight, parentKey);
 
         if (inputs.runMode() == RunMode.PERFORM_LAYOUT) {
             isEmpty = false;
@@ -304,7 +305,7 @@ public final class LayoutCache {
                 entry = new CacheEntry<>();
                 finalLayoutEntry = entry;
             }
-            entry.set(known, availableSpace, parent, keyHash, layoutOutput);
+            entry.set(axisKeyWidth, axisKeyHeight, parentKey, keyHash, layoutOutput);
             return;
         }
 
@@ -320,7 +321,7 @@ public final class LayoutCache {
         for (int i = 0; i < CACHE_SIZE; i++) {
             CacheEntry<FloatSize> entry = measureEntries[i];
             if (entry != null && entry.valid && entry.keyHash == keyHash
-                && entry.matches(known, availableSpace, parent)) {
+                && entry.matches(axisKeyWidth, axisKeyHeight, parentKey)) {
                 entry.content = content;
                 recentlyUsedEntries |= 1 << i;
                 lastMeasureEntry = i;
@@ -349,7 +350,7 @@ public final class LayoutCache {
             // A shell retained across clear(): reusing it keeps cold layouts allocation-free.
             measureEntryCount++;
         }
-        entry.set(known, availableSpace, parent, keyHash, content);
+        entry.set(axisKeyWidth, axisKeyHeight, parentKey, keyHash, content);
         lastMeasureEntry = entryIndex;
         recentlyUsedEntries |= 1 << entryIndex;
         nextMeasureEntry++;
@@ -386,37 +387,80 @@ public final class LayoutCache {
         return collapsible != null && (Boolean.TRUE.equals(collapsible.start) || Boolean.TRUE.equals(collapsible.end));
     }
 
-    /**
-     * A fingerprint of the key fields used to reject non-matching measure entries before the
-     * full comparison.
-     *
-     * <p>It hashes exactly the values {@link CacheEntry#matches} compares: in a known axis the
-     * known dimension, otherwise the available space's type and value; plus both parent
-     * dimensions. {@code floatToIntBits} canonicalizes NaNs, matching {@code Float.compare}'s
-     * treatment of every NaN as equal. Two equal keys therefore always produce the same
-     * fingerprint; the converse is not true, which is why a matching fingerprint is re-validated.
-     */
-    private static int keyHash(FloatSize known, TaffySize<AvailableSpace> availableSpace, FloatSize parent) {
-        int hash = 0x9E3779B9;
-        hash = 31 * hash + axisHash(known.width, availableSpace.width);
-        hash = 31 * hash + axisHash(known.height, availableSpace.height);
-        hash = 31 * hash + Float.floatToIntBits(parent.width);
-        hash = 31 * hash + Float.floatToIntBits(parent.height);
-        return hash;
-    }
+    /** Set in a packed axis key when the axis carries a known dimension. */
+    private static final long KNOWN_AXIS_BIT = 1L << 63;
+    /** Shift of the available-space type in a packed axis key without a known dimension. */
+    private static final int AVAILABLE_SPACE_TYPE_SHIFT = 61;
+    private static final long AVAILABLE_SPACE_DEFINITE = 0b00L << AVAILABLE_SPACE_TYPE_SHIFT;
+    private static final long AVAILABLE_SPACE_MIN_CONTENT = 0b01L << AVAILABLE_SPACE_TYPE_SHIFT;
+    private static final long AVAILABLE_SPACE_MAX_CONTENT = 0b10L << AVAILABLE_SPACE_TYPE_SHIFT;
+    /** Stands for a {@code null} available space, which the cache key compares by identity. */
+    private static final long AVAILABLE_SPACE_NULL = 0b11L << AVAILABLE_SPACE_TYPE_SHIFT;
+    /** Bits 0-31 of a packed axis key carry the dimension or definite-space value bits. */
+    private static final long AXIS_VALUE_MASK = 0xFFFFFFFFL;
 
-    private static int axisHash(float knownDimension, AvailableSpace availableSpace) {
+    /**
+     * Packs one axis of the cache key into an exact 64-bit key.
+     *
+     * <p>A known dimension sets {@link #KNOWN_AXIS_BIT} and stores its
+     * {@link Float#floatToIntBits} value; the available space is then ignored (CR-01). Without a
+     * known dimension the key stores the available-space type and, for a definite space, its
+     * value bits. A {@code null} available space gets a type of its own: the previous
+     * field-by-field comparison compared two {@code null}s as equal and every other pair as
+     * unequal, which the type code reproduces exactly. {@code floatToIntBits} canonicalizes
+     * NaNs, so every NaN still compares equal, while {@code -0.0f} and {@code 0.0f} still
+     * differ.
+     *
+     * <p>Every bit of the compared values is retained, so this is an exact key and not a hash:
+     * equal keys mean equal inputs, and no collision can turn a miss into a hit.
+     */
+    private static long axisKey(float knownDimension, AvailableSpace availableSpace) {
         if (!Float.isNaN(knownDimension)) {
-            return Float.floatToIntBits(knownDimension);
+            return KNOWN_AXIS_BIT | (Float.floatToIntBits(knownDimension) & AXIS_VALUE_MASK);
         }
         if (availableSpace == null) {
-            return 0x7f4a7c15;
+            return AVAILABLE_SPACE_NULL;
         }
         return switch (availableSpace.getType()) {
-            case DEFINITE -> Float.floatToIntBits(availableSpace.getValue()) ^ 0x165667b1;
-            case MIN_CONTENT -> 0x27d4eb2f;
-            case MAX_CONTENT -> 0x165667c5;
+            case DEFINITE -> AVAILABLE_SPACE_DEFINITE
+                | (Float.floatToIntBits(availableSpace.getValue()) & AXIS_VALUE_MASK);
+            case MIN_CONTENT -> AVAILABLE_SPACE_MIN_CONTENT;
+            case MAX_CONTENT -> AVAILABLE_SPACE_MAX_CONTENT;
         };
+    }
+
+    /** Packs both parent dimensions into one exact 64-bit key. */
+    private static long parentKey(FloatSize parent) {
+        return ((long) Float.floatToIntBits(parent.width) << 32)
+            | (Float.floatToIntBits(parent.height) & 0xFFFFFFFFL);
+    }
+
+    /**
+     * A fingerprint of the packed key, used to reject non-matching measure entries before the
+     * exact comparison.
+     *
+     * <p>Equal packed keys always produce the same fingerprint; the converse is not true, which
+     * is why a matching fingerprint is re-validated against the packed key.
+     */
+    private static int keyHash(long axisKeyWidth, long axisKeyHeight, long parentKey) {
+        long hash = axisKeyWidth * 0x9E3779B97F4A7C15L
+            + axisKeyHeight * 0xC2B2AE3D27D4EB4FL
+            + parentKey * 0x165667B19E3779F9L;
+        hash ^= hash >>> 33;
+        hash *= 0xFF51AFD7ED558CCDL;
+        hash ^= hash >>> 29;
+        return (int) (hash ^ (hash >>> 32));
+    }
+
+    /**
+     * Fingerprint of a key still given as its raw fields; equivalent to packing it first and
+     * hashing the packed words.
+     */
+    private static int keyHash(FloatSize known, TaffySize<AvailableSpace> availableSpace, FloatSize parent) {
+        return keyHash(
+            axisKey(known.width, availableSpace.width),
+            axisKey(known.height, availableSpace.height),
+            parentKey(parent));
     }
 
     /**
