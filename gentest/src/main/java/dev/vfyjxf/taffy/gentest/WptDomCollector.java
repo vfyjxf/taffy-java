@@ -182,6 +182,11 @@ return (function(){
       className: (el.className || '').toString(),
       style: el.getAttribute('style') || '',
       computed,
+      // Raw declarations from inline style and matching rules (the *specified*
+      // value, before getComputedStyle() resolves used sizes). WPT abspos-017/018
+      // need min-width: 0 to be distinguishable from the implicit auto minimum,
+      // and float/flow-root boxes need width: auto to survive as a keyword.
+      specified: original,
       hasText: hasDirectText(el),
       naturalWidth: size[0],
       naturalHeight: size[1],
