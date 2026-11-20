@@ -648,10 +648,11 @@ public class TaffyTree {
             NodeData parentData = nodeAt(parent.getId());
             if (parentData != null) {
                 parentData.getChildren().removeIf(n -> n.equals(node));
+                parentData.bumpChildrenVersion();
             }
             // CR-04 (#1085): the parent's cached layout was computed with this child present, so it
             // must be invalidated exactly like removeChildAtIndex does.
-            markDirty(parent);
+            markDirtyForChildListChange(parent);
         }
         
         // Remove parent references from this node's children
@@ -813,8 +814,9 @@ public class TaffyTree {
 
         setParent(childKey, parent);
         parentData.getChildren().add(child);
+        parentData.bumpChildrenVersion();
         invalidateResolvedDirections();
-        markDirty(parent);
+        markDirtyForChildListChange(parent);
     }
 
     /**
@@ -836,8 +838,9 @@ public class TaffyTree {
         
         setParent(child.getId(), parent);
         parentChildren.add(childIndex, child);
+        parentData.bumpChildrenVersion();
         invalidateResolvedDirections();
-        markDirty(parent);
+        markDirtyForChildListChange(parent);
     }
 
     /**
@@ -869,8 +872,9 @@ public class TaffyTree {
         
         parentChildList.clear();
         parentChildList.addAll(Arrays.asList(newChildren));
+        parentData.bumpChildrenVersion();
         invalidateResolvedDirections();
-        markDirty(parent);
+        markDirtyForChildListChange(parent);
     }
 
     /**
@@ -915,8 +919,9 @@ public class TaffyTree {
         
         NodeId child = parentChildren.remove(childIndex);
         setParent(child.getId(), null);
+        parentData.bumpChildrenVersion();
         invalidateResolvedDirections();
-        markDirty(parent);
+        markDirtyForChildListChange(parent);
         
         return child;
     }
@@ -961,8 +966,9 @@ public class TaffyTree {
         setParent(newChild.getId(), parent);
         NodeId oldChild = parentChildren.set(childIndex, newChild);
         setParent(oldChild.getId(), null);
+        parentData.bumpChildrenVersion();
         invalidateResolvedDirections();
-        markDirty(parent);
+        markDirtyForChildListChange(parent);
         
         return oldChild;
     }
@@ -1362,6 +1368,9 @@ public class TaffyTree {
         NodeData data = nodeAt(node.getId());
         if (data != null) {
             data.getCache().clear();
+            // The block item cache is a separate derived state; clearing the layout cache is an
+            // explicit invalidation request and must not leave the older item list pinned.
+            data.clearBlockItemCache();
         }
     }
 
@@ -1371,18 +1380,40 @@ public class TaffyTree {
      * Marks the node and its ancestors as needing layout recalculation.
      */
     public void markDirty(NodeId node) {
-        markDirtyRecursive(node);
+        markDirtyRecursive(node, true, true);
     }
 
-    private void markDirtyRecursive(NodeId node) {
+    /**
+     * Marks a node dirty after its child list changed.
+     *
+     * <p>The node's own item cache was already invalidated by the child-list version bump; this
+     * only clears its layout cache and propagates the dirty flag. The content version stays
+     * unchanged so an ancestor's item list (which depends on this node's style, not on this node's
+     * children) remains reusable.</p>
+     */
+    private void markDirtyForChildListChange(NodeId node) {
+        markDirtyRecursive(node, true, false);
+    }
+
+    private void markDirtyRecursive(NodeId node, boolean direct, boolean bumpContentVersion) {
         NodeData data = nodeAt(node.getId());
         if (data == null) return;
         
-        boolean wasAlreadyDirty = data.markDirty();
+        // Only the directly marked node's inputs are known to have changed, and only a content
+        // mutation (style/measure/context, or a forced in-place invalidation) bumps the stamp a
+        // parent compares. Ancestors reached by the propagation still need their layout caches
+        // cleared (the dirty flag contract), but their block item caches depend only on their own
+        // direct children, whose content versions did not change, so those caches stay valid.
+        boolean wasAlreadyDirty;
+        if (direct) {
+            wasAlreadyDirty = bumpContentVersion ? data.markDirty() : data.markDirtyForChildListChange();
+        } else {
+            wasAlreadyDirty = data.markDirtyAncestor();
+        }
         if (!wasAlreadyDirty) {
             NodeId parent = parentOf(node.getId());
             if (parent != null) {
-                markDirtyRecursive(parent);
+                markDirtyRecursive(parent, false, false);
             }
         }
     }

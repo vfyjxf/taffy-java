@@ -297,6 +297,84 @@ public class BlockComputer {
     }
 
     /**
+     * A block container's item list that survives from one layout pass to the next, stored on the
+     * container's {@link NodeData}.
+     *
+     * <p>A {@link BlockItem} list is a pure function of the child styles and their order, the
+     * container's resolved direction and - for percentage or {@code calc()} child padding, border,
+     * size, min-size or max-size - the container's content-box size. The stamps captured here let
+     * a later pass reuse the list without resolving every child style again: the container's own
+     * content version, its child-list version and each direct child's content version are
+     * compared. A child style change therefore invalidates only its direct parent's list, not the
+     * lists of its grandparents, which cannot observe anything below their direct children. The
+     * measure-callback and node-context setters announce their change through
+     * {@link TaffyTree#markDirty(NodeId)}, which bumps the same content version.</p>
+     *
+     * <p>Only style-derived metadata is stored; the per-pass results filled in by
+     * {@link #performFinalLayoutOnChildren} are reset before a reused list is handed out. The
+     * cache is populated only for containers with more than one item, where rebuilding the list is
+     * the cost worth avoiding; a single-item container keeps using the pass-scoped
+     * {@link CachedItemList} only.</p>
+     */
+    static final class BlockItemCache {
+        private final List<BlockItem> items;
+        private final long containerVersion;
+        private final long childrenVersion;
+        private final long[] childVersions;
+        private final TaffyDirection direction;
+        private final float innerWidth;
+        private final float innerHeight;
+        private final boolean innerSizeIndependent;
+
+        private BlockItemCache(
+            List<BlockItem> items,
+            long containerVersion,
+            long childrenVersion,
+            long[] childVersions,
+            TaffyDirection direction,
+            FloatSize innerSize,
+            boolean innerSizeIndependent
+        ) {
+            this.items = items;
+            this.containerVersion = containerVersion;
+            this.childrenVersion = childrenVersion;
+            this.childVersions = childVersions;
+            this.direction = direction;
+            this.innerWidth = innerSize.width;
+            this.innerHeight = innerSize.height;
+            this.innerSizeIndependent = innerSizeIndependent;
+        }
+
+        /**
+         * Whether this cached list still describes the container's current children and layout
+         * basis. Child ids and order are covered by the child-list version; the per-child content
+         * versions cover style replacement and direct {@code markDirty} (in-place style mutation,
+         * measure-callback and node-context changes).
+         */
+        private boolean matches(NodeData container, List<NodeId> children, TaffyTree tree,
+                                FloatSize innerSize, TaffyDirection containerDirection) {
+            if (containerVersion != container.getContentVersion()
+                || childrenVersion != container.getChildrenVersion()
+                || direction != containerDirection
+                || childVersions.length != children.size()) {
+                return false;
+            }
+            if (!innerSizeIndependent
+                && (Float.floatToIntBits(innerWidth) != Float.floatToIntBits(innerSize.width)
+                    || Float.floatToIntBits(innerHeight) != Float.floatToIntBits(innerSize.height))) {
+                return false;
+            }
+            for (int i = 0; i < childVersions.length; i++) {
+                NodeData child = tree.getNodeData(children.get(i));
+                if (child == null || childVersions[i] != child.getContentVersion()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
      * Result of performing final layout on in-flow children, including margin collapse info.
      */
     private record InFlowLayoutResult(
@@ -1055,28 +1133,39 @@ public class BlockComputer {
         ItemListCache cache = itemListCache(tree);
         CachedItemList cached = cache.lists.get(node.getId());
         if (cached != null && cached.matches(nodeInnerSize, containerDirection)) {
-            // Reset the state the layout passes fill in before handing the list out again: the
-            // deferred child layout, the static position of an out-of-flow child and its
-            // collapse-through flag are per-pass results, not item metadata.
-            List<BlockItem> reused = cached.items;
-            for (int i = 0, size = reused.size(); i < size; i++) {
-                BlockItem item = reused.get(i);
-                item.finalLayout = null;
-                item.staticPosition = FloatPoint.ZERO;
-                item.canBeCollapsedThrough = false;
+            resetPerPassState(cached.items);
+            return cached.items;
+        }
+
+        List<NodeId> children = tree.getChildren(node);
+        NodeData containerData = tree.getNodeData(node);
+        if (containerData != null) {
+            BlockItemCache persistent = containerData.getBlockItemCache();
+            if (persistent != null
+                && persistent.matches(containerData, children, tree, nodeInnerSize, containerDirection)) {
+                // A list built by an earlier pass whose child styles, child list, direction and
+                // inner-size basis are all unchanged. Its style-derived metadata is still current;
+                // only the per-pass layout results have to be cleared.
+                List<BlockItem> reused = persistent.items;
+                resetPerPassState(reused);
+                cache.store(node.getId(), reused, nodeInnerSize, containerDirection,
+                    persistent.innerSizeIndependent);
+                return reused;
             }
-            return reused;
         }
 
         // Whether the metadata resolved below depends on the container's inner size. When it does
         // not, the list is valid for every inner size of this pass (a measurement at one known
         // size and the final layout at another), which is the common case.
         boolean innerSizeIndependent = true;
-        List<NodeId> children = tree.getChildren(node);
         List<BlockItem> items = new ArrayList<>(children.size());
+        long[] childVersions = new long[children.size()];
 
         int order = 0;
-        for (NodeId childId : children) {
+        for (int childIndex = 0; childIndex < children.size(); childIndex++) {
+            NodeId childId = children.get(childIndex);
+            NodeData childData = tree.getNodeData(childId);
+            childVersions[childIndex] = childData == null ? 0L : childData.getContentVersion();
             TaffyStyle childStyle = tree.getStyle(childId);
             if (childStyle.getBoxGenerationMode() == BoxGenerationMode.NONE) {
                 order++;
@@ -1167,7 +1256,44 @@ public class BlockComputer {
         }
 
         cache.store(node.getId(), items, nodeInnerSize, containerDirection, innerSizeIndependent);
+        if (containerData != null) {
+            if (items.size() > 1) {
+                containerData.setBlockItemCache(new BlockItemCache(
+                    items,
+                    containerData.getContentVersion(),
+                    containerData.getChildrenVersion(),
+                    childVersions,
+                    containerDirection,
+                    nodeInnerSize,
+                    innerSizeIndependent
+                ));
+            } else {
+                // Single-item containers are not worth a per-node long-lived list; drop any stale
+                // one left by an earlier, larger child list.
+                containerData.clearBlockItemCache();
+            }
+        }
         return items;
+    }
+
+    /**
+     * Clears the per-pass results a layout pass fills into an item list before the list is handed
+     * out again. The deferred child layout, the out-of-flow static position and its alignment
+     * fields, and the collapse-through flag are results of {@link #performFinalLayoutOnChildren},
+     * not item metadata, so a list reused by a later call must arrive in the same state as a
+     * freshly built one.
+     */
+    private static void resetPerPassState(List<BlockItem> items) {
+        for (int i = 0, size = items.size(); i < size; i++) {
+            BlockItem item = items.get(i);
+            item.finalLayout = null;
+            item.staticPosition = FloatPoint.ZERO;
+            item.canBeCollapsedThrough = false;
+            item.staticAlignX = null;
+            item.staticAlignY = null;
+            item.staticAreaStartX = 0f;
+            item.staticAreaEndX = 0f;
+        }
     }
 
     /**

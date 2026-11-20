@@ -43,11 +43,74 @@ public class NodeData {
     private final List<NodeId> children = new ArrayList<>();
 
     /**
+     * Version of this node's layout-affecting inputs, as observed by a parent's cached block item
+     * list.
+     *
+     * <p>Bumped by {@link #setStyle} and by a <em>direct</em> {@link #markDirty()} call (which is
+     * also how the measure-callback and node-context setters invalidate a node, and how an in-place
+     * {@code getStyle()} mutation is announced). A parent's {@code BlockComputer} item cache
+     * compares this stamp for each of its children, so a changed child invalidates its direct
+     * parent's list without requiring the change to be propagated to every ancestor. Dirty-flag
+     * propagation through {@link #markDirtyAncestor()} deliberately does not bump it.</p>
+     */
+    private long contentVersion;
+
+    /**
+     * Version of this node's child list. Bumped whenever {@link TaffyTree} adds, inserts, removes
+     * or replaces a child, so a cached block item list can reject a stale child order without
+     * comparing ids.
+     */
+    private long childrenVersion;
+
+    /**
+     * Cross-pass block item-list cache owned by {@link BlockComputer}, or {@code null} when this
+     * node has none (not a block container, a leaf container, or invalidated).
+     *
+     * <p>Stored on the node rather than in a pass-scoped map so that the list survives from one
+     * layout pass to the next. Package-private through the accessors below: this is internal
+     * layout state, not part of the public API.</p>
+     */
+    private BlockComputer.BlockItemCache blockItemCache;
+
+    /**
      * Returns the mutable child list of this node. Package-private: child links are owned and
      * mutated exclusively by {@link TaffyTree}; layout passes read it without a map lookup.
      */
     List<NodeId> getChildren() {
         return children;
+    }
+
+    /** Returns the stamp a parent's cached item list compares for this node. */
+    long getContentVersion() {
+        return contentVersion;
+    }
+
+    /** Returns the version of this node's child list. */
+    long getChildrenVersion() {
+        return childrenVersion;
+    }
+
+    /**
+     * Records a child-list mutation and drops the cached item list that described the old list.
+     */
+    void bumpChildrenVersion() {
+        childrenVersion++;
+        blockItemCache = null;
+    }
+
+    /** Returns the cross-pass block item cache, or {@code null} when there is none. */
+    BlockComputer.BlockItemCache getBlockItemCache() {
+        return blockItemCache;
+    }
+
+    /** Stores a freshly built cross-pass block item list. */
+    void setBlockItemCache(BlockComputer.BlockItemCache cache) {
+        this.blockItemCache = cache;
+    }
+
+    /** Drops the cross-pass block item list without touching any version stamp. */
+    void clearBlockItemCache() {
+        this.blockItemCache = null;
     }
     
     /** The always unrounded results of the layout computation */
@@ -106,6 +169,11 @@ public class NodeData {
     
     public void setStyle(TaffyStyle style) {
         this.style = style;
+        // A replacement style is a new input for every consumer of this node: bump the stamp a
+        // parent's cached block item list compares, and drop this node's own list. Ancestors are
+        // intentionally not touched; their lists only depend on their direct children's stamps.
+        this.contentVersion++;
+        this.blockItemCache = null;
     }
 
     /**
@@ -238,11 +306,49 @@ public class NodeData {
     }
     
     /**
-     * Marks the node as dirty (needing layout recalculation).
-     * 
-     * @return true if the cache was already empty (node was already dirty)
+     * Marks the node as dirty (needing layout recalculation) and invalidates the inputs a parent's
+     * cached block item list observes.
+     *
+     * <p>A direct markDirty is also how an in-place {@code getStyle()} mutation, a new measure
+     * callback and a new node context are announced, so it bumps {@link #getContentVersion()} and
+     * drops this node's own block item cache. Ancestors reached by dirty-flag propagation use
+     * {@link #markDirtyAncestor()} instead: their layout caches must be cleared, but their item
+     * caches only depend on their own direct children and stay reusable (the changed child is
+     * detected by the content-version comparison).</p>
+     *
+     * @return true if the layout cache was already empty (node was already dirty)
      */
     public boolean markDirty() {
+        this.contentVersion++;
+        this.blockItemCache = null;
+        return cache.clear();
+    }
+
+    /**
+     * Clears this node's layout cache after its own child list changed.
+     *
+     * <p>The child-list version and the block item cache were already invalidated by
+     * {@link #bumpChildrenVersion()}. The content version deliberately stays unchanged: a
+     * grandparent's item list only depends on its direct children's styles, not on this node's
+     * children, so propagating a new content stamp would needlessly rebuild every ancestor.</p>
+     *
+     * @return true if the layout cache was already empty (node was already dirty)
+     */
+    boolean markDirtyForChildListChange() {
+        this.blockItemCache = null;
+        return cache.clear();
+    }
+
+    /**
+     * Clears this node's layout cache as part of a dirty-flag propagation from a descendant.
+     *
+     * <p>Unlike {@link #markDirty()}, this neither bumps the content version nor drops the block
+     * item cache: the descendant's own content version is what its direct parent compares, and a
+     * container's item list does not depend on anything below its direct children.</p>
+     *
+     * @return true if the layout cache was already empty (node was already dirty)
+     */
+    boolean markDirtyAncestor() {
         return cache.clear();
     }
 }
