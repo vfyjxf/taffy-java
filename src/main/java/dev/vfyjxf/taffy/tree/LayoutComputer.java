@@ -102,6 +102,10 @@ public class LayoutComputer {
         // A new pass may observe styles that were mutated in place through getStyle(), so no
         // direction memoized by an earlier pass may be trusted; see resolveDirection.
         tree.invalidateResolvedDirections();
+        // A pass run through this entry point may lay the tree out into a different root or
+        // available space than the one TaffyTree recorded, so the recorded request signature can
+        // no longer describe the stored layouts. TaffyTree re-records it after its own passes.
+        tree.invalidateLayoutReuse();
         TaffyDirection direction = resolveDirection(root);
 
         // The ICB only exists when the viewport is definite in both axes.

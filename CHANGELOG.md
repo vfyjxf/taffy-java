@@ -88,6 +88,25 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   per invocation (except the intentional build/destruction benchmarks), and
   includes the new Flex/Grid/Block/UI/relayout/lifecycle scenarios.
 
+### P13 performance additions
+
+- `TaffyTree.computeLayout` gained a tree-clean fast path: a request that repeats
+  the last one (same root, same available space per axis, same rounding configuration
+  and same default measure callbacks) on a tree whose root layout cache is still warm
+  is answered from the stored layouts without running the layout algorithm or the
+  rounding pass, so it costs O(1) instead of one visit per node. The gate is the
+  existing dirty sentinel — every style, child-list or measure-callback change clears
+  the layout cache of the changed node and of its ancestors — so invalidation
+  semantics are unchanged. An installed `LayoutChangeListener` keeps the request on
+  the normal path, because the listener contract reports every layout write. Explicit
+  layout or cache writes (`setLayout`, `setUnroundedLayout`, `storeCacheEntry`),
+  the rounding toggle, `clear()` and any layout pass started directly through
+  `LayoutComputer` drop the recorded request.
+- `hasNewLayout`/`needsVisit` still report a completed request for every node
+  (through a tree-level layout generation, in O(1) rather than by marking the
+  subtree), and `acknowledgeLayout`/`acknowledgeSubtree` still clear it. No layout
+  value, no rounding result and no listener notification changes.
+
 ### P7 additions (float, grid details, contain)
 
 - CSS `float`/`clear` (style fields, `FloatContext`/`BlockContext`/`BfcSlot`),
