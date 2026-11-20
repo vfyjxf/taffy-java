@@ -315,7 +315,8 @@ final class WptSource {
         for (int i = 0; i < n; i++) {
             NodeInfo info = infos.get(i);
             WptStyle style = styles.get(i);
-            if (children.get(i).isEmpty() && style.needsMeasure && (info.rectW > 0 || info.rectH > 0)) {
+            if (children.get(i).isEmpty() && style.needsMeasure && (info.rectW > 0 || info.rectH > 0)
+                    && !engineSizesAutoAspectRatioBox(style.node)) {
                 browserSizes.put(i, new float[]{info.rectW, info.rectH});
             }
         }
@@ -358,6 +359,18 @@ final class WptSource {
             appendSimpleTest(sb, fixture, methodName, n, nodeStyles, order, children, assertions);
         }
         return sb.toString();
+    }
+
+    /**
+     * A leaf whose inline and block sizes are both auto but which carries an aspect
+     * ratio is sized by the engine, not by its (empty) content: pinning the browser's
+     * used size would hard-code the answer and disable the behaviour under test
+     * (floats-aspect-ratio-001 shrinks its flow-root box to the float strip).
+     */
+    private static boolean engineSizesAutoAspectRatioBox(NodeStyle style) {
+        return style.aspectRatio != null && style.size != null
+                && "TaffyDimension.AUTO".equals(style.size.width())
+                && "TaffyDimension.AUTO".equals(style.size.height());
     }
 
     private static String skip(Fixture fixture, WptSupport.SkipStats skipStats, String reason) {
@@ -579,6 +592,14 @@ final class WptSource {
         final String id;
         final String inlineStyle;
         final Map<String, String> computed;
+        /**
+         * Declarations from the element's inline style and matching rules, i.e. the
+         * *specified* value before getComputedStyle() resolves used sizes. Used to
+         * tell an explicit {@code min-width: 0} from the implicit {@code auto}
+         * default (both compute to 0px on an abspos box) and to keep a
+         * {@code width: auto} keyword on floats/flow-root boxes.
+         */
+        final Map<String, String> specified;
         final boolean hasText;
         final int naturalWidth;
         final int naturalHeight;
@@ -588,7 +609,7 @@ final class WptSource {
         final float rectH;
 
         private NodeInfo(int index, int parentIndex, String tag, String id, String inlineStyle,
-                         Map<String, String> computed, boolean hasText,
+                         Map<String, String> computed, Map<String, String> specified, boolean hasText,
                          int naturalWidth, int naturalHeight,
                          float rectX, float rectY, float rectW, float rectH) {
             this.index = index;
@@ -597,6 +618,7 @@ final class WptSource {
             this.id = id;
             this.inlineStyle = inlineStyle;
             this.computed = computed;
+            this.specified = specified;
             this.hasText = hasText;
             this.naturalWidth = naturalWidth;
             this.naturalHeight = naturalHeight;
@@ -624,11 +646,17 @@ final class WptSource {
                     computed.put(entry.getKey(), entry.getValue().getAsString());
                 }
             }
+            Map<String, String> specified = new HashMap<>();
+            if (object.has("specified") && object.get("specified").isJsonObject()) {
+                for (Map.Entry<String, JsonElement> entry : object.getAsJsonObject("specified").entrySet()) {
+                    specified.put(entry.getKey(), entry.getValue().getAsString());
+                }
+            }
             boolean hasText = object.has("hasText") && object.get("hasText").getAsBoolean();
             int naturalWidth = object.has("naturalWidth") ? object.get("naturalWidth").getAsInt() : 0;
             int naturalHeight = object.has("naturalHeight") ? object.get("naturalHeight").getAsInt() : 0;
             JsonObject rect = object.getAsJsonObject("rect");
-            return new NodeInfo(index, parent, tag, id, style, computed, hasText,
+            return new NodeInfo(index, parent, tag, id, style, computed, specified, hasText,
                     naturalWidth, naturalHeight,
                     rect.get("x").getAsFloat(), rect.get("y").getAsFloat(),
                     rect.get("w").getAsFloat(), rect.get("h").getAsFloat());
@@ -682,13 +710,47 @@ final class WptSource {
             applyFloatAndClear(css, node);
             applyOverflow(css, node);
 
+            // getComputedStyle() reports the *used* size for width/height keywords, so a
+            // declared 'auto' (or a declared percentage, e.g. block-aspect-ratio-025's
+            // height: 100%) must come from the raw declarations instead of the resolved
+            // pixel value. An element without any declared size keeps the computed value;
+            // the collector already turns an unspecified size on an aspect-ratio box into
+            // 'auto', and the browser-size pin below is skipped for those boxes.
             String width = CssValues.dimensionExpr(css.get("width"));
             String height = CssValues.dimensionExpr(css.get("height"));
+            String specifiedWidth = specifiedValue(info, "width");
+            String specifiedHeight = specifiedValue(info, "height");
+            if (isAutoKeyword(specifiedWidth)) {
+                width = "TaffyDimension.AUTO";
+            } else if (specifiedWidth != null) {
+                width = CssValues.dimensionExpr(specifiedWidth);
+            }
+            if (isAutoKeyword(specifiedHeight)) {
+                height = "TaffyDimension.AUTO";
+            } else if (specifiedHeight != null) {
+                height = CssValues.dimensionExpr(specifiedHeight);
+            }
             if (width != null || height != null) {
                 node.size = new Size(width, height);
             }
             String minWidth = CssValues.dimensionExpr(css.get("min-width"));
             String minHeight = CssValues.dimensionExpr(css.get("min-height"));
+            // An out-of-flow box's automatic minimum size is the content-based floor that
+            // css-sizing-4 transfers through the ratio. It applies when min-* is auto, and
+            // the initial value *is* auto, but an explicit 'min-width: 0' computes to the
+            // same 0px in Chrome. Only the specified declaration can tell the two apart,
+            // so an unspecified/specified-auto min-size becomes TaffyDimension.AUTO while
+            // an explicit zero stays length(0) (abspos-012/013 vs abspos-017/018).
+            if ("ABSOLUTE".equals(node.position) || "FIXED".equals(node.position)) {
+                String specifiedMinWidth = specifiedValue(info, "min-width");
+                String specifiedMinHeight = specifiedValue(info, "min-height");
+                minWidth = specifiedMinWidth == null || isAutoKeyword(specifiedMinWidth)
+                        ? "TaffyDimension.AUTO"
+                        : CssValues.dimensionExpr(specifiedMinWidth);
+                minHeight = specifiedMinHeight == null || isAutoKeyword(specifiedMinHeight)
+                        ? "TaffyDimension.AUTO"
+                        : CssValues.dimensionExpr(specifiedMinHeight);
+            }
             if (minWidth != null || minHeight != null) {
                 node.minSize = new Size(minWidth, minHeight);
             }
@@ -766,6 +828,19 @@ final class WptSource {
 
             out.needsMeasure = needsMeasure(node);
             return out;
+        }
+
+        /** Raw declared value of a property, or null when the page does not declare it. */
+        private static String specifiedValue(NodeInfo info, String property) {
+            if (info.specified == null) {
+                return null;
+            }
+            String raw = info.specified.get(property);
+            return raw == null || raw.isBlank() ? null : raw.trim();
+        }
+
+        private static boolean isAutoKeyword(String raw) {
+            return raw != null && "auto".equalsIgnoreCase(raw.trim());
         }
 
         /**

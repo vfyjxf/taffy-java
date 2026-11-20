@@ -320,6 +320,79 @@ class WptSupportTest {
         assertEquals("TaffyDimension.length(457f)", root.height());
     }
 
+    @Test
+    void specifiedMinSizeZeroClosesTheAutomaticMinimum() {
+        // abspos-017/018: Chrome computes min-width: 0 and min-width: auto to the
+        // same 0px, so the specified declaration decides whether the automatic
+        // minimum size may floor a ratio-transferred axis.
+        JsonObject raw = jsonNode(1, 0, "div", "block",
+                Map.of("position", "absolute", "aspect-ratio", "1 / 1",
+                        "width", "auto", "height", "100px",
+                        "min-width", "0px", "min-height", "0px"),
+                false, 0, 0);
+        addSpecified(raw, Map.of("min-width", "0"));
+
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+
+        assertEquals("TaffyDimension.length(0.0f)", style.minSize.width());
+        assertEquals("TaffyDimension.AUTO", style.minSize.height());
+    }
+
+    @Test
+    void unspecifiedOutOfFlowMinSizeStaysAuto() {
+        // abspos-012/013: an out-of-flow box without a declared min-size keeps the
+        // initial value auto, so the ratio-transferred axis is floored by content.
+        JsonObject raw = jsonNode(1, 0, "div", "block",
+                Map.of("position", "absolute", "aspect-ratio", "2 / 1",
+                        "width", "100px", "height", "auto",
+                        "min-width", "0px", "min-height", "0px"),
+                false, 0, 0);
+
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+
+        assertEquals("TaffyDimension.AUTO", style.minSize.width());
+        assertEquals("TaffyDimension.AUTO", style.minSize.height());
+    }
+
+    @Test
+    void specifiedAutoWidthSurvivesTheComputedUsedSize() {
+        JsonObject raw = jsonNode(1, 0, "div", "flow-root",
+                Map.of("width", "40px", "height", "40px", "aspect-ratio", "1 / 1"),
+                false, 0, 0);
+        addSpecified(raw, Map.of("width", "auto", "height", "auto"));
+
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+
+        assertEquals("TaffyDimension.AUTO", style.size.width());
+        assertEquals("TaffyDimension.AUTO", style.size.height());
+    }
+
+    @Test
+    void specifiedPercentageHeightBeatsTheComputedUsedSize() {
+        // block-aspect-ratio-025 declares height: 100% against an indefinite body;
+        // the computed value is the used pixel height, which would freeze the box.
+        JsonObject raw = jsonNode(1, 0, "div", "block",
+                Map.of("float", "left", "aspect-ratio", "1 / 1",
+                        "width", "auto", "height", "100px",
+                        "min-height", "100px"),
+                false, 0, 0);
+        addSpecified(raw, Map.of("height", "100%"));
+
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+
+        assertEquals("TaffyDimension.AUTO", style.size.width());
+        assertEquals("TaffyDimension.percent(1.0f)", style.size.height());
+        assertEquals("TaffyDimension.length(100.0f)", style.minSize.height());
+    }
+
+    private static void addSpecified(JsonObject node, Map<String, String> specified) {
+        JsonObject object = new JsonObject();
+        for (Map.Entry<String, String> entry : specified.entrySet()) {
+            object.addProperty(entry.getKey(), entry.getValue());
+        }
+        node.add("specified", object);
+    }
+
     private static WptSource.NodeInfo node(int index, int parent, String tag, String display,
                                            Map<String, String> extra) {
         return WptSource.NodeInfo.from(jsonNode(index, parent, tag, display, extra, false, 0, 0));
