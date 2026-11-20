@@ -2032,6 +2032,10 @@ public class GridComputer {
         int explicitColCount = namedLineResolver.getExplicitColumnCount();
         int explicitRowCount = namedLineResolver.getExplicitRowCount();
 
+        // A grid's items usually repeat the same few placements (a fully auto-placed grid has one),
+        // so the parsed placement is memoized for this layout run instead of being rebuilt per item.
+        GridPlacementMemo placementMemo = new GridPlacementMemo();
+
         int order = 0;
         for (NodeId childId : children) {
             TaffyStyle childStyle = tree.getStyle(childId);
@@ -2120,20 +2124,36 @@ public class GridComputer {
             GridPlacement rowStart = childStyle.getGridRowStart();
             GridPlacement rowEnd = childStyle.getGridRowEnd();
 
-            // Resolve named lines to numeric lines first
-            TaffyLine<GridPlacement> resolvedCol = namedLineResolver.resolveColumnNames(
-                new TaffyLine<>(colStart, colEnd));
-            TaffyLine<GridPlacement> resolvedRow = namedLineResolver.resolveRowNames(
-                new TaffyLine<>(rowStart, rowEnd));
+            // Resolve named lines to numeric lines first. A style with no named lines/areas and no
+            // named placement cannot resolve to anything, so the pair is used as-is: that avoids two
+            // temporary TaffyLine objects per item, which matters on grids with many items.
+            GridPlacement resolvedColStart = colStart;
+            GridPlacement resolvedColEnd = colEnd;
+            GridPlacement resolvedRowStart = rowStart;
+            GridPlacement resolvedRowEnd = rowEnd;
+            if (namedLineResolver.hasNamedLines()
+                || isNamedPlacement(colStart) || isNamedPlacement(colEnd)
+                || isNamedPlacement(rowStart) || isNamedPlacement(rowEnd)) {
+                TaffyLine<GridPlacement> resolvedCol = namedLineResolver.resolveColumnNames(
+                    new TaffyLine<>(colStart, colEnd));
+                TaffyLine<GridPlacement> resolvedRow = namedLineResolver.resolveRowNames(
+                    new TaffyLine<>(rowStart, rowEnd));
+                resolvedColStart = resolvedCol.start;
+                resolvedColEnd = resolvedCol.end;
+                resolvedRowStart = resolvedRow.start;
+                resolvedRowEnd = resolvedRow.end;
+            }
 
             // Parse column placement with explicit track count for negative line resolution
-            GridPlacementResult colPlacement = parseGridPlacement(resolvedCol.start, resolvedCol.end, explicitColCount);
+            GridPlacementResult colPlacement = placementMemo.resolve(resolvedColStart, resolvedColEnd,
+                explicitColCount);
             item.columnStart = colPlacement.startIndex;
             item.columnEnd = colPlacement.endIndex;
             item.columnSpan = colPlacement.span;
 
             // Parse row placement with explicit track count for negative line resolution
-            GridPlacementResult rowPlacement = parseGridPlacement(resolvedRow.start, resolvedRow.end, explicitRowCount);
+            GridPlacementResult rowPlacement = placementMemo.resolve(resolvedRowStart, resolvedRowEnd,
+                explicitRowCount);
             item.rowStart = rowPlacement.startIndex;
             item.rowEnd = rowPlacement.endIndex;
             item.rowSpan = rowPlacement.span;
@@ -2177,6 +2197,54 @@ public class GridComputer {
     private record GridPlacementResult(Integer startIndex, Integer endIndex, int span) {}
 
     /**
+     * Per-layout memo for {@link #parseGridPlacement(GridPlacement, GridPlacement, int)}.
+     * <p>
+     * A grid's items usually repeat the same handful of placements: a fully auto-placed grid has a
+     * single one, and real UIs consist mostly of auto-placed children. The memo keeps the parsed
+     * result of every distinct placement seen so far in this layout run, so the second and later
+     * items with that placement reuse the record and its resolved line numbers instead of allocating
+     * a new one per item. Placements are compared by value, so two distinct but equal
+     * {@link GridPlacement} instances hit the same entry.
+     * <p>
+     * The table is per layout run (items are generated once per grid layout) and only grows to the
+     * number of distinct placements in use.
+     */
+    private static final class GridPlacementMemo {
+        private GridPlacement[] starts = new GridPlacement[8];
+        private GridPlacement[] ends = new GridPlacement[8];
+        private int[] explicitTrackCounts = new int[8];
+        private GridPlacementResult[] results = new GridPlacementResult[8];
+        private int size;
+
+        GridPlacementResult resolve(GridPlacement start, GridPlacement end, int explicitTrackCount) {
+            for (int i = 0; i < size; i++) {
+                if (explicitTrackCounts[i] == explicitTrackCount
+                    && samePlacement(starts[i], start) && samePlacement(ends[i], end)) {
+                    return results[i];
+                }
+            }
+            GridPlacementResult result = parseGridPlacement(start, end, explicitTrackCount);
+            if (size == starts.length) {
+                int newLength = size * 2;
+                starts = java.util.Arrays.copyOf(starts, newLength);
+                ends = java.util.Arrays.copyOf(ends, newLength);
+                explicitTrackCounts = java.util.Arrays.copyOf(explicitTrackCounts, newLength);
+                results = java.util.Arrays.copyOf(results, newLength);
+            }
+            starts[size] = start;
+            ends[size] = end;
+            explicitTrackCounts[size] = explicitTrackCount;
+            results[size] = result;
+            size++;
+            return result;
+        }
+
+        private static boolean samePlacement(GridPlacement a, GridPlacement b) {
+            return a == b || (a != null && a.equals(b));
+        }
+    }
+
+    /**
      * Parse grid placement from start and end values.
      * Returns GridPlacementResult where:
      * - startIndex is OriginZero coordinate (null means auto, can be negative for implicit grid)
@@ -2185,21 +2253,27 @@ public class GridComputer {
      *
      * @param explicitTrackCount The number of explicit tracks for negative line number resolution
      */
-    private GridPlacementResult parseGridPlacement(GridPlacement start, GridPlacement end, int explicitTrackCount) {
+    private static GridPlacementResult parseGridPlacement(GridPlacement start, GridPlacement end,
+                                                          int explicitTrackCount) {
         Integer startIndex = null;
         Integer endIndex = null;
         int span = 1;
 
-        if (start.isLine()) {
+        // A null placement is an auto placement (the named-line resolver substitutes auto() for a
+        // missing value, and an item generated without named-line resolution keeps the raw value).
+        boolean startIsSpan = start != null && start.isSpan();
+        boolean endIsSpan = end != null && end.isSpan();
+
+        if (start != null && start.isLine()) {
             startIndex = resolveGridLine(start.getLineNumber(), explicitTrackCount);
         }
-        if (end.isLine()) {
+        if (end != null && end.isLine()) {
             endIndex = resolveGridLine(end.getLineNumber(), explicitTrackCount);
         }
-        if (start.isSpan()) {
+        if (startIsSpan) {
             span = clampGridSpan(start.getValue());
         }
-        if (end.isSpan()) {
+        if (endIsSpan) {
             span = clampGridSpan(end.getValue());
         }
 
@@ -2208,15 +2282,20 @@ public class GridComputer {
             span = clampGridSpan(endIndex - startIndex);
         }
         // If we have start and span but no end
-        else if (startIndex != null && end.isSpan()) {
+        else if (startIndex != null && endIsSpan) {
             endIndex = clampOzLine((long) startIndex + span);
         }
         // If we have end and span but no start
-        else if (endIndex != null && start.isSpan()) {
+        else if (endIndex != null && startIsSpan) {
             startIndex = clampOzLine((long) endIndex - span);
         }
 
         return new GridPlacementResult(startIndex, endIndex, span);
+    }
+
+    /** Whether a placement resolves a named line or a named span, i.e. needs named-line resolution. */
+    private static boolean isNamedPlacement(GridPlacement placement) {
+        return placement != null && (placement.isNamedLine() || placement.isNamedSpan());
     }
 
     /**
@@ -2235,7 +2314,7 @@ public class GridComputer {
      * @param explicitTrackCount The number of explicit tracks
      * @return OriginZero line index, or null for auto
      */
-    private Integer resolveGridLine(int lineNumber, int explicitTrackCount) {
+    private static Integer resolveGridLine(int lineNumber, int explicitTrackCount) {
         if (lineNumber == 0) {
             // Grid line 0 is invalid, treat as auto
             return null;
@@ -2784,17 +2863,27 @@ public class GridComputer {
             return usedSize;
         }
 
-        /** Start offset of one track relative to the start of the first track. */
-        float trackStart(FloatList trackSizes, int trackIndex, float adjustedGap) {
-            int end = Math.min(trackIndex, trackSizes.size());
+        /**
+         * The start offset of every track relative to the start of the first track, including the
+         * surviving gutters before it ({@code trackCount + 1} entries; the last one is the end of the
+         * last track). Building the offsets once per axis turns the per-item start-offset lookup of
+         * the placement pass into O(1) instead of an accumulation over every preceding track.
+         *
+         * @see GridComputer#trackStartAt(float[], int)
+         */
+        float[] trackStarts(FloatList trackSizes, float adjustedGap) {
+            int trackCount = trackSizes.size();
+            float[] starts = new float[trackCount + 1];
             float offset = 0f;
-            for (int i = 0; i < end; i++) {
+            for (int i = 0; i < trackCount; i++) {
+                starts[i] = offset;
                 offset += trackSizes.getFloat(i);
                 if (hasGapAfter(i)) {
                     offset += adjustedGap;
                 }
             }
-            return offset;
+            starts[trackCount] = offset;
+            return starts;
         }
 
         /** Extent of a span of tracks, including the surviving gutters between them. */
@@ -5967,6 +6056,11 @@ public class GridComputer {
         float adjustedGapX = calculateAdjustedGap(containerStyle.getJustifyContent(), freeSpaceWidth, nonCollapsedColumns, gap.width);
         float adjustedGapY = calculateAdjustedGap(containerStyle.getAlignContent(), freeSpaceHeight, nonCollapsedRows, gap.height);
 
+        // Precompute the start offset of every track (with its surviving gutters) once per axis, so
+        // positioning an item is an index lookup rather than a sum over all preceding tracks.
+        float[] columnStarts = columnGeometry.trackStarts(columnSizes, adjustedGapX);
+        float[] rowStarts = rowGeometry.trackStarts(rowSizes, adjustedGapY);
+
         for (int i = 0; i < items.size(); i++) {
             GridItem item = items.get(i);
 
@@ -5996,15 +6090,13 @@ public class GridComputer {
 
             // Track position with content alignment offset. For RTL, column indices are logical
             // (counting from inline-start), so the x-coordinate is mirrored.
-            float trackY = contentBoxInset.top + contentOffsetY
-                           + rowGeometry.trackStart(rowSizes, row, adjustedGapY);
+            float trackY = contentBoxInset.top + contentOffsetY + trackStartAt(rowStarts, row);
             float trackX;
             if (isRtl) {
                 trackX = contentBoxInset.left + (innerWidth - contentOffsetX
-                         - columnGeometry.trackStart(columnSizes, col, adjustedGapX) - trackWidth);
+                         - trackStartAt(columnStarts, col) - trackWidth);
             } else {
-                trackX = contentBoxInset.left + contentOffsetX
-                         + columnGeometry.trackStart(columnSizes, col, adjustedGapX);
+                trackX = contentBoxInset.left + contentOffsetX + trackStartAt(columnStarts, col);
             }
 
             // The grid area is the item's positioning rectangle and, for a grid item, also its
@@ -7417,6 +7509,17 @@ public class GridComputer {
         return size;
     }
 
+    /**
+     * O(1) lookup in the offset table built by
+     * {@link AxisGeometry#trackStarts(FloatList, float)}, clamped exactly like the accumulation it
+     * replaces: an index at or before the first track is 0, an index past the last track is the end
+     * of the last track.
+     */
+    private static float trackStartAt(float[] trackStarts, int trackIndex) {
+        if (trackIndex <= 0 || trackStarts.length == 0) return 0f;
+        return trackIndex >= trackStarts.length ? trackStarts[trackStarts.length - 1] : trackStarts[trackIndex];
+    }
+
     private static FloatSize maybeAdd(FloatSize size, FloatSize addition) {
         return new FloatSize(
             TaffyMath.maybeAdd(size.width, addition.width),
@@ -7820,7 +7923,7 @@ public class GridComputer {
             item.order = i;
             item.position = TaffyPosition.RELATIVE;
 
-            GridPlacementResult colPlacement = gc.parseGridPlacement(
+            GridPlacementResult colPlacement = parseGridPlacement(
                 child.getGridColumnStart(),
                 child.getGridColumnEnd(),
                 explicitColumnCount
@@ -7829,7 +7932,7 @@ public class GridComputer {
             item.columnEnd = colPlacement.endIndex;
             item.columnSpan = colPlacement.span;
 
-            GridPlacementResult rowPlacement = gc.parseGridPlacement(
+            GridPlacementResult rowPlacement = parseGridPlacement(
                 child.getGridRowStart(),
                 child.getGridRowEnd(),
                 explicitRowCount
