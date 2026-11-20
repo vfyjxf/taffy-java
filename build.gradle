@@ -121,6 +121,57 @@ tasks.register('jmhPhase', me.champeau.jmh.JMHTask) {
     jvmArgs = ['-Xss16m']
 }
 
+// LDLib2-shaped UI scenarios (src/jmh/java/dev/vfyjxf/taffy/benchmark/Ldlib2UiBenchmark.java).
+// The default "jmh" task also picks the class up through the .*Benchmark.* include; this task
+// keeps a run to that one class and its own result files:
+//   ./gradlew jmhLdlib
+//   ./gradlew jmhLdlib -PjmhLdlibIncludes='.*form.*'
+//   ./gradlew jmhLdlib -PjmhLdlibWarmupIterations=2 -PjmhLdlibIterations=3 -PjmhLdlibFork=2
+tasks.register('jmhLdlib', me.champeau.jmh.JMHTask) {
+    group = 'jmh'
+    description = 'Runs the LDLib2 UI scenario benchmarks (Ldlib2UiBenchmark).'
+
+    jmhClasspath.from(configurations.jmh)
+    testRuntimeClasspath.from(configurations.jmhRuntimeClasspath)
+    jarArchive.set(tasks.named('jmhJar').flatMap { it.archiveFile })
+
+    includes = [(project.findProperty('jmhLdlibIncludes') ?: '.*Ldlib2UiBenchmark.*') as String]
+    excludes = []
+    warmupIterations = (project.findProperty('jmhLdlibWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhLdlibIterations') ?: 1) as int
+    fork = (project.findProperty('jmhLdlibFork') ?: 1) as int
+    // Pin individual @Param values for a single-point profile run, e.g.:
+    //   ./gradlew jmhLdlib -PjmhLdlibIncludes='.*formColdLayout' -PjmhLdlibParams='targetNodes=20000'
+    if (project.hasProperty('jmhLdlibParams')) {
+        def parameters = new LinkedHashMap<String, org.gradle.api.provider.ListProperty<String>>()
+        project.property('jmhLdlibParams').split(',').each { entry ->
+            def pair = entry.split('=', 2)
+            def values = project.objects.listProperty(String)
+            values.add(pair[1].trim())
+            parameters.put(pair[0].trim(), values)
+        }
+        benchmarkParameters.set(parameters)
+    }
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results-ldlib.json")
+    humanOutputFile = project.file("${project.buildDir}/reports/jmh/output-ldlib.txt")
+    jvmArgs = ['-Xss16m']
+}
+
+// Plain-java smoke for the same scenarios: builds every tree, performs one invocation of every
+// benchmark method and checks the structural invariants. It does not start JMH and measures
+// nothing:
+//   ./gradlew jmhSmokeLdlib
+tasks.register('jmhSmokeLdlib', JavaExec) {
+    group = 'jmh'
+    description = 'Runs Ldlib2UiSmoke (one invocation per scenario, no JMH measurement).'
+
+    dependsOn tasks.named('jmhClasses')
+    classpath = sourceSets.jmh.runtimeClasspath + configurations.jmh
+    mainClass = 'dev.vfyjxf.taffy.benchmark.Ldlib2UiSmoke'
+    jvmArgs = ['-Xss16m']
+}
+
 test {
     useJUnitPlatform()
     // Forward the golden-update switch from the Gradle CLI (-D...) to the test JVM.
