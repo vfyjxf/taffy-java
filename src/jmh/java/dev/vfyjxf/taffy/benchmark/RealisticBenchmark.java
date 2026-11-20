@@ -57,14 +57,21 @@ public class RealisticBenchmark {
     public static class WebPageState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"10", "50", "100"})
         int contentSections;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildWebPage(tree, contentSections);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -85,14 +92,21 @@ public class RealisticBenchmark {
     public static class VirtualListState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"100", "500", "1000", "5000"})
         int itemCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildVirtualList(tree, itemCount);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -113,14 +127,21 @@ public class RealisticBenchmark {
     public static class DashboardState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"12", "24", "48", "96"})
         int cardCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildDashboard(tree, cardCount);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -140,14 +161,21 @@ public class RealisticBenchmark {
     public static class FormState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"10", "30", "50", "100"})
         int fieldCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildForm(tree, fieldCount);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -167,6 +195,7 @@ public class RealisticBenchmark {
     public static class NestedCardsState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"3", "4", "5"})
         int depth;
@@ -174,10 +203,16 @@ public class RealisticBenchmark {
         @Param({"3", "4"})
         int cardsPerLevel;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildNestedCards(tree, depth, cardsPerLevel);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -197,6 +232,7 @@ public class RealisticBenchmark {
     public static class ChatUIState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
         MeasureFunc measureFunc;
 
         @Param({"50", "200", "500", "1000"})
@@ -205,12 +241,14 @@ public class RealisticBenchmark {
         @Setup(Level.Trial)
         public void setupTrial() {
             measureFunc = new TextMeasureFunc();
+            tree = new TaffyTree();
+            root = buildChatUI(tree, messageCount, measureFunc);
+            nodes = BenchSupport.collectNodes(tree, root);
         }
 
         @Setup(Level.Invocation)
-        public void setup() {
-            tree = new TaffyTree();
-            root = buildChatUI(tree, messageCount, measureFunc);
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -230,6 +268,7 @@ public class RealisticBenchmark {
     public static class EcommerceState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
         MeasureFunc measureFunc;
 
         @Param({"20", "50", "100", "200"})
@@ -238,12 +277,14 @@ public class RealisticBenchmark {
         @Setup(Level.Trial)
         public void setupTrial() {
             measureFunc = new TextMeasureFunc();
+            tree = new TaffyTree();
+            root = buildEcommerceGrid(tree, productCount, measureFunc);
+            nodes = BenchSupport.collectNodes(tree, root);
         }
 
         @Setup(Level.Invocation)
-        public void setup() {
-            tree = new TaffyTree();
-            root = buildEcommerceGrid(tree, productCount, measureFunc);
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -263,15 +304,17 @@ public class RealisticBenchmark {
     public static class ResponsiveState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
         float[][] viewports;
 
         @Param({"50", "100"})
         int componentCount;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildResponsiveLayout(tree, componentCount);
+            nodes = BenchSupport.collectNodes(tree, root);
             // Common device breakpoints
             viewports = new float[][] {
                 {320f, 568f},   // iPhone SE
@@ -282,6 +325,11 @@ public class RealisticBenchmark {
                 {1366f, 768f},  // Laptop
                 {1920f, 1080f}  // Desktop
             };
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -303,6 +351,7 @@ public class RealisticBenchmark {
     public static class DataTableState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
 
         @Param({"10", "20"})
         int columns;
@@ -310,10 +359,16 @@ public class RealisticBenchmark {
         @Param({"100", "500", "1000"})
         int rows;
 
-        @Setup(Level.Invocation)
+        @Setup(Level.Trial)
         public void setup() {
             tree = new TaffyTree();
             root = buildDataTable(tree, rows, columns);
+            nodes = BenchSupport.collectNodes(tree, root);
+        }
+
+        @Setup(Level.Invocation)
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
@@ -333,6 +388,7 @@ public class RealisticBenchmark {
     public static class MobileAppState {
         TaffyTree tree;
         NodeId root;
+        NodeId[] nodes;
         MeasureFunc measureFunc;
 
         @Param({"20", "50", "100"})
@@ -341,12 +397,14 @@ public class RealisticBenchmark {
         @Setup(Level.Trial)
         public void setupTrial() {
             measureFunc = new TextMeasureFunc();
+            tree = new TaffyTree();
+            root = buildMobileApp(tree, contentItems, measureFunc);
+            nodes = BenchSupport.collectNodes(tree, root);
         }
 
         @Setup(Level.Invocation)
-        public void setup() {
-            tree = new TaffyTree();
-            root = buildMobileApp(tree, contentItems, measureFunc);
+        public void invalidateCaches() {
+            BenchSupport.clearCaches(tree, nodes);
         }
     }
 
