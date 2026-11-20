@@ -397,7 +397,7 @@ public class BlockComputer {
         // transferred constraint.
         boolean widthDerivedByAspectRatio = false;
         boolean heightDerivedByAspectRatio = false;
-        if (runMode == RunMode.PERFORM_LAYOUT && !Float.isNaN(aspectRatio)) {
+        if (runMode == RunMode.PERFORM_LAYOUT && Resolve.isTransferableAspectRatio(aspectRatio)) {
             FloatSize derived = styledBasedKnownDimensions;
             if (!Float.isNaN(derived.width) && Float.isNaN(derived.height)) {
                 float arDerivedHeight = (derived.width - boxSizingAdjustment.width) / aspectRatio

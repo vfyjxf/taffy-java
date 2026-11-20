@@ -1096,7 +1096,7 @@ public class LayoutComputer {
             // the ratio: `height: 300px; max-height: 25px; aspect-ratio: 4` is 25px tall and
             // therefore 100px wide, not 1200px.
             FloatSize clampedStyleSize = maybeClamp(styleSize, minSize, maxSize);
-            if (!Float.isNaN(aspectRatio)) {
+            if (Resolve.isTransferableAspectRatio(aspectRatio)) {
                 FloatSize contentBox = new FloatSize(
                     clampedStyleSize.width - boxSizingAdjustment.width,
                     clampedStyleSize.height - boxSizingAdjustment.height
@@ -1238,7 +1238,7 @@ public class LayoutComputer {
         // Apply aspect-ratio enforcement.
         // When one dimension is known (from knownDimensions or style) and the other is auto/measured,
         // derive the auto dimension from the known one via aspect ratio.
-        if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
+        if (Resolve.isTransferableAspectRatio(aspectRatio == null ? Float.NaN : aspectRatio)) {
             // Derive height from width (existing behavior)
             float aspectHeight = width / aspectRatio;
             height = Math.max(height, aspectHeight);

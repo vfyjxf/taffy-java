@@ -5968,7 +5968,8 @@ public class GridComputer {
             float itemPaddingBorderWidth = itemPaddingBorderSize.width;
             float itemPaddingBorderHeight = itemPaddingBorderSize.height;
 
-            boolean hasAspectRatio = item.aspectRatio != null && !Float.isNaN(item.aspectRatio);
+            boolean hasAspectRatio = item.aspectRatio != null
+                && Resolve.isTransferableAspectRatio(item.aspectRatio);
 
             // The block-axis size transfers through a preferred aspect ratio to the inline size
             // whenever it is already definite: either specified, or stretched by an explicit
