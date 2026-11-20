@@ -48,15 +48,20 @@ shadowJar {
 }
 
 jmh {
-    warmupIterations = 2
-    iterations = 5
-    fork = 1
-    // Include all benchmark classes using full regex pattern
-    includes = ['.*Benchmark.*']
+    // Defaults are a fast smoke profile: 1 warmup + 1 measurement iteration, one fork.
+    // For a stable comparison run, override them from the command line, for example:
+    //   ./gradlew jmh -PjmhWarmupIterations=3 -PjmhIterations=5 -PjmhFork=2
+    warmupIterations = (project.findProperty('jmhWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhIterations') ?: 1) as int
+    fork = (project.findProperty('jmhFork') ?: 1) as int
 
-    // Keep default runs reasonably fast.
-    // Extended benchmarks are opt-in via the `jmhExtended` task below.
-    excludes = ['.*ExtendedBenchmark.*']
+    // Include all benchmark classes using full regex pattern.
+    // Both patterns can be overridden to run a subset:
+    //   ./gradlew jmh -PjmhIncludes='.*FlexScenarioBenchmark.*'
+    includes = [(project.findProperty('jmhIncludes') ?: '.*Benchmark.*') as String]
+
+    // Extended benchmarks (100k-node inputs) are opt-in via the `jmhExtended` task.
+    excludes = [(project.findProperty('jmhExcludes') ?: '.*ExtendedBenchmark.*') as String]
 
     // JMH options
     jmhVersion = '1.37'
@@ -64,6 +69,29 @@ jmh {
     resultsFile = project.file("${project.buildDir}/reports/jmh/results.json")
 
     // Increase stack size for deep recursion benchmarks (depth=1000)
+    jvmArgs = ['-Xss16m']
+}
+
+// Large-input benchmarks (100k-node PanGUI/tree workloads) are excluded from the default
+// `jmh` task. Run them explicitly with:
+//   ./gradlew jmhExtended
+// Override iterations with -PjmhExtendedWarmupIterations / -PjmhExtendedIterations.
+tasks.register('jmhExtended', me.champeau.jmh.JMHTask) {
+    group = 'jmh'
+    description = 'Runs the large (Extended) JMH benchmarks excluded from the default jmh task.'
+
+    jmhClasspath.from(configurations.jmh)
+    testRuntimeClasspath.from(configurations.jmhRuntimeClasspath)
+    jarArchive.set(tasks.named('jmhJar').flatMap { it.archiveFile })
+
+    includes = [(project.findProperty('jmhExtendedIncludes') ?: '.*ExtendedBenchmark.*') as String]
+    excludes = []
+    warmupIterations = (project.findProperty('jmhExtendedWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhExtendedIterations') ?: 2) as int
+    fork = 1
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results-extended.json")
+    humanOutputFile = project.file("${project.buildDir}/reports/jmh/output-extended.txt")
     jvmArgs = ['-Xss16m']
 }
 
