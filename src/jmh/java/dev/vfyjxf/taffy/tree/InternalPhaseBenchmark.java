@@ -197,8 +197,11 @@ public class InternalPhaseBenchmark {
                 children[i] = tree.newLeaf(leafStyle);
             }
             root = tree.newWithChildren(rootStyle, children);
+            // Lay out once with rounding disabled so the measured call is exactly one rounding
+            // pass; enable it afterwards so getLayout returns the rounded output the pass wrote.
             tree.computeLayout(root, TaffySize.of(
                 AvailableSpace.definite(2000f), AvailableSpace.maxContent()));
+            tree.enableRounding();
         }
     }
 
