@@ -1233,11 +1233,14 @@ public class BlockComputer {
                 : justifySelf;
 
             FloatSize knownDimensions;
-            // Unless stretched, tables resolve their own width (CSS2 section 10.3.3): an
-            // auto-width table is sized by its content, not by the containing block. A stretch
-            // justify-self stretches such a box through the regular stretch path instead
-            // (upstream #1250).
-            if (item.isTable && !isStretchJustifySelf) {
+            // Unless stretched, tables and compressible replaced elements resolve their own
+            // width instead of being stretch-sized (CSS2 section 10.3.3): an auto-width table is
+            // sized by its content, and a replaced element's auto width is its intrinsic size,
+            // not the containing block's width. Upstream passes Size::NONE for both so the
+            // child's own layout resolves its style/intrinsic size; a stretch justify-self
+            // stretches such a box through the regular stretch path instead (upstream #1250).
+            // BK-04 / upstream #1002 (945de0dd); ST-05's isCompressibleReplaced().
+            if ((item.isTable || item.isCompressibleReplaced) && !isStretchJustifySelf) {
                 knownDimensions = new FloatSize(NaN, NaN);
             } else {
                 float width;
@@ -1305,10 +1308,19 @@ public class BlockComputer {
                 && !item.overflow.x.isScrollContainer()
                 && !item.overflow.y.isScrollContainer()
                 && !item.contain.establishesIndependentFormattingContext()) {
+                // A table or replaced child has no known width (it resolves its own size), so the
+                // containing block used for float avoidance is the stretch width it would get if
+                // it were stretch-sized instead of a zero width, matching upstream #1002's
+                // `known_dimensions.width.unwrap_or(stretch_width)`.
                 float childWidth = knownDimensions.width;
+                if (Float.isNaN(childWidth)) {
+                    childWidth = avoidsFloats
+                                 ? floatAvailableWidth
+                                 : containerInnerWidth - itemNonAutoXMarginSum;
+                    childWidth = Math.max(childWidth, item.paddingBorderSum.width);
+                }
                 float childLeftInset = contentBoxInset.left + itemNonAutoMargin.left;
-                float childRightInset = containerOuterWidth - childLeftInset
-                                        - (!Float.isNaN(childWidth) ? childWidth : 0.0f);
+                float childRightInset = containerOuterWidth - childLeftInset - childWidth;
                 float estimatedY = committedYOffset + activeCollapsibleMarginSet.resolve();
                 childBlockContext = blockContext.subContext(estimatedY, childLeftInset, childRightInset);
             }
