@@ -21,6 +21,8 @@ final class StyleCodegen {
         String direction;          // LTR / RTL
         String display;            // NONE / BLOCK / GRID (FLEX is the default, omit)
         String position;           // ABSOLUTE (static/relative are defaults, omit)
+        String floatSide;          // TaffyFloat LEFT/RIGHT (none is the default, omit)
+        String clear;              // Clear LEFT/RIGHT/BOTH (none is the default, omit)
 
         String flexDirection;
         String flexWrap;
@@ -40,6 +42,11 @@ final class StyleCodegen {
         Size minSize;
         Size maxSize;
         Float aspectRatio;
+        /** Replaced element flag: consumed by block/flex/grid sizing in the engine. */
+        boolean itemIsReplaced;
+        /** Intrinsic size of a replaced leaf; emitted as an {@code itemIsReplaced} measure function. */
+        Float intrinsicWidth;
+        Float intrinsicHeight;
         Size gap;
 
         Edges margin;
@@ -140,6 +147,12 @@ final class StyleCodegen {
         if (style.position != null) {
             sb.append(ind).append(styleVar).append(".position = TaffyPosition.").append(style.position).append(";\n");
         }
+        if (style.floatSide != null) {
+            sb.append(ind).append(styleVar).append(".float_ = TaffyFloat.").append(style.floatSide).append(";\n");
+        }
+        if (style.clear != null) {
+            sb.append(ind).append(styleVar).append(".clear = Clear.").append(style.clear).append(";\n");
+        }
         if (style.flexDirection != null) {
             sb.append(ind).append(styleVar).append(".flexDirection = FlexDirection.").append(style.flexDirection).append(";\n");
         }
@@ -181,6 +194,9 @@ final class StyleCodegen {
         emitSize(sb, styleVar, "maxSize", style.maxSize, ind);
         if (style.aspectRatio != null) {
             sb.append(ind).append(styleVar).append(".aspectRatio = ").append(floatLiteral(style.aspectRatio)).append(";\n");
+        }
+        if (style.itemIsReplaced) {
+            sb.append(ind).append(styleVar).append(".itemIsReplaced = true;\n");
         }
         emitGap(sb, styleVar, style.gap, ind);
         emitEdges(sb, styleVar, "margin", style.margin, ind);
@@ -273,6 +289,7 @@ final class StyleCodegen {
         }
         return switch (value) {
             case "hidden" -> "Overflow.HIDDEN";
+            case "clip" -> "Overflow.CLIP";
             case "scroll" -> "Overflow.SCROLL";
             case "auto" -> "Overflow.AUTO";
             default -> "Overflow.VISIBLE";

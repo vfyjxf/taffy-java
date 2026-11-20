@@ -125,6 +125,7 @@ final class WptSource {
 
         LocalHttpServer server = LocalHttpServer.start(urlRoot, cssRoot);
         System.out.println("WPT HTTP base: " + server.baseUrl());
+        WptSupport.SkipStats skipStats = new WptSupport.SkipStats();
         try {
             for (String suite : suites) {
                 List<Fixture> suiteFixtures = bySuite.get(suite);
@@ -134,44 +135,41 @@ final class WptSource {
                 String baseClass = JavaTestWriter.wptSuiteClass(suite);
                 Set<Path> written = new HashSet<>();
 
-                boolean chunked = suiteFixtures.size() > MAX_TESTS_PER_CLASS;
-                int classIndex = 0;
-                int totalOk = 0;
-                for (int start = 0; start < suiteFixtures.size(); start += MAX_TESTS_PER_CLASS) {
-                    int end = Math.min(start + MAX_TESTS_PER_CLASS, suiteFixtures.size());
-                    List<Fixture> chunk = suiteFixtures.subList(start, end);
-                    String className = chunked ? baseClass + "_" + (classIndex + 1) : baseClass;
+                // Generate all accepted methods first: chunking by *accepted* count keeps
+                // classes full (a fixture-level split would leave holes after skips).
+                List<String> methods = new ArrayList<>();
+                for (Fixture fixture : suiteFixtures) {
+                    try {
+                        String method = generateOne(oracle, server.baseUrl(), fixture, skipStats);
+                        if (method != null) {
+                            methods.add(method);
+                            accepted.add(fixture.relativePath());
+                        }
+                    } catch (Exception ex) {
+                        System.err.println("[error] " + fixture.relativePath() + ": " + ex.getMessage());
+                        ex.printStackTrace();
+                    }
+                }
 
+                boolean chunked = methods.size() > MAX_TESTS_PER_CLASS;
+                int classIndex = 0;
+                for (int start = 0; start < methods.size(); start += MAX_TESTS_PER_CLASS) {
+                    int end = Math.min(start + MAX_TESTS_PER_CLASS, methods.size());
+                    String className = chunked ? baseClass + "_" + (classIndex + 1) : baseClass;
                     StringBuilder sb = new StringBuilder();
                     sb.append(JavaTestWriter.wptHeader(pkg, className));
-                    int ok = 0;
-                    for (Fixture fixture : chunk) {
-                        try {
-                            String method = generateOne(oracle, server.baseUrl(), fixture);
-                            if (method != null) {
-                                sb.append(method);
-                                ok++;
-                                accepted.add(fixture.relativePath());
-                            }
-                        } catch (Exception ex) {
-                            System.err.println("[error] " + fixture.relativePath() + ": " + ex.getMessage());
-                            ex.printStackTrace();
-                        }
+                    for (String method : methods.subList(start, end)) {
+                        sb.append(method);
                     }
                     sb.append("}\n");
                     Path file = outDir.resolve(className + ".java");
                     JavaTestWriter.write(file, sb.toString());
                     written.add(file.toAbsolutePath().normalize());
-                    System.out.println("Wrote " + ok + " tests to " + file);
-                    totalOk += ok;
+                    System.out.println("Wrote " + (end - start) + " tests to " + file);
                     classIndex++;
-
-                    if (!chunked) {
-                        break;
-                    }
                 }
                 cleanupStale(outDir, baseClass, written);
-                System.out.println("Suite '" + suite + "' generated tests: " + totalOk);
+                System.out.println("Suite '" + suite + "' generated tests: " + methods.size());
                 for (Path file : written) {
                     generated.add(new GeneratedFile(suite, file.getFileName().toString().replace(".java", ""), file));
                 }
@@ -179,6 +177,9 @@ final class WptSource {
         } finally {
             server.close();
         }
+        skipStats.printSummary();
+        System.out.println("WPT accepted: " + accepted.size() + " test(s) from "
+                + fixtures.size() + " fixture(s)");
 
         if (options.acceptedOut != null) {
             List<String> unique = accepted.stream().map(s -> s.replace('\\', '/')).distinct().toList();
@@ -213,38 +214,52 @@ final class WptSource {
     // Per-fixture generation
     // ------------------------------------------------------------------
 
-    private static String generateOne(ChromeOracle oracle, String baseUrl, Fixture fixture) {
+    private static String generateOne(ChromeOracle oracle, String baseUrl, Fixture fixture,
+                                       WptSupport.SkipStats skipStats) {
         String url = baseUrl + (fixture.relativePath().startsWith("/")
                 ? fixture.relativePath().substring(1)
                 : fixture.relativePath());
         oracle.loadUrl(url);
         Object result = oracle.executeScript(WptDomCollector.JS_COLLECT);
         if (result == null || result.toString().isBlank()) {
-            System.err.println("[skip] no data returned: " + fixture.relativePath());
-            return null;
+            return skip(fixture, skipStats, "collector returned no data");
         }
         JsonObject data = GSON.fromJson(result.toString(), JsonObject.class);
+        if (data.has("skipReason") && !data.get("skipReason").isJsonNull()) {
+            return skip(fixture, skipStats, data.get("skipReason").getAsString());
+        }
         JsonObject viewport = data.getAsJsonObject("viewport");
         int vw = viewport.get("width").getAsInt();
         int vh = viewport.get("height").getAsInt();
 
         JsonArray nodeArray = data.getAsJsonArray("nodes");
         if (nodeArray == null || nodeArray.isEmpty()) {
-            System.err.println("[skip] empty node list: " + fixture.relativePath());
-            return null;
+            return skip(fixture, skipStats, "collector returned an empty node list");
         }
         List<NodeInfo> infos = new ArrayList<>(nodeArray.size());
         for (JsonElement element : nodeArray) {
             infos.add(NodeInfo.from(element.getAsJsonObject()));
         }
         if (infos.size() > 500) {
-            System.err.println("[skip] too many nodes (" + infos.size() + "): " + fixture.relativePath());
-            return null;
+            return skip(fixture, skipStats, "too many nodes (" + infos.size() + " > 500)");
         }
         NodeInfo root = infos.get(0);
         if (!"body".equalsIgnoreCase(root.tag)) {
-            System.err.println("[skip] unexpected root tag (expected body): " + root.tag + " for " + fixture.relativePath());
-            return null;
+            return skip(fixture, skipStats, "unexpected root tag (expected body): " + root.tag);
+        }
+        int testRootIndex = -1;
+        for (int i = 1; i < infos.size(); i++) {
+            if (infos.get(i).parentIndex == 0) {
+                testRootIndex = i;
+                break;
+            }
+        }
+        if (testRootIndex < 0) {
+            return skip(fixture, skipStats, "no test container selected");
+        }
+        String unsupported = WptSupport.unsupportedReason(infos, testRootIndex);
+        if (unsupported != null) {
+            return skip(fixture, skipStats, unsupported);
         }
 
         List<WptStyle> styles;
@@ -254,8 +269,7 @@ final class WptSource {
                 styles.add(WptStyle.fromDom(info));
             }
         } catch (UnsupportedStyleException ex) {
-            System.err.println("[skip] unsupported style in " + fixture.relativePath() + ": " + ex.getMessage());
-            return null;
+            return skip(fixture, skipStats, "unsupported style: " + ex.getMessage());
         }
 
         int n = infos.size();
@@ -270,14 +284,6 @@ final class WptSource {
             }
         }
         List<Integer> order = topoOrderBottomUp(children);
-
-        int testRootIndex = -1;
-        for (int i = 1; i < n; i++) {
-            if (infos.get(i).parentIndex == 0) {
-                testRootIndex = i;
-                break;
-            }
-        }
 
         List<AssertionData> assertions = new ArrayList<>();
         for (int i = 1; i < n; i++) {
@@ -344,6 +350,12 @@ final class WptSource {
         return sb.toString();
     }
 
+    private static String skip(Fixture fixture, WptSupport.SkipStats skipStats, String reason) {
+        System.err.println("[skip] " + fixture.relativePath() + ": " + reason);
+        skipStats.record(reason);
+        return null;
+    }
+
     private static void appendSimpleTest(StringBuilder sb, Fixture fixture, String methodName, int n,
                                          List<NodeStyle> styles, List<Integer> order,
                                          Map<Integer, List<Integer>> children,
@@ -366,7 +378,7 @@ final class WptSource {
         for (int idx : order) {
             List<Integer> child = children.get(idx);
             if (child.isEmpty()) {
-                sb.append("        n").append(idx).append(" = tree.newLeaf(s").append(idx).append(");\n");
+                appendLeaf(sb, "n" + idx, "s" + idx, styles.get(idx), "        ");
             } else {
                 sb.append("        n").append(idx).append(" = tree.newWithChildren(s").append(idx).append(", ");
                 for (int j = 0; j < child.size(); j++) {
@@ -382,6 +394,23 @@ final class WptSource {
         sb.append("        tree.computeLayout(n0, TaffySize.maxContent());\n\n");
         appendAssertionsInline(sb, assertions);
         sb.append("    }\n\n");
+    }
+
+    /**
+     * Emits leaf creation. Replaced elements with a known intrinsic size are created
+     * with the {@code replacedIntrinsicSize} measure callback; every other leaf keeps
+     * the plain {@code newLeaf} form.
+     */
+    private static void appendLeaf(StringBuilder sb, String nodeVar, String styleVar,
+                                   NodeStyle style, String ind) {
+        if (style.intrinsicWidth != null && style.intrinsicHeight != null) {
+            sb.append(ind).append(nodeVar).append(" = tree.newLeafWithMeasure(").append(styleVar)
+                    .append(", replacedIntrinsicSize(")
+                    .append(JavaTestWriter.fmtFloat(style.intrinsicWidth)).append("f, ")
+                    .append(JavaTestWriter.fmtFloat(style.intrinsicHeight)).append("f));\n");
+        } else {
+            sb.append(ind).append(nodeVar).append(" = tree.newLeaf(").append(styleVar).append(");\n");
+        }
     }
 
     private static void appendSplitTest(StringBuilder sb, Fixture fixture, String methodName, int n,
@@ -412,7 +441,7 @@ final class WptSource {
                 int idx = order.get(j);
                 List<Integer> child = children.get(idx);
                 if (child.isEmpty()) {
-                    sb.append("        nodes[").append(idx).append("] = tree.newLeaf(styles[").append(idx).append("]);\n");
+                    appendLeaf(sb, "nodes[" + idx + "]", "styles[" + idx + "]", styles.get(idx), "        ");
                 } else {
                     sb.append("        nodes[").append(idx).append("] = tree.newWithChildren(styles[").append(idx).append("], ");
                     for (int k = 0; k < child.size(); k++) {
@@ -540,19 +569,27 @@ final class WptSource {
         final String id;
         final String inlineStyle;
         final Map<String, String> computed;
+        final boolean hasText;
+        final int naturalWidth;
+        final int naturalHeight;
         final float rectX;
         final float rectY;
         final float rectW;
         final float rectH;
 
         private NodeInfo(int index, int parentIndex, String tag, String id, String inlineStyle,
-                         Map<String, String> computed, float rectX, float rectY, float rectW, float rectH) {
+                         Map<String, String> computed, boolean hasText,
+                         int naturalWidth, int naturalHeight,
+                         float rectX, float rectY, float rectW, float rectH) {
             this.index = index;
             this.parentIndex = parentIndex;
             this.tag = tag;
             this.id = id;
             this.inlineStyle = inlineStyle;
             this.computed = computed;
+            this.hasText = hasText;
+            this.naturalWidth = naturalWidth;
+            this.naturalHeight = naturalHeight;
             this.rectX = rectX;
             this.rectY = rectY;
             this.rectW = rectW;
@@ -577,8 +614,12 @@ final class WptSource {
                     computed.put(entry.getKey(), entry.getValue().getAsString());
                 }
             }
+            boolean hasText = object.has("hasText") && object.get("hasText").getAsBoolean();
+            int naturalWidth = object.has("naturalWidth") ? object.get("naturalWidth").getAsInt() : 0;
+            int naturalHeight = object.has("naturalHeight") ? object.get("naturalHeight").getAsInt() : 0;
             JsonObject rect = object.getAsJsonObject("rect");
-            return new NodeInfo(index, parent, tag, id, style, computed,
+            return new NodeInfo(index, parent, tag, id, style, computed, hasText,
+                    naturalWidth, naturalHeight,
                     rect.get("x").getAsFloat(), rect.get("y").getAsFloat(),
                     rect.get("w").getAsFloat(), rect.get("h").getAsFloat());
         }
@@ -601,7 +642,8 @@ final class WptSource {
             node.display = switch (display == null ? "" : display) {
                 case "flex", "inline-flex" -> "FLEX";
                 case "grid", "inline-grid" -> "GRID";
-                case "block", "flow-root", "inline-block" -> "BLOCK";
+                case "block", "inline-block" -> "BLOCK";
+                case "flow-root" -> "FLOW_ROOT";
                 case "none" -> "NONE";
                 default -> null;
             };
@@ -627,6 +669,9 @@ final class WptSource {
                 default -> null;
             };
 
+            applyFloatAndClear(css, node);
+            applyOverflow(css, node);
+
             String width = CssValues.dimensionExpr(css.get("width"));
             String height = CssValues.dimensionExpr(css.get("height"));
             if (width != null || height != null) {
@@ -644,6 +689,7 @@ final class WptSource {
             }
 
             node.aspectRatio = parseAspectRatio(css.get("aspect-ratio"));
+            applyReplacedData(info, css, node);
 
             node.margin = edgesFromBoxShorthand(css, "margin", true, EdgeKind.LENGTH_PERCENTAGE_AUTO_ZERO);
             node.padding = edgesFromBoxShorthand(css, "padding", false, EdgeKind.LENGTH_PERCENTAGE);
@@ -743,11 +789,136 @@ final class WptSource {
             };
         }
 
-        private static Float parseAspectRatio(String value) {
-            if (value == null || value.isBlank() || "auto".equalsIgnoreCase(value.trim())) {
+        /**
+         * Maps float/clear. Only the values taffy-java models are accepted;
+         * {@code inline-start}/{@code inline-end} resolve through the inline
+         * direction, everything else is reported as unsupported.
+         */
+        private static void applyFloatAndClear(CssStyleMap css, NodeStyle node) {
+            boolean rtl = "rtl".equals(lower(css.get("direction")));
+            String floatValue = lower(css.get("float"));
+            node.floatSide = switch (floatValue == null ? "none" : floatValue) {
+                case "none" -> null;
+                case "left" -> "LEFT";
+                case "right" -> "RIGHT";
+                case "inline-start" -> rtl ? "RIGHT" : "LEFT";
+                case "inline-end" -> rtl ? "LEFT" : "RIGHT";
+                default -> throw new UnsupportedStyleException("CSS float value not supported: " + floatValue);
+            };
+            String clearValue = lower(css.get("clear"));
+            node.clear = switch (clearValue == null ? "none" : clearValue) {
+                case "none" -> null;
+                case "left" -> "LEFT";
+                case "right" -> "RIGHT";
+                case "both" -> "BOTH";
+                case "inline-start" -> rtl ? "RIGHT" : "LEFT";
+                case "inline-end" -> rtl ? "LEFT" : "RIGHT";
+                default -> throw new UnsupportedStyleException("CSS clear value not supported: " + clearValue);
+            };
+        }
+
+        /** Maps the used overflow pair; {@code clip} maps onto {@code Overflow.CLIP}. */
+        private static void applyOverflow(CssStyleMap css, NodeStyle node) {
+            String x = lower(css.get("overflow-x"));
+            String y = lower(css.get("overflow-y"));
+            if (x == null && y == null) {
+                String shorthand = lower(css.get("overflow"));
+                if (shorthand == null || shorthand.isBlank()) {
+                    return;
+                }
+                String[] parts = shorthand.trim().split("\\s+");
+                x = parts[0];
+                y = parts.length > 1 ? parts[1] : parts[0];
+            }
+            if (x == null) {
+                x = "visible";
+            }
+            if (y == null) {
+                y = "visible";
+            }
+            if ("visible".equals(x) && "visible".equals(y)) {
+                return;
+            }
+            node.overflow = new StyleCodegen.Overflow(mapWptOverflow(x), mapWptOverflow(y), null);
+        }
+
+        /**
+         * Maps one overflow axis. {@code auto} has no direct engine value: taffy's
+         * {@code SCROLL} always reserves a scrollbar gutter, so {@code auto} maps to
+         * {@code HIDDEN} (a scroll container for minimum-size purposes without a
+         * reserved gutter). This is an approximation documented in gentest/README.md.
+         */
+        private static String mapWptOverflow(String value) {
+            return switch (value) {
+                case "clip" -> "Overflow.CLIP";
+                case "hidden" -> "Overflow.HIDDEN";
+                case "scroll" -> "Overflow.SCROLL";
+                case "auto" -> "Overflow.HIDDEN";
+                default -> "Overflow.VISIBLE";
+            };
+        }
+
+        /**
+         * Encodes replaced-element semantics: the engine consumes {@code itemIsReplaced}
+         * (block/flex/grid stretch and minimum contributions) but has no intrinsic size
+         * of its own, so the browser-reported natural size is turned into an intrinsic
+         * aspect ratio, plus a measure callback when both axes are auto.
+         */
+        private static void applyReplacedData(NodeInfo info, CssStyleMap css, NodeStyle node) {
+            if (!isReplacedTag(info.tag)) {
+                return;
+            }
+            node.itemIsReplaced = true;
+            float naturalRatio = info.naturalWidth > 0 && info.naturalHeight > 0
+                    ? (float) info.naturalWidth / (float) info.naturalHeight
+                    : Float.NaN;
+            String rawRatio = css.get("aspect-ratio");
+            boolean ratioIsAuto = rawRatio == null || rawRatio.isBlank()
+                    || rawRatio.trim().toLowerCase(Locale.ROOT).startsWith("auto");
+            if (!Float.isNaN(naturalRatio) && (ratioIsAuto || node.aspectRatio == null)) {
+                node.aspectRatio = naturalRatio;
+            }
+            if (isAuto(css.get("width")) && isAuto(css.get("height"))
+                    && info.naturalWidth > 0 && info.naturalHeight > 0) {
+                node.intrinsicWidth = (float) info.naturalWidth;
+                node.intrinsicHeight = (float) info.naturalHeight;
+            }
+        }
+
+        private static boolean isReplacedTag(String tag) {
+            if (tag == null) {
+                return false;
+            }
+            return switch (tag.toLowerCase(Locale.ROOT)) {
+                case "img", "canvas" -> true;
+                default -> false;
+            };
+        }
+
+        private static boolean isAuto(String value) {
+            return value == null || value.isBlank() || "auto".equalsIgnoreCase(value.trim())
+                    || "content".equalsIgnoreCase(value.trim());
+        }
+
+        /**
+         * Parses {@code aspect-ratio}. The computed value of a replaced element is
+         * {@code auto <ratio>} (natural ratio preferred, ratio as fallback), so the
+         * leading {@code auto} keyword is stripped and the ratio part is used.
+         */
+        static Float parseAspectRatio(String value) {
+            if (value == null || value.isBlank()) {
                 return null;
             }
-            String v = value.trim();
+            String v = value.trim().toLowerCase(Locale.ROOT);
+            if ("auto".equals(v)) {
+                return null;
+            }
+            if (v.startsWith("auto")) {
+                v = v.substring(4).trim();
+                if (v.isEmpty()) {
+                    return null;
+                }
+            }
             try {
                 if (v.contains("/")) {
                     String[] parts = v.split("\\s*/\\s*");

@@ -29,6 +29,7 @@ return (function(){
   const props = [
     'display','position','box-sizing','direction',
     'width','height','min-width','min-height','max-width','max-height',
+    'inline-size','block-size','min-inline-size','min-block-size','max-inline-size','max-block-size',
     'aspect-ratio',
     'margin','margin-left','margin-right','margin-top','margin-bottom',
     'padding','padding-left','padding-right','padding-top','padding-bottom',
@@ -36,6 +37,7 @@ return (function(){
     'left','right','top','bottom',
     'float','clear',
     'overflow','overflow-x','overflow-y',
+    'columns','column-count','column-width',
     'writing-mode','vertical-align',
     'contain','contain-intrinsic-size',
     'flex-direction','flex-wrap','flex-grow','flex-shrink','flex-basis',
@@ -134,9 +136,12 @@ return (function(){
         computed[p] = original[p];
       } else if (insetProps.has(p) && !original[p]) {
         computed[p] = 'auto';
-      } else if (sizeProps.has(p) && !original[p] && hasAR) {
+      } else if (sizeProps.has(p) && !original[p] && hasAR
+                 && !(p === 'width' ? original['inline-size'] : original['block-size'])) {
         // For elements with aspect-ratio, unspecified width/height must be 'auto'
         // so the layout engine resolves them via the aspect-ratio, not a fixed value.
+        // A logical size (inline-size/block-size) still specifies the used size, so
+        // its computed physical value is kept instead of being replaced by 'auto'.
         computed[p] = 'auto';
       }
     }
@@ -216,7 +221,10 @@ return (function(){
       root = candidates[0];
     }
     if (!root) {
-      skipReason = 'no test container: body only contains description paragraphs';
+      const bodyStyle = (body.getAttribute('style') || '').trim();
+      skipReason = bodyStyle !== ''
+          ? 'test element is the body element; body layout is not modelled'
+          : 'no test container: body has no layout test element';
     }
   }
   if (root) {
