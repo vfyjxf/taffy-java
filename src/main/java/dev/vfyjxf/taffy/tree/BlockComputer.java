@@ -1092,7 +1092,7 @@ public class BlockComputer {
                     new FloatSize(NaN, NaN),
                     new TaffySize<>(itemAvailable, AvailableSpace.minContent()),
                     SizingMode.INHERENT_SIZE,
-                    new TaffyLine<>(true, true)
+                    TaffyLine.TRUE
                 );
                 float measuredWidth = output.size().width;
                 // The cap is the item's min-content contribution, so its fit-content contribution
@@ -1163,6 +1163,15 @@ public class BlockComputer {
             AvailableSpace.definite(containerInnerWidth),
             AvailableSpace.maxContent()
         );
+
+        // The available space handed to an in-flow item is the container's own, narrowed by the
+        // item's horizontal margin sum. The TaffySize wrapper therefore only differs by
+        // that sum, so it is rebuilt only when the sum changes -- in a container whose items share
+        // their horizontal margins (the overwhelmingly common case) once per pass. Everything
+        // that consumes it (the layout cache included) reads the value rather than retaining or
+        // mutating the wrapper.
+        TaffySize<AvailableSpace> itemAvailableSpace = null;
+        float itemAvailableSpaceMarginSum = NaN;
 
         float committedYOffset = contentBoxInset.top;
         float yOffsetForAbsolute = contentBoxInset.top;
@@ -1463,7 +1472,7 @@ public class BlockComputer {
                             parentSize,
                             new TaffySize<>(keyword.getMeasureAvailableSpace(), AvailableSpace.maxContent()),
                             SizingMode.INHERENT_SIZE,
-                            new TaffyLine<>(true, true)
+                            TaffyLine.TRUE
                         );
                         keywordWidth = measured.width;
                     }
@@ -1501,7 +1510,7 @@ public class BlockComputer {
                         parentSize,
                         new TaffySize<>(AvailableSpace.minContent(), AvailableSpace.maxContent()),
                         SizingMode.INHERENT_SIZE,
-                        new TaffyLine<>(true, true)
+                        TaffyLine.TRUE
                     );
                     if (!Float.isNaN(minContent.width)) {
                         width = Math.max(width, minContent.width);
@@ -1574,17 +1583,21 @@ public class BlockComputer {
             // The parent's run mode is propagated: measuring this container must not make its
             // children write layout state, and a vertical ComputeSize pass needs the children's
             // margin-collapse outputs. BK-02 / upstream #972.
+            if (itemAvailableSpace == null || itemNonAutoXMarginSum != itemAvailableSpaceMarginSum) {
+                itemAvailableSpace = new TaffySize<>(
+                    subtractFromAvailable(availableSpace.width, itemNonAutoXMarginSum),
+                    availableSpace.height
+                );
+                itemAvailableSpaceMarginSum = itemNonAutoXMarginSum;
+            }
             LayoutOutput itemOutput = childBlockContext != null
                 ? layoutComputer.performChildLayout(
                     item.nodeId,
                     knownDimensions,
                     parentSize,
-                    new TaffySize<>(
-                        subtractFromAvailable(availableSpace.width, itemNonAutoXMarginSum),
-                        availableSpace.height
-                    ),
+                    itemAvailableSpace,
                     SizingMode.INHERENT_SIZE,
-                    new TaffyLine<>(true, true),
+                    TaffyLine.TRUE,
                     runMode,
                     childBlockContext
                 )
@@ -1592,12 +1605,9 @@ public class BlockComputer {
                     item.nodeId,
                     knownDimensions,
                     parentSize,
-                    new TaffySize<>(
-                        subtractFromAvailable(availableSpace.width, itemNonAutoXMarginSum),
-                        availableSpace.height
-                    ),
+                    itemAvailableSpace,
                     SizingMode.INHERENT_SIZE,
-                    new TaffyLine<>(true, true),
+                    TaffyLine.TRUE,
                     runMode
                 );
 
