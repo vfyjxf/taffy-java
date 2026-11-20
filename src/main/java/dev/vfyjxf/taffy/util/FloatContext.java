@@ -692,15 +692,22 @@ public final class FloatContext {
         boolean hasTrailFloat = trail == Direction.LEFT ? combined.floatLeft : combined.floatRight;
         float leadInset = lead == Direction.LEFT ? combined.leftInset : combined.rightInset;
         float trailInset = trail == Direction.LEFT ? combined.leftInset : combined.rightInset;
-        float cbLead = lead == Direction.LEFT ? containingBlockLeftInset : containingBlockRightInset;
         float cbTrail = trail == Direction.LEFT ? containingBlockLeftInset : containingBlockRightInset;
-        float marginLead = lead == Direction.LEFT ? marginLeft : marginRight;
-        float marginTrail = trail == Direction.LEFT ? marginLeft : marginRight;
+        // A nested block inside the BFC can be narrower than the BFC itself, so its content-box
+        // edges - not the BFC edges - are the box's containing block. The margins are therefore
+        // added to the containing-block insets before the float rules are applied (upstream's
+        // margin_insets = containing_block_insets + margins): the leading edge is where the box
+        // would go with no float, and the box can never fit outside its containing block on that
+        // side. On the trailing side a float absorbs the margin, while without one the margin
+        // applies as usual to the stretch width but a positive margin may overflow the
+        // containing-block edge and so does not narrow the fit width.
+        float marginLeadInset = lead == Direction.LEFT ? marginLeftInset : marginRightInset;
+        float marginTrailInset = trail == Direction.LEFT ? marginLeftInset : marginRightInset;
 
-        float fitLead = hasLeadFloat ? Math.max(leadInset, marginLead) : marginLead;
-        float fitTrail = hasTrailFloat ? Math.max(trailInset, cbTrail) : Math.min(marginTrail, cbTrail);
+        float fitLead = hasLeadFloat ? Math.max(leadInset, marginLeadInset) : marginLeadInset;
+        float fitTrail = hasTrailFloat ? Math.max(trailInset, cbTrail) : Math.min(marginTrailInset, cbTrail);
         float stretchLead = fitLead;
-        float stretchTrail = hasTrailFloat ? Math.max(trailInset, marginTrail) : marginTrail;
+        float stretchTrail = hasTrailFloat ? Math.max(trailInset, marginTrailInset) : marginTrailInset;
 
         float fitLeft = lead == Direction.LEFT ? fitLead : fitTrail;
         float fitRight = lead == Direction.LEFT ? fitTrail : fitLead;

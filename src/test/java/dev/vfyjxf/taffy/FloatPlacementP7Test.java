@@ -574,14 +574,19 @@ public class FloatPlacementP7Test {
         assertEquals(1, slot.segmentId());
         assertEquals(55.0f, slot.x(), EPSILON); // absolute 65 - border inset 10
         assertEquals(0.0f, slot.y(), EPSILON);
-        assertEquals(135.0f, slot.borderWidth(), EPSILON);
-        assertEquals(135.0f, slot.stretchWidth(), EPSILON);
+        // T24: the containing block's content box is [15, 175) in the BFC (border insets 10/20
+        // plus content insets 5/5), and upstream's find_bfc_slot adds the containing-block insets
+        // to the margin insets. A positive trailing margin may overflow that edge, so it does not
+        // narrow the fit width: 175 - 65 = 110. The stretch width subtracts the trailing margin
+        // from the content-box width: 100 - 10 = 90.
+        assertEquals(110.0f, slot.borderWidth(), EPSILON);
+        assertEquals(110.0f, slot.stretchWidth(), EPSILON);
 
         BfcSlot margined = child.findBfcSlot(
             0.0f, 0.0f, 10.0f, 20.0f, TaffyDirection.LTR, Clear.NONE);
         assertEquals(55.0f, margined.x(), EPSILON);
-        assertEquals(115.0f, margined.borderWidth(), EPSILON);
-        assertEquals(115.0f, margined.stretchWidth(), EPSILON);
+        assertEquals(110.0f, margined.borderWidth(), EPSILON);
+        assertEquals(90.0f, margined.stretchWidth(), EPSILON);
     }
 
     @Test
