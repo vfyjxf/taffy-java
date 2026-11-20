@@ -231,6 +231,95 @@ class WptSupportTest {
         assertEquals("FLOW_ROOT", style.display);
     }
 
+    @Test
+    void flexBasisContentIsNotFoldedIntoAuto() {
+        WptSource.NodeInfo div = WptSource.NodeInfo.from(jsonNode(
+                2, 1, "div", "block",
+                Map.of("flex-basis", "content", "width", "20px", "height", "100px"),
+                false, 0, 0));
+
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(div).node;
+
+        assertEquals("TaffyDimension.content()", style.flexBasis);
+    }
+
+    @Test
+    void flexBasisContentDropsRowMainSize() {
+        JsonObject raw = jsonNode(2, 1, "div", "block",
+                Map.of("flex-basis", "content", "width", "20px", "height", "100px"),
+                false, 0, 0);
+        raw.addProperty("style", "flex-basis: content; width: 20px; height: 100px;");
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+        // The inline width wins the style-map merge, which is why the main axis
+        // has to be dropped after the mapping.
+        assertEquals("TaffyDimension.length(20.0f)", style.size.width());
+        String height = style.size.height();
+
+        StyleCodegen.NodeStyle parent = new StyleCodegen.NodeStyle();
+        parent.display = "FLEX";
+        parent.flexDirection = "ROW";
+        WptSource.WptStyle.resolveFlexBasisContent(style, parent);
+
+        assertEquals("TaffyDimension.AUTO", style.size.width());
+        assertEquals(height, style.size.height());
+    }
+
+    @Test
+    void flexBasisContentDropsColumnMainSize() {
+        JsonObject raw = jsonNode(2, 1, "div", "block",
+                Map.of("flex-basis", "content", "width", "100px", "height", "20px"),
+                false, 0, 0);
+        raw.addProperty("style", "flex-basis: content; width: 100px; height: 20px;");
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+        String width = style.size.width();
+
+        StyleCodegen.NodeStyle parent = new StyleCodegen.NodeStyle();
+        parent.display = "FLEX";
+        parent.flexDirection = "COLUMN";
+        WptSource.WptStyle.resolveFlexBasisContent(style, parent);
+
+        assertEquals(width, style.size.width());
+        assertEquals("TaffyDimension.AUTO", style.size.height());
+    }
+
+    @Test
+    void flexBasisContentKeepsSizeForNonFlexParent() {
+        JsonObject raw = jsonNode(2, 1, "div", "block",
+                Map.of("flex-basis", "content", "width", "20px", "height", "100px"),
+                false, 0, 0);
+        raw.addProperty("style", "flex-basis: content; width: 20px; height: 100px;");
+        StyleCodegen.NodeStyle style = WptSource.WptStyle.fromDom(WptSource.NodeInfo.from(raw)).node;
+        String width = style.size.width();
+
+        StyleCodegen.NodeStyle parent = new StyleCodegen.NodeStyle();
+        parent.display = "BLOCK";
+        WptSource.WptStyle.resolveFlexBasisContent(style, parent);
+
+        assertEquals(width, style.size.width());
+    }
+
+    @Test
+    void rootSizeKeepsBodyHeightIndefiniteWithoutExplicitHeight() {
+        StyleCodegen.NodeStyle body = new StyleCodegen.NodeStyle();
+        body.size = new StyleCodegen.Size("TaffyDimension.length(800.0f)", "TaffyDimension.AUTO");
+
+        StyleCodegen.Size root = WptSource.WptStyle.rootSize(800, 457, body);
+
+        assertEquals("TaffyDimension.length(800f)", root.width());
+        assertEquals("TaffyDimension.AUTO", root.height());
+    }
+
+    @Test
+    void rootSizeUsesViewportHeightForExplicitBodyHeight() {
+        StyleCodegen.NodeStyle body = new StyleCodegen.NodeStyle();
+        body.size = new StyleCodegen.Size("TaffyDimension.length(800.0f)", "TaffyDimension.length(100.0f)");
+
+        StyleCodegen.Size root = WptSource.WptStyle.rootSize(800, 457, body);
+
+        assertEquals("TaffyDimension.length(800f)", root.width());
+        assertEquals("TaffyDimension.length(457f)", root.height());
+    }
+
     private static WptSource.NodeInfo node(int index, int parent, String tag, String display,
                                            Map<String, String> extra) {
         return WptSource.NodeInfo.from(jsonNode(index, parent, tag, display, extra, false, 0, 0));

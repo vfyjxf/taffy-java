@@ -320,14 +320,24 @@ final class WptSource {
             }
         }
 
+        // flex-basis: content ignores the item's main-axis size property, but the
+        // raw inline style still carries it (e.g. width:20px in
+        // flex-aspect-ratio-021). Drop the main axis now that the parent's
+        // flex direction is known, so the engine measures the content instead.
+        for (int i = 1; i < n; i++) {
+            NodeInfo info = infos.get(i);
+            if (info.parentIndex >= 0 && info.parentIndex < n) {
+                NodeStyle parentStyle = styles.get(info.parentIndex).node;
+                WptStyle.resolveFlexBasisContent(styles.get(i).node, parentStyle);
+            }
+        }
+
         // Build final node styles, including root/size overrides.
         List<NodeStyle> nodeStyles = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             NodeStyle nodeStyle = styles.get(i).node;
             if (i == 0) {
-                nodeStyle.size = new Size(
-                        "TaffyDimension.length(" + vw + "f)",
-                        "TaffyDimension.length(" + vh + "f)");
+                nodeStyle.size = WptStyle.rootSize(vw, vh, nodeStyle);
             } else {
                 float[] browser = browserSizes.get(i);
                 if (browser != null) {
@@ -713,7 +723,7 @@ final class WptSource {
             };
             node.flexGrow = floatValue(css.get("flex-grow"));
             node.flexShrink = floatValue(css.get("flex-shrink"));
-            node.flexBasis = CssValues.dimensionExpr(css.get("flex-basis"));
+            node.flexBasis = flexBasisExpr(css.get("flex-basis"));
 
             node.alignItems = StyleCodegen.mapAlignItems(lower(css.get("align-items")));
             node.alignContent = StyleCodegen.mapAlignContent(lower(css.get("align-content")));
@@ -756,6 +766,68 @@ final class WptSource {
 
             out.needsMeasure = needsMeasure(node);
             return out;
+        }
+
+        /**
+         * Maps {@code flex-basis}. {@code content} keeps its keyword identity:
+         * unlike {@code auto}, it never falls back to the main size property
+         * (css-flexbox-1 §9.2 step B), so it must not be folded into
+         * {@code TaffyDimension.AUTO}.
+         */
+        private static String flexBasisExpr(String raw) {
+            if (raw == null) {
+                return null;
+            }
+            String v = raw.trim();
+            if (v.isEmpty()) {
+                return null;
+            }
+            return "content".equalsIgnoreCase(v) ? "TaffyDimension.content()" : CssValues.dimensionExpr(v);
+        }
+
+        /**
+         * A flex item with {@code flex-basis: content} ignores its main-axis
+         * size property. The DOM collector already clears the computed value,
+         * but an inline {@code width}/{@code height} overrides it when the
+         * style map is merged, so drop that axis here using the parent's flex
+         * direction. Non-flex parents do not honour flex-basis at all.
+         */
+        static void resolveFlexBasisContent(NodeStyle node, NodeStyle parent) {
+            if (node == null || parent == null || !"TaffyDimension.content()".equals(node.flexBasis)) {
+                return;
+            }
+            if (!isFlexContainer(parent)) {
+                return;
+            }
+            boolean column = parent.flexDirection != null && parent.flexDirection.startsWith("COLUMN");
+            Size size = node.size;
+            String width = size == null ? null : size.width();
+            String height = size == null ? null : size.height();
+            node.size = column
+                    ? new Size(width, "TaffyDimension.AUTO")
+                    : new Size("TaffyDimension.AUTO", height);
+        }
+
+        /** The engine's default display is FLEX, so an unset display is a flex container. */
+        private static boolean isFlexContainer(NodeStyle style) {
+            return style.display == null || "FLEX".equals(style.display);
+        }
+
+        /**
+         * Root (body) size. A body without an explicit height has an auto used
+         * height in Chrome, so percentage heights in its subtree are
+         * indefinite; injecting the viewport height as a definite height would
+         * make them resolve against it (block-aspect-ratio-025). The body width
+         * stays the viewport width: it is definite in Chrome.
+         */
+        static Size rootSize(int viewportWidth, int viewportHeight, NodeStyle bodyStyle) {
+            boolean indefiniteHeight = bodyStyle == null
+                    || bodyStyle.size == null
+                    || bodyStyle.size.height() == null
+                    || "TaffyDimension.AUTO".equals(bodyStyle.size.height());
+            return new Size(
+                    "TaffyDimension.length(" + viewportWidth + "f)",
+                    indefiniteHeight ? "TaffyDimension.AUTO" : "TaffyDimension.length(" + viewportHeight + "f)");
         }
 
         private static boolean needsMeasure(NodeStyle style) {
