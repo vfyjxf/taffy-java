@@ -333,28 +333,46 @@ public class BlockComputer {
             return LayoutOutput.fromOuterSize(styledBasedKnownDimensions);
         }
 
-        // css-sizing-4: a definite width plus an `aspect-ratio` makes the height definite. This
-        // must be resolved *before* the content box size and the item list are derived, otherwise
-        // the children are laid out against an unknown height (so their percentage heights resolve
-        // to nothing and a descendant grid's auto rows collapse), and the container's own height is
-        // only corrected afterwards.
+        // css-sizing-4: a definite size in one axis transfers through `aspect-ratio` to make the
+        // other definite. This must be resolved *before* the content box size and the item list
+        // are derived, otherwise the children are laid out against an unknown height (so their
+        // percentage heights resolve to nothing and a descendant grid's auto rows collapse) and
+        // the container's own size is only corrected afterwards.
         //
-        // Only the height is derived: the width of a block-level box comes from the parent's
-        // stretch/known width or from the style, and re-deriving a width from a style height would
-        // override a flex item's flex-resolved main size (the Java generated flex aspect-ratio
-        // fixtures pin that browser behaviour). The derived height is clamped by min/max and by the
-        // padding+border sum, exactly like the intrinsic-height path below.
-        // BK-15(a) / upstream #965 (8609e92f).
-        if (runMode == RunMode.PERFORM_LAYOUT && !Float.isNaN(aspectRatio)
-            && Float.isNaN(styledBasedKnownDimensions.height)
-            && !Float.isNaN(styledBasedKnownDimensions.width)) {
-            // Aspect ratio applies to the content box: convert the border-box width into the
-            // content box before dividing, then convert the derived content height back.
-            float arDerivedHeight = (styledBasedKnownDimensions.width - boxSizingAdjustment.width) / aspectRatio
-                                    + boxSizingAdjustment.height;
-            float arHeight = TaffyMath.clamp(arDerivedHeight, minSize.height, maxSize.height);
-            arHeight = Math.max(arHeight, !Float.isNaN(paddingBorderSize.height) ? paddingBorderSize.height : 0);
-            styledBasedKnownDimensions = new FloatSize(styledBasedKnownDimensions.width, arHeight);
+        // Upstream #965 (8609e92f) applies this transfer to the incoming known dimensions with no
+        // RunMode special case: it assumes a parent fills an axis only for a real constraint. This
+        // port deliberately keeps the `RunMode.PERFORM_LAYOUT` gate as a documented deviation
+        // because BL-01/FL-15 (`knownDimensionsAreDefinite`, upstream #1003) is not ported yet:
+        // Java's flex measurement hands a definite cross size to the block child during
+        // COMPUTE_SIZE, and an ungated transfer then derives the main size (50 for a 100px cross
+        // size at ratio 2) instead of leaving the content-based size the browser's automatic
+        // minimum needs. Without the gate 14 generated WPT fixtures regress (flex_aspect_ratio
+        // 002/004/038/049/050/051/052, border-box and content-box each). The gate can be removed
+        // once FL-15/BL-01 can distinguish a definite known size from a measurement probe; the
+        // gated-height-only test in BlockResidualP8Test pins the current split.
+        //
+        // Within a final layout only a newly-filled axis is adopted; a known axis is left exactly
+        // as the parent resolved it (re-clamping it could undo padding/border overrides). The
+        // ratio applies to the content box: convert the known border-box axis into the content
+        // box before transferring, convert the derived axis back, then clamp it by min/max and
+        // floor it at the padding+border sum (like the intrinsic-height path below).
+        // BK-15(a).
+        if (runMode == RunMode.PERFORM_LAYOUT && !Float.isNaN(aspectRatio)) {
+            FloatSize derived = styledBasedKnownDimensions;
+            if (!Float.isNaN(derived.width) && Float.isNaN(derived.height)) {
+                float arDerivedHeight = (derived.width - boxSizingAdjustment.width) / aspectRatio
+                                        + boxSizingAdjustment.height;
+                derived = new FloatSize(derived.width, arDerivedHeight);
+            } else if (Float.isNaN(derived.width) && !Float.isNaN(derived.height)) {
+                float arDerivedWidth = (derived.height - boxSizingAdjustment.height) * aspectRatio
+                                       + boxSizingAdjustment.width;
+                derived = new FloatSize(arDerivedWidth, derived.height);
+            }
+            derived = maybeMax(maybeClamp(derived, minSize, maxSize), paddingBorderSize);
+            styledBasedKnownDimensions = new FloatSize(
+                !Float.isNaN(styledBasedKnownDimensions.width) ? styledBasedKnownDimensions.width : derived.width,
+                !Float.isNaN(styledBasedKnownDimensions.height) ? styledBasedKnownDimensions.height : derived.height
+            );
         }
 
         // Compute container content box size (inner size for resolving child percentages)

@@ -1,21 +1,27 @@
 package dev.vfyjxf.taffy;
 
 import dev.vfyjxf.taffy.geometry.FloatSize;
+import dev.vfyjxf.taffy.geometry.TaffyLine;
 import dev.vfyjxf.taffy.geometry.TaffyRect;
 import dev.vfyjxf.taffy.geometry.TaffySize;
 import dev.vfyjxf.taffy.style.AlignItems;
+import dev.vfyjxf.taffy.style.AvailableSpace;
 import dev.vfyjxf.taffy.style.LengthPercentageAuto;
 import dev.vfyjxf.taffy.style.TaffyDimension;
 import dev.vfyjxf.taffy.style.TaffyDisplay;
 import dev.vfyjxf.taffy.style.TaffyStyle;
 import dev.vfyjxf.taffy.tree.Layout;
+import dev.vfyjxf.taffy.tree.LayoutComputer;
+import dev.vfyjxf.taffy.tree.LayoutOutput;
 import dev.vfyjxf.taffy.tree.NodeId;
+import dev.vfyjxf.taffy.tree.SizingMode;
 import dev.vfyjxf.taffy.tree.TaffyTree;
 import dev.vfyjxf.taffy.util.MeasureFunc;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * P8 residual regression tests for block layout (BK-04 and BK-15).
@@ -26,6 +32,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * element's auto width is its intrinsic size. The style-level split between
  * {@code itemIsReplaced} and {@code itemIsCompressibleReplaced} landed in ST-05; this class pins
  * the block-layout wiring of the derived {@link TaffyStyle#isCompressibleReplaced()}.</p>
+ *
+ * <p>BK-15 / upstream #965: the css-sizing-4 transfer from a known axis through
+ * {@code aspect-ratio} is resolved before the item list is built, and in-flow block children get
+ * an indefinite ({@link AvailableSpace#MAX_CONTENT}) vertical available space. This port
+ * deliberately keeps the transfer behind {@code RunMode.PERFORM_LAYOUT} until BL-01/FL-15
+ * (upstream #1003 {@code knownDimensionsAreDefinite}) lands: an ungated transfer changes the
+ * content-based automatic minimum size Java's flex measurement relies on and regresses the
+ * generated WPT flex_aspect_ratio fixtures (002/004/038/049/050/051/052).
+ * {@link #heightOnlyTransferIsGatedToFinalLayout()} pins both sides of that split, so removing
+ * the gate together with FL-15 must revisit this test.</p>
  *
  * <p>The upstream fixtures exercised here are {@code tests/hand_written/block_replaced.rs}
  * (#1002) and {@code tests/xml/block/block_aspect_ratio_stretch_width*}. In-flow children keep
@@ -210,5 +226,154 @@ public class BlockResidualP8Test {
         Layout child = layoutChildInBlock(childStyle, 600f);
 
         assertEquals(600f, child.size().width, EPSILON, "stretch-justified replaced child width");
+    }
+
+    // === BK-15: aspect-ratio derived definite size and indefinite vertical space ===
+
+    /**
+     * Upstream #965's css-sizing-4 transfer, applied before the item list is generated: a
+     * definitively wide ({@code 100px}) block with {@code aspect-ratio: 2} resolves its 50px
+     * height first, so a {@code height: 100%} child resolves against that definite height instead
+     * of collapsing to zero (fixture {@code block_aspect_ratio_stretch_width_percentage_child}).
+     */
+    @Test
+    @DisplayName("BK-15: aspect-ratio derives the definite height before the children are laid out")
+    void aspectRatioDerivedHeightIsAvailableToChildren() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        grandchildStyle.size = size(TaffyDimension.AUTO, TaffyDimension.percent(1f));
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.aspectRatio = 2f;
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.length(200f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(child), 100f, 50f, "aspect-ratio child");
+        assertSize(tree.getLayout(grandchild), 100f, 50f, "percentage-height grandchild");
+    }
+
+    /**
+     * Upstream #965's second change: in-flow block children get an indefinite vertical available
+     * space, which this port represents as {@link AvailableSpace#MAX_CONTENT} — never
+     * {@code MIN_CONTENT}. The probing measure callback records the constraint it observed and
+     * returns one line under a min-content height constraint, two lines otherwise.
+     */
+    @Test
+    @DisplayName("BK-15: block children are measured with an indefinite (MaxContent) vertical space")
+    void blockChildrenGetIndefiniteVerticalAvailableSpace() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle textStyle = blockStyle();
+        NodeId text = tree.newLeaf(textStyle);
+        AvailableSpace[] observedHeight = new AvailableSpace[1];
+        tree.setMeasureFunction(text, context -> {
+            AvailableSpace availableHeight = context.input().availableSpace().height;
+            observedHeight[0] = availableHeight;
+            boolean minContent = availableHeight != null && availableHeight.isMinContent();
+            return LayoutOutput.fromOuterSize(new FloatSize(50f, minContent ? 10f : 20f));
+        });
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.AUTO);
+        NodeId root = tree.newWithChildren(rootStyle, text);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertTrue(
+            observedHeight[0] != null && observedHeight[0].isMaxContent(),
+            "in-flow block children must be measured with MaxContent (indefinite) vertical space, "
+                + "observed " + observedHeight[0]
+        );
+        assertEquals(20f, tree.getLayout(text).size().height, EPSILON,
+            "content height must not be pinned to its min-content line count");
+        assertEquals(20f, tree.getLayout(root).size().height, EPSILON, "root content height");
+    }
+
+    /**
+     * Upstream fixture {@code block_aspect_ratio_stretch_width_max_height} (#965): the 100px
+     * stretched width at ratio 1 derives a 100px height, {@code max-height: 40px} clamps it to 40,
+     * and the ratio-derived {@code max-width} transfers that clamp back through the ratio so the
+     * border box becomes 40x40. Both axes are asserted (the older P1 test pinned the height only).
+     */
+    @Test
+    @DisplayName("BK-15: max-height clamps the ratio through to the width (40x40)")
+    void maxHeightClampsAspectRatioDerivedSize() {
+        TaffyTree tree = new TaffyTree();
+
+        TaffyStyle grandchildStyle = blockStyle();
+        NodeId grandchild = tree.newLeaf(grandchildStyle);
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.aspectRatio = 1f;
+        childStyle.maxSize = size(TaffyDimension.AUTO, TaffyDimension.length(40f));
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        TaffyStyle rootStyle = blockStyle();
+        rootStyle.size = size(TaffyDimension.length(100f), TaffyDimension.length(200f));
+        NodeId root = tree.newWithChildren(rootStyle, child);
+
+        tree.computeLayout(root, TaffySize.maxContent());
+
+        assertSize(tree.getLayout(child), 40f, 40f, "max-height clamped aspect-ratio child");
+        assertSize(tree.getLayout(grandchild), 40f, 0f, "max-height clamped grandchild");
+    }
+
+    /**
+     * The height-only direction of the css-sizing-4 transfer (known height, auto width) and its
+     * deliberate {@code RunMode.PERFORM_LAYOUT} gate.
+     *
+     * <p>Upstream #965 applies the transfer whenever a known dimension exists, without a RunMode
+     * special case. This port keeps the gate until BL-01/FL-15 ({@code knownDimensionsAreDefinite},
+     * upstream #1003) can tell a definite known size from a measurement probe: an ungated transfer
+     * changes the content-based automatic minimum size Java's flex measurement relies on and
+     * regresses the generated WPT flex_aspect_ratio fixtures (002/004/038/049/050/051/052). The
+     * test pins both sides: a {@code PERFORM_LAYOUT} pass derives {@code width = height * ratio},
+     * a {@code COMPUTE_SIZE} pass leaves the width content-based.</p>
+     */
+    @Test
+    @DisplayName("BK-15: the height-only transfer is gated to the final layout pass")
+    void heightOnlyTransferIsGatedToFinalLayout() {
+        TaffyTree tree = new TaffyTree();
+        NodeId grandchild = tree.newLeaf(blockStyle());
+
+        TaffyStyle childStyle = blockStyle();
+        childStyle.aspectRatio = 2f;
+        NodeId child = tree.newWithChildren(childStyle, grandchild);
+
+        LayoutComputer layoutComputer = new LayoutComputer(tree, null, null);
+        TaffySize<AvailableSpace> maxContent = new TaffySize<>(
+            AvailableSpace.maxContent(), AvailableSpace.maxContent());
+        FloatSize knownHeightOnly = new FloatSize(Float.NaN, 50f);
+
+        LayoutOutput finalLayout = layoutComputer.performChildLayout(
+            child,
+            knownHeightOnly,
+            FloatSize.none(),
+            maxContent,
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+        assertEquals(100f, finalLayout.size().width, EPSILON,
+            "final layout derives the width from the known height and the ratio");
+        assertEquals(50f, finalLayout.size().height, EPSILON, "the known height is kept");
+
+        FloatSize measured = layoutComputer.measureChildSize(
+            child,
+            knownHeightOnly,
+            FloatSize.none(),
+            maxContent,
+            SizingMode.INHERENT_SIZE,
+            TaffyLine.FALSE
+        );
+        assertEquals(0f, measured.width, EPSILON,
+            "a COMPUTE_SIZE pass keeps the content-based width (run-mode gate)");
+        assertEquals(50f, measured.height, EPSILON, "the known height is kept while measuring");
     }
 }
