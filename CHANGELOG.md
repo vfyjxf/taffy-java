@@ -106,6 +106,16 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   (through a tree-level layout generation, in O(1) rather than by marking the
   subtree), and `acknowledgeLayout`/`acknowledgeSubtree` still clear it. No layout
   value, no rounding result and no listener notification changes.
+- Node storage is dense: `nodes`/`parents` are arrays indexed by `NodeId.value`
+  (spilling to a map only when an id would push the array past 8x the live node
+  count), so the per-node lookups in layout, rounding and dirty propagation skip
+  the hash map. Public ids stay monotonic and are never reused; the remaining
+  measure/context/grid side tables keep their maps.
+- `roundLayout` compares the stored final layout field by field against the values
+  the pass would compute and keeps it when they match, avoiding a `Layout` and
+  geometry allocation per node; fractional layouts whose stored result is already
+  stable get the same treatment. Block item lists are rebuilt only once per layout
+  pass and are reused across the pass's measurement and final-layout calls.
 
 ### P7 additions (float, grid details, contain)
 
