@@ -344,6 +344,51 @@ public class FlexboxComputer {
         TaffyRect<Boolean> marginIsAuto;
         FloatRect padding;
         FloatRect border;
+        /**
+         * P32: the axis-oriented, style-derived values the flex sizing stages used to re-resolve
+         * from the child style on every layout pass.
+         *
+         * <p>Every field below is a pure function of the child's own style, its box-sizing and the
+         * container's flex direction, all of which are fixed for the life of an item: a style
+         * replacement, a child-list change, an inherited direction change or (for a value that
+         * resolves against the container's content box) a new inner-size basis rebuilds the list
+         * (see {@link FlexItemCache}). The stages therefore read a field instead of resolving the
+         * child style again - the same item list is walked by up to seven stages per pass, and
+         * every walk used to repeat those resolutions.</p>
+         */
+        /** The main-axis padding + border sum. */
+        float paddingBorderMain;
+        /** The cross-axis padding + border sum. */
+        float paddingBorderCross;
+        /** The main-axis box-sizing adjustment: the padding+border sum for content-box, else 0. */
+        float boxSizingAdjustmentMain;
+        /**
+         * The item's min/max size transferred through its aspect ratio, axis-oriented
+         * ({@link Float#NaN} when absent). The raw min/max size is final once the item is built, so
+         * the transfer is a per-build constant rather than two fresh {@link FloatSize}s per stage.
+         */
+        float transferredMinMain;
+        float transferredMaxMain;
+        float transferredMinCross;
+        float transferredMaxCross;
+        /**
+         * The specified-size suggestion of CSS Flexbox §4.5: the raw style main size resolved
+         * against the container's content box, or {@link Float#NaN} when the main size is
+         * {@code auto} or a sizing keyword. The cache only hands an item list back for the inner
+         * size it was built with (unless none of its values resolve against that size at all), so
+         * the resolution basis is the same one this pass would use.
+         */
+        float styleMainSize;
+        /**
+         * The child's raw style dimensions on the container's main and cross axis (may be
+         * {@code null}, exactly like the style field). The sizing-keyword stages
+         * ({@code SizingKeyword.resolve}) still run per pass because their stretch basis and the
+         * percentage basis depend on the current pass's inner size.
+         */
+        TaffyDimension mainSizeDim;
+        TaffyDimension crossSizeDim;
+        /** The child's effective flex-basis, which is re-read by the flex-base-size stage. */
+        TaffyDimension flexBasisDim;
         float flexBasis;
         float innerFlexBasis;
         float violation;
@@ -557,7 +602,7 @@ public class FlexboxComputer {
                         FloatSize.none(),
                         TaffySize.maxContent(),
                         SizingMode.INHERENT_SIZE,
-                        TaffyLine.FALSE
+                        new TaffyLine<>(false, false)
                     );
                 }
             }
@@ -757,7 +802,7 @@ public class FlexboxComputer {
                     FloatSize.none(),
                     TaffySize.maxContent(),
                     SizingMode.INHERENT_SIZE,
-                    TaffyLine.FALSE
+                    new TaffyLine<>(false, false)
                 );
             }
         }
@@ -1012,6 +1057,41 @@ public class FlexboxComputer {
                 item.inset = new FloatRect(Float.NaN, Float.NaN, Float.NaN, Float.NaN);
             }
 
+            // P32: resolve the axis-oriented values every sizing stage needs once, here, instead
+            // of re-resolving them from the child style in each stage. The item's padding, border,
+            // box-sizing, raw style sizes and (now final) min/max sizes are all fixed from this
+            // point on, so these are per-build constants; only values that resolve against the
+            // pass's inner size, the available space or the auto-margin distribution are left to
+            // the stages (see the FlexItem fields' documentation).
+            item.paddingBorderMain = isRow
+                                     ? itemPadding.left + itemPadding.right + itemBorder.left + itemBorder.right
+                                     : itemPadding.top + itemPadding.bottom + itemBorder.top + itemBorder.bottom;
+            item.paddingBorderCross = isRow
+                                      ? itemPadding.top + itemPadding.bottom + itemBorder.top + itemBorder.bottom
+                                      : itemPadding.left + itemPadding.right + itemBorder.left + itemBorder.right;
+            item.boxSizingAdjustmentMain = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
+                                           ? item.paddingBorderMain
+                                           : 0f;
+            FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, aspectRatio);
+            FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, aspectRatio);
+            item.transferredMinMain = isRow ? transferredMinSize.width : transferredMinSize.height;
+            item.transferredMaxMain = isRow ? transferredMaxSize.width : transferredMaxSize.height;
+            item.transferredMinCross = isRow ? transferredMinSize.height : transferredMinSize.width;
+            item.transferredMaxCross = isRow ? transferredMaxSize.height : transferredMaxSize.width;
+
+            TaffySize<TaffyDimension> sizeStyle = childStyle.getSize();
+            item.mainSizeDim = isRow ? sizeStyle.width : sizeStyle.height;
+            item.crossSizeDim = isRow ? sizeStyle.height : sizeStyle.width;
+            item.flexBasisDim = childStyle.getFlexBasis();
+            // The §4.5 "specified size suggestion": the raw style main size (percentages resolve
+            // against the container's content box, which is also this build's basis).
+            if (item.mainSizeDim != null && !item.mainSizeDim.isAuto()) {
+                float resolvedMain = item.mainSizeDim.maybeResolve(isRow ? nodeInnerSize.width : nodeInnerSize.height);
+                item.styleMainSize = isNaN(resolvedMain) ? NaN : resolvedMain + item.boxSizingAdjustmentMain;
+            } else {
+                item.styleMainSize = NaN;
+            }
+
             item.hypotheticalInnerSize = new FloatSize(0f, 0f);
             item.hypotheticalOuterSize = new FloatSize(0f, 0f);
             item.targetSize = new FloatSize(0f, 0f);
@@ -1096,8 +1176,6 @@ public class FlexboxComputer {
 
         for (int itemIdx = 0, itemTotal = items.size(); itemIdx < itemTotal; itemIdx++) {
             FlexItem item = items.get(itemIdx);
-            TaffyTree tree = layoutComputer.getTree();
-            TaffyStyle childStyle = tree.getStyle(item.nodeId);
 
             // Parent size for child sizing
             float crossAxisParentSize = isRow ? nodeInnerSize.height : nodeInnerSize.width;
@@ -1108,10 +1186,9 @@ public class FlexboxComputer {
 
             // FL-19 (#989): sizes transferred through the aspect ratio clamp the cross axis
             // min/max used by the flex base size calculation (https://github.com/w3c/csswg-drafts/issues/10997).
-            FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, item.aspectRatio);
-            FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, item.aspectRatio);
-            float itemMinCross = isRow ? transferredMinSize.height : transferredMinSize.width;
-            float itemMaxCross = isRow ? transferredMaxSize.height : transferredMaxSize.width;
+            // P32: the transfer is a per-build constant, so it is read instead of re-derived here.
+            float itemMinCross = item.transferredMinCross;
+            float itemMaxCross = item.transferredMaxCross;
 
             // FL-10 (#1234): definite available space is the child's border-box space, so the
             // parent subtracts the child's margins (auto margins have already resolved to zero).
@@ -1142,13 +1219,11 @@ public class FlexboxComputer {
             }
 
             // Determine flex basis
-            TaffyDimension flexBasis = childStyle.getFlexBasis();
+            TaffyDimension flexBasis = item.flexBasisDim;
             float mainSize = isRow ? item.size.width : item.size.height;
             float crossSize = isRow ? item.size.height : item.size.width;
 
-            float paddingBorderMain = isRow
-                                      ? item.padding.left + item.padding.right + item.border.left + item.border.right
-                                      : item.padding.top + item.padding.bottom + item.border.top + item.border.bottom;
+            float paddingBorderMain = item.paddingBorderMain;
 
             // Compute child_known_dimensions (Rust flexbox.rs lines 677-690)
             // This is used for BOTH flex base size AND min-content calculations
@@ -1194,9 +1269,7 @@ public class FlexboxComputer {
             // Compute box_sizing_adjustment for flex-basis (Rust flexbox.rs lines 693-704)
             // In content-box mode, flex-basis is a content size, so we need to add padding+border
             // to get the outer size that flex layout uses.
-            float boxSizingAdjustmentMain = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
-                                            ? paddingBorderMain
-                                            : 0f;
+            float boxSizingAdjustmentMain = item.boxSizingAdjustmentMain;
 
             // ST-01/FL-17: percentages, stretch and fit-content resolve against the container's
             // inner main size. FL-15 replaces this with the explicit known_dimensions_are_definite
@@ -1253,7 +1326,7 @@ public class FlexboxComputer {
                 // A main size that is a sizing keyword either resolves to an exact size or
                 // determines the available-space constraint the item is measured under
                 // (upstream #1099/#1103).
-                TaffyDimension mainDim = isRow ? childStyle.getSize().width : childStyle.getSize().height;
+                TaffyDimension mainDim = item.mainSizeDim;
                 SizingKeyword.Resolution resolution = SizingKeyword.resolve(
                     mainDim, mainStretchSize, percentResolutionMainSize);
                 if (resolution != null && resolution.isExact()) {
@@ -1310,19 +1383,12 @@ public class FlexboxComputer {
             float minMain = isRow ? item.minSize.width : item.minSize.height;
             // FL-19 (#989): the automatic minimum and the hypothetical main size are clamped by
             // the main size transferred through the aspect ratio, not by the raw max-size.
-            float transferredMinMain = isRow ? transferredMinSize.width : transferredMinSize.height;
-            float transferredMaxMain = isRow ? transferredMaxSize.width : transferredMaxSize.height;
+            float transferredMinMain = item.transferredMinMain;
+            float transferredMaxMain = item.transferredMaxMain;
             // For the "specified size suggestion" in §4.5, use the RAW style value (not AR-derived).
             // item.size may include aspect-ratio derivation from generateFlexItems, which would
             // incorrectly clamp the auto minimum. The specified size should only be from explicit style.
-            TaffyDimension mainDimStyle = isRow ? childStyle.getSize().width : childStyle.getSize().height;
-            float styleMainSize;
-            if (mainDimStyle != null && !mainDimStyle.isAuto()) {
-                float resolved = mainDimStyle.maybeResolve(isRow ? nodeInnerSize.width : nodeInnerSize.height);
-                styleMainSize = isNaN(resolved) ? NaN : resolved + boxSizingAdjustmentMain;
-            } else {
-                styleMainSize = NaN;
-            }
+            float styleMainSize = item.styleMainSize;
 
             // Check if overflow creates automatic min-size (visible overflow = auto min, else 0)
             boolean hasOverflowMain = isRow
@@ -1522,7 +1588,6 @@ public class FlexboxComputer {
                 // Step 1: Calculate content_contribution and content_flex_fraction for each item
                 for (int itemIdx = 0, itemTotal = line.items.size(); itemIdx < itemTotal; itemIdx++) {
                     FlexItem item = line.items.get(itemIdx);
-                    TaffyStyle childStyle = layoutComputer.getTree().getStyle(item.nodeId);
                     float marginMain = isRow
                                        ? item.margin.left + item.margin.right
                                        : item.margin.top + item.margin.bottom;
@@ -1591,12 +1656,7 @@ public class FlexboxComputer {
                         // its content contribution (an inherent-size measure of the item would return
                         // it), floored by the item's main-axis padding+border, so measuring the item
                         // can be skipped. Min/max clamping is applied like the measured contributions.
-                        float itemPaddingBorderMain = isRow
-                                                      ? item.padding.left + item.padding.right
-                                                        + item.border.left + item.border.right
-                                                      : item.padding.top + item.padding.bottom
-                                                        + item.border.top + item.border.bottom;
-                        float innerMainSize = Math.max(stylePreferredMain, itemPaddingBorderMain);
+                        float innerMainSize = Math.max(stylePreferredMain, item.paddingBorderMain);
                         if (isRow) {
                             contentContribution = TaffyMath.maybeClamp(
                                 innerMainSize + marginMain, styleMinMain, styleMaxMain);
@@ -1650,14 +1710,12 @@ public class FlexboxComputer {
                         // sizes (aspect-ratio transferred), as determineFlexBaseSize does: an
                         // item measured wider than its max-width wraps onto fewer lines and
                         // under-reports its height.
-                        FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, item.aspectRatio);
-                        FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, item.aspectRatio);
                         if (isRow) {
                             knownHeight = TaffyMath.maybeClamp(
-                                knownHeight, transferredMinSize.height, transferredMaxSize.height);
+                                knownHeight, item.transferredMinCross, item.transferredMaxCross);
                         } else {
                             knownWidth = TaffyMath.maybeClamp(
-                                knownWidth, transferredMinSize.width, transferredMaxSize.width);
+                                knownWidth, item.transferredMinCross, item.transferredMaxCross);
                         }
 
                         // Stretch cross size if needed
@@ -1703,7 +1761,7 @@ public class FlexboxComputer {
 
                         // FL-18 (#1155): a known cross size is transferred through the item's
                         // aspect ratio and floors the measured content size.
-                        Float itemAspectRatio = childStyle.getAspectRatio();
+                        Float itemAspectRatio = item.aspectRatio;
                         float knownCross = isRow ? childKnownDimensions.height : childKnownDimensions.width;
                         if (itemAspectRatio != null && !Float.isNaN(itemAspectRatio) && !Float.isNaN(knownCross)) {
                             float transferredMain = isRow
@@ -2237,9 +2295,7 @@ public class FlexboxComputer {
 
         for (int itemIdx = 0, itemTotal = line.items.size(); itemIdx < itemTotal; itemIdx++) {
             FlexItem item = line.items.get(itemIdx);
-            float paddingBorderCross = isRow
-                                       ? item.padding.top + item.padding.bottom + item.border.top + item.border.bottom
-                                       : item.padding.left + item.padding.right + item.border.left + item.border.right;
+            float paddingBorderCross = item.paddingBorderCross;
 
             // FL-10 (#1234): available space is the child's border-box space, so the item's
             // margins are already subtracted by the parent.
@@ -2257,10 +2313,8 @@ public class FlexboxComputer {
             float itemCross = isRow ? item.size.height : item.size.width;
             // FL-19 (#989): sizes transferred through the aspect ratio clamp the hypothetical
             // cross size (https://github.com/w3c/csswg-drafts/issues/10997).
-            FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, item.aspectRatio);
-            FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, item.aspectRatio);
-            float itemMinCross = isRow ? transferredMinSize.height : transferredMinSize.width;
-            float itemMaxCross = isRow ? transferredMaxSize.height : transferredMaxSize.width;
+            float itemMinCross = item.transferredMinCross;
+            float itemMaxCross = item.transferredMaxCross;
 
             // Clamp cross size
             if (!Float.isNaN(itemCross)) {
@@ -2289,8 +2343,7 @@ public class FlexboxComputer {
             // max-content, fit-content, fit-content(...)) determines the available-space
             // constraint the item is measured under. 'stretch' is not resolved here: it
             // stretches to the flex line like align-self: stretch (determineUsedCrossSize).
-            TaffyStyle childStyle = layoutComputer.getTree().getStyle(item.nodeId);
-            TaffyDimension crossDim = isRow ? childStyle.getSize().height : childStyle.getSize().width;
+            TaffyDimension crossDim = item.crossSizeDim;
             float crossResolutionBasis = isRow ? nodeInnerSize.height : nodeInnerSize.width;
             // FL-21 (#1105): a bare fit-content/stretch cross size is measured against the
             // divided stretch size; percentages continue to resolve against the full size.
@@ -2486,14 +2539,10 @@ public class FlexboxComputer {
             for (int itemIdx = 0, itemTotal = first.items.size(); itemIdx < itemTotal; itemIdx++) {
                 FlexItem item = first.items.get(itemIdx);
                 float itemCrossSize = isRow ? item.size.height : item.size.width;
-                FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, item.aspectRatio);
-                FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, item.aspectRatio);
-                float itemMinCross = isRow ? transferredMinSize.height : transferredMinSize.width;
-                float itemMaxCross = isRow ? transferredMaxSize.height : transferredMaxSize.width;
+                float itemMinCross = item.transferredMinCross;
+                float itemMaxCross = item.transferredMaxCross;
 
-                float paddingBorderCross = isRow
-                                           ? item.padding.top + item.padding.bottom + item.border.top + item.border.bottom
-                                           : item.padding.left + item.padding.right + item.border.left + item.border.right;
+                float paddingBorderCross = item.paddingBorderCross;
 
                 float marginCross = isRow
                                     ? item.margin.top + item.margin.bottom
@@ -2514,8 +2563,7 @@ public class FlexboxComputer {
                     // ST-01/FL-17: a sizing keyword on the cross axis replaces the definite
                     // line cross size as the constraint for this measurement. `stretch` is
                     // ignored here (it is staged from the line in determineUsedCrossSize).
-                    TaffyStyle itemStyle = layoutComputer.getTree().getStyle(item.nodeId);
-                    TaffyDimension crossDim = isRow ? itemStyle.getSize().height : itemStyle.getSize().width;
+                    TaffyDimension crossDim = item.crossSizeDim;
                     float crossResolutionBasis = isRow ? nodeInnerSize.height : nodeInnerSize.width;
                     float crossStretchSize = TaffyMath.maybeSub(crossResolutionBasis, marginCross);
                     SizingKeyword.Resolution crossKeyword = SizingKeyword.resolve(
@@ -2565,15 +2613,11 @@ public class FlexboxComputer {
                 // Get item's cross size from resolved style size. FL-19 (#989): clamp by the
                 // transferred min/max sizes (aspect ratio applied on demand).
                 float itemCrossSize = isRow ? item.size.height : item.size.width;
-                FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, item.aspectRatio);
-                FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, item.aspectRatio);
-                float itemMinCross = isRow ? transferredMinSize.height : transferredMinSize.width;
-                float itemMaxCross = isRow ? transferredMaxSize.height : transferredMaxSize.width;
+                float itemMinCross = item.transferredMinCross;
+                float itemMaxCross = item.transferredMaxCross;
 
                 // Apply min/max constraints
-                float paddingBorderCross = isRow
-                                           ? item.padding.top + item.padding.bottom + item.border.top + item.border.bottom
-                                           : item.padding.left + item.padding.right + item.border.left + item.border.right;
+                float paddingBorderCross = item.paddingBorderCross;
 
                 // Use hypothetical cross size from step 7 (matching Rust behavior).
                 // Don't re-measure with flex-resolved main to avoid AR inflation
@@ -3036,7 +3080,6 @@ public class FlexboxComputer {
      * used cross size of its flex line, clamped according to the item's used min and max cross sizes.
      */
     private void determineUsedCrossSize(List<FlexLine> lines, FlexDirection flexDirection, TaffyStyle containerStyle) {
-        TaffyTree tree = layoutComputer.getTree();
         boolean isRow = flexDirection.isRow();
 
         for (int lineIdx = 0, lineTotal = lines.size(); lineIdx < lineTotal; lineIdx++) {
@@ -3069,8 +3112,7 @@ public class FlexboxComputer {
                 // ST-01 (#1099): a cross size of 'stretch' stretches to the flex line like
                 // align-self: stretch, but regardless of the alignment style (upstream's
                 // is_stretched predicate). align-self: stretch keeps its auto-size probe.
-                TaffyStyle itemStyle = tree.getStyle(item.nodeId);
-                TaffyDimension crossDimStyle = isRow ? itemStyle.getSize().height : itemStyle.getSize().width;
+                TaffyDimension crossDimStyle = item.crossSizeDim;
                 boolean crossIsStretch = crossDimStyle != null && crossDimStyle.isStretch();
                 boolean stretchesCross = marginsAreNotAuto
                         && (crossIsStretch || (shouldStretch && crossSizeIsAuto));
@@ -3100,9 +3142,9 @@ public class FlexboxComputer {
 
                     // If the item has an aspect ratio and its main-axis size was auto in the style,
                     // derive the main-axis size from the stretched cross size via aspect ratio.
-                    Float aspectRatio = itemStyle.getAspectRatio();
+                    Float aspectRatio = item.aspectRatio;
                     if (aspectRatio != null && !Float.isNaN(aspectRatio)) {
-                        TaffyDimension mainDimStyle = isRow ? itemStyle.getSize().width : itemStyle.getSize().height;
+                        TaffyDimension mainDimStyle = item.mainSizeDim;
                         boolean mainSizeIsAuto = mainDimStyle == null || mainDimStyle.isAuto();
                         if (mainSizeIsAuto) {
                             float derivedMain = isRow
@@ -3355,10 +3397,9 @@ public class FlexboxComputer {
                 // For AR items with auto cross in style where flex resolution changed the main size,
                 // re-derive the cross from the flex-resolved main via AR. This allows the child to
                 // overflow the container when the flex-grown main produces a larger AR-derived cross.
-                TaffyStyle childStyle = tree.getStyle(item.nodeId);
-                Float arForFinal = childStyle.getAspectRatio();
+                Float arForFinal = item.aspectRatio;
                 if (arForFinal != null && !Float.isNaN(arForFinal)) {
-                    TaffyDimension crossDimStyle = isRow ? childStyle.getSize().height : childStyle.getSize().width;
+                    TaffyDimension crossDimStyle = item.crossSizeDim;
                     boolean crossAutoInStyle = crossDimStyle == null || crossDimStyle.isAuto();
                     // Only apply when flex resolution changed the main size (target != hypothetical)
                     float hypMain = isRow ? item.hypotheticalInnerSize.width : item.hypotheticalInnerSize.height;
