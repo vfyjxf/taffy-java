@@ -17,6 +17,6 @@
 | 9 | style_copy_flex_shorthand | nodes/0 | contentSize.width | 20 | 100 | PA-04 | `copy()` keeps flex, so the child fills the container | 1.2.0 | never |
 | 10 | style_copy_flex_shorthand | nodes/2 | size.width | 0 | 80 | PA-04 | The copied flex:2 child grows to 80 | 1.2.0 | never |
 | 11 | block_display_none_descendants | nodes/2,3,4 | location / size / contentSize (except order) | old visible values (120x80@30, 60x25, 60x20, 30x15@10,10) | 0 | PA-06 | display:none descendants were never laid out and kept stale values; performChildLayout zeroes them and stores the cache | 1.2.0 | never |
-| 12 | block_display_none_descendants | nodes/2,4 | order | 1 | 0 | PA-06 | Hidden nodes get their real child order | 1.2.0 | never |
+| 12 | block_display_none_descendants | nodes/4 | order | 1 | 0 | PA-06 / P27 | Hidden subtree descendants report order 0; the direct `display:none` child keeps the index its parent assigned (P27 restores the baseline value for nodes/2) | 1.2.0 | never |
 | 13 | abspos_content_sized_percentage_height | nodes/3 | size.height | 0 | 50 | PA-05 | A content-sized abspos container now runs a definite-size second pass, so height:50% resolves against the final 100px height | 1.2.0 | never |
 | 14 | abspos_content_sized_percentage_height | nodes/0,1,1 | contentSize.height / scrollHeight | 100 / 0 | 150 / 50 | PA-05 | The percentage child now contributes 50px to the container and root content extent | 1.2.0 | never |

@@ -212,6 +212,12 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 
 ### Fixed
 
+- **P27 display:none order** — A `display: none` child's `Layout.order` was
+  zeroed by `computeHiddenLayout` on the first (uncached) pass but kept the
+  parent-assigned index on a later cached pass, so the same tree reported
+  different orders for the same node. The hidden pass now preserves the stored
+  order for the hidden node itself; descendants of a hidden subtree still report
+  order 0, as upstream does.
 - **Incremental block measurement (P25/P26)** — The content-based container
   width probe in block layout used `performChildLayout` (a `PERFORM_LAYOUT`
   run) instead of `measureChildSize` (a `COMPUTE_SIZE` run). The probe therefore

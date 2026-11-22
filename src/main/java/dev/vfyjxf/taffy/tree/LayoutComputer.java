@@ -1105,15 +1105,36 @@ public class LayoutComputer {
 
     /**
      * Computes layout for a hidden node.
+     *
+     * <p>The node is reset to a zero layout, but its {@link Layout#order()} is kept from the
+     * unrounded layout already stored for it. A block, flex or grid container's hidden-child pass
+     * writes {@link Layout#withOrder(int) withOrder(childIndex)} for each {@code display: none}
+     * child right before calling in here, and that index must survive this pass: upstream's
+     * {@code compute_hidden_layout} instead re-writes order {@code 0}, so a tree's first
+     * (uncached) pass reports {@code 0} while a later pass that hits the layout cache keeps the
+     * index (P27). Preserving the stored order keeps every pass, and a freshly built tree, at the
+     * value the owning container assigned.</p>
+     *
+     * <p>Children are laid out hidden recursively and always report order {@code 0}, exactly like
+     * upstream {@code compute_hidden_layout}: a hidden subtree never renders, so no layout
+     * algorithm assigns its nodes an index. This also re-zeroes a descendant that was visible in
+     * an earlier pass and still carries a stale index from it.</p>
      */
     public LayoutOutput computeHiddenLayout(NodeId node) {
+        Layout stored = tree.getUnroundedLayout(node);
+        return computeHiddenLayout(node, stored != null ? stored.order() : 0);
+    }
+
+    private LayoutOutput computeHiddenLayout(NodeId node, int order) {
         tree.clearCache(node);
-        tree.setUnroundedLayout(node, Layout.withOrder(0));
+        // Keep the order the owning container assigned to this hidden child; everything else
+        // stays a zero layout, matching upstream's Layout::with_order(0).
+        tree.setUnroundedLayout(node, Layout.withOrder(order));
 
         // Process children as hidden
         List<NodeId> children = tree.getChildren(node);
         for (NodeId child : children) {
-            computeChildLayout(child, LayoutInput.hidden());
+            computeHiddenLayout(child, 0);
         }
 
         return LayoutOutput.hidden();
