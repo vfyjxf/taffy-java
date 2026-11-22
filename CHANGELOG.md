@@ -235,6 +235,11 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   out-of-flow and hidden-child passes, matching upstream `grid/mod.rs`; a measure
   pass writes no child layout. Pinned by the 30-seed P29 grid differential test
   and a one-fixture P30 regression test.
+- **P32 flex per-item hot path** — Flex item/line hot loops walk their
+  `ArrayList`s by index, and `FlexItem` caches the style-derived values that do not
+  depend on the pass (padding/border, margin sums, scroll-container flags, size and
+  flex-basis classification). `determineFlexBaseSize`/`performFinalLayout` no longer
+  allocate transient `LayoutOutput`/point copies where a value write was enough.
 - **P31 grid measure pass** — Grid's `COMPUTE_SIZE` path ran item positioning,
   detailed-grid recording and the out-of-flow/hidden passes before returning, so a
   measure wrote child layouts (and could leave them behind on a later cache hit).
