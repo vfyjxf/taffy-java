@@ -83,6 +83,20 @@ public class NodeData {
     private FlexboxComputer.FlexItemCache flexItemCache;
 
     /**
+     * Cross-pass flex container result cache owned by {@link FlexboxComputer}, or {@code null}
+     * when this node has none (not a flex container, no cacheable result, or invalidated).
+     *
+     * <p>Unlike {@link #flexItemCache} this caches the <em>whole</em> result of the flex algorithm
+     * for one {@link LayoutInput}, so a container that is laid out again with the same inputs and
+     * unchanged children can answer from the cache without re-running the item sizing stages.
+     * Its validity is version-checked by {@link FlexboxComputer.FlexResultCache#matches}, so
+     * clearing it is an optimisation, not the correctness mechanism: a stale entry is rejected by
+     * the version stamps. Stored on the node for the same reason as the item cache: the result
+     * must survive from one layout pass to the next.</p>
+     */
+    private FlexboxComputer.FlexResultCache flexResultCache;
+
+    /**
      * Cross-pass grid item-list cache owned by {@link GridComputer}, or {@code null} when this
      * node has none (not a grid container, or invalidated).
      *
@@ -118,6 +132,7 @@ public class NodeData {
         blockItemCache = null;
         flexItemCache = null;
         gridItemCache = null;
+        flexResultCache = null;
     }
 
     /** Returns the cross-pass block item cache, or {@code null} when there is none. */
@@ -133,6 +148,21 @@ public class NodeData {
     /** Drops the cross-pass block item list without touching any version stamp. */
     void clearBlockItemCache() {
         this.blockItemCache = null;
+    }
+
+    /** Returns the cross-pass flex container result cache, or {@code null} when there is none. */
+    FlexboxComputer.FlexResultCache getFlexResultCache() {
+        return flexResultCache;
+    }
+
+    /** Stores a flex container result computed by {@link FlexboxComputer}. */
+    void setFlexResultCache(FlexboxComputer.FlexResultCache cache) {
+        this.flexResultCache = cache;
+    }
+
+    /** Drops the flex container result without touching any version stamp. */
+    void clearFlexResultCache() {
+        this.flexResultCache = null;
     }
 
     /** Returns the cross-pass flex item cache, or {@code null} when there is none. */
@@ -167,6 +197,18 @@ public class NodeData {
     
     /** The always unrounded results of the layout computation */
     private Layout unroundedLayout;
+
+    /**
+     * Monotonic version of this node's stored unrounded layout.
+     *
+     * <p>Bumped by every {@link #setUnroundedLayout} write. A parent's cached layout result
+     * describes the child layouts the pass that produced it wrote, so it captures the direct
+     * children's stamps and rejects the entry once any of those layouts was overwritten. The final
+     * (rounded) layout is deliberately not part of the stamp: rounding runs after the layout
+     * algorithm, and the rounded output is derived from the unrounded one rather than an input of
+     * any parent's algorithm.</p>
+     */
+    private long layoutVersion;
     
     /** The final results of the layout computation (may be rounded) */
     private Layout finalLayout;
@@ -228,6 +270,7 @@ public class NodeData {
         this.blockItemCache = null;
         this.flexItemCache = null;
         this.gridItemCache = null;
+        this.flexResultCache = null;
     }
 
     /**
@@ -262,6 +305,18 @@ public class NodeData {
     
     public void setUnroundedLayout(Layout layout) {
         this.unroundedLayout = layout;
+        this.layoutVersion++;
+    }
+
+    /**
+     * Returns the version stamp of this node's unrounded layout.
+     *
+     * <p>Package-private: a parent's {@link FlexboxComputer.FlexResultCache} compares it to detect
+     * a child whose stored layout was overwritten since the cached result was produced; it is
+     * internal layout state and not part of the public API.</p>
+     */
+    long getLayoutVersion() {
+        return layoutVersion;
     }
     
     public Layout getFinalLayout() {
@@ -377,6 +432,7 @@ public class NodeData {
         this.blockItemCache = null;
         this.flexItemCache = null;
         this.gridItemCache = null;
+        this.flexResultCache = null;
         return cache.clear();
     }
 
@@ -394,6 +450,7 @@ public class NodeData {
         this.blockItemCache = null;
         this.flexItemCache = null;
         this.gridItemCache = null;
+        this.flexResultCache = null;
         return cache.clear();
     }
 
@@ -407,6 +464,10 @@ public class NodeData {
      * @return true if the layout cache was already empty (node was already dirty)
      */
     boolean markDirtyAncestor() {
+        // An ancestor reached by a descendant's dirty propagation must not answer from a result
+        // cache that describes the old subtree. Its flex result cache is dropped here, so a
+        // mutation deep inside a flex container can never be hidden by a container-level hit.
+        this.flexResultCache = null;
         return cache.clear();
     }
 }
