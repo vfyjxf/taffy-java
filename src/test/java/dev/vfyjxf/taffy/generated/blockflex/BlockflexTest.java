@@ -736,6 +736,8 @@ public class BlockflexTest {
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(40.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node1Layout = tree.getLayout(node1);
         assertEquals(40.0f, node1Layout.size().width, "width of node1");
         assertEquals(50.0f, node1Layout.size().height, "height of node1");
@@ -784,6 +786,8 @@ public class BlockflexTest {
         assertEquals(50.0f, node0Layout.size().height, "height of node0");
         assertEquals(0.0f, node0Layout.location().x, "x of node0");
         assertEquals(0.0f, node0Layout.location().y, "y of node0");
+        assertEquals(40.0f, node0Layout.scrollWidth(), EPSILON, "scroll width of node0");
+        assertEquals(0.0f, node0Layout.scrollHeight(), EPSILON, "scroll height of node0");
         Layout node1Layout = tree.getLayout(node1);
         assertEquals(40.0f, node1Layout.size().width, "width of node1");
         assertEquals(50.0f, node1Layout.size().height, "height of node1");

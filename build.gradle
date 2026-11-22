@@ -7,6 +7,9 @@ plugins {
 //    id 'signing'
 }
 
+// API compatibility checking against the last published release (see docs/api-compatibility.md).
+apply plugin: 'dev.vfyjxf.taffy.api-compatibility'
+
 group = 'dev.vfyjxf'
 version = '1.1.4'
 
@@ -45,15 +48,20 @@ shadowJar {
 }
 
 jmh {
-    warmupIterations = 2
-    iterations = 5
-    fork = 1
-    // Include all benchmark classes using full regex pattern
-    includes = ['.*Benchmark.*']
+    // Defaults are a fast smoke profile: 1 warmup + 1 measurement iteration, one fork.
+    // For a stable comparison run, override them from the command line, for example:
+    //   ./gradlew jmh -PjmhWarmupIterations=3 -PjmhIterations=5 -PjmhFork=2
+    warmupIterations = (project.findProperty('jmhWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhIterations') ?: 1) as int
+    fork = (project.findProperty('jmhFork') ?: 1) as int
 
-    // Keep default runs reasonably fast.
-    // Extended benchmarks are opt-in via the `jmhExtended` task below.
-    excludes = ['.*ExtendedBenchmark.*']
+    // Include all benchmark classes using full regex pattern.
+    // Both patterns can be overridden to run a subset:
+    //   ./gradlew jmh -PjmhIncludes='.*FlexScenarioBenchmark.*'
+    includes = [(project.findProperty('jmhIncludes') ?: '.*Benchmark.*') as String]
+
+    // Extended benchmarks (100k-node inputs) are opt-in via the `jmhExtended` task.
+    excludes = [(project.findProperty('jmhExcludes') ?: '.*ExtendedBenchmark.*') as String]
 
     // JMH options
     jmhVersion = '1.37'
@@ -64,8 +72,196 @@ jmh {
     jvmArgs = ['-Xss16m']
 }
 
+// Large-input benchmarks (100k-node PanGUI/tree workloads) are excluded from the default
+// `jmh` task. Run them explicitly with:
+//   ./gradlew jmhExtended
+// Override iterations with -PjmhExtendedWarmupIterations / -PjmhExtendedIterations.
+tasks.register('jmhExtended', me.champeau.jmh.JMHTask) {
+    group = 'jmh'
+    description = 'Runs the large (Extended) JMH benchmarks excluded from the default jmh task.'
+
+    jmhClasspath.from(configurations.jmh)
+    testRuntimeClasspath.from(configurations.jmhRuntimeClasspath)
+    jarArchive.set(tasks.named('jmhJar').flatMap { it.archiveFile })
+
+    includes = [(project.findProperty('jmhExtendedIncludes') ?: '.*ExtendedBenchmark.*') as String]
+    excludes = []
+    warmupIterations = (project.findProperty('jmhExtendedWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhExtendedIterations') ?: 2) as int
+    fork = 1
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results-extended.json")
+    humanOutputFile = project.file("${project.buildDir}/reports/jmh/output-extended.txt")
+    jvmArgs = ['-Xss16m']
+}
+
+// Phase benchmarks isolate style resolution, tree construction, measure, cache, direction and
+// rounding. They include 100k-node and 1024-deep workloads, so they also run inside the default
+// `jmh` task; this task runs only the phase classes for focused/iterative measurement:
+//   ./gradlew jmhPhase
+//   ./gradlew jmhPhase -PjmhPhaseIncludes='.*InternalPhaseBenchmark.*'
+//   ./gradlew jmhPhase -PjmhPhaseWarmupIterations=3 -PjmhPhaseIterations=5 -PjmhPhaseFork=2
+tasks.register('jmhPhase', me.champeau.jmh.JMHTask) {
+    group = 'jmh'
+    description = 'Runs the phase benchmarks (PhaseLayout/LeafFlow/IncrementalPhase/StylePhase/InternalPhase).'
+
+    jmhClasspath.from(configurations.jmh)
+    testRuntimeClasspath.from(configurations.jmhRuntimeClasspath)
+    jarArchive.set(tasks.named('jmhJar').flatMap { it.archiveFile })
+
+    includes = [(project.findProperty('jmhPhaseIncludes') ?:
+        '.*(PhaseLayoutBenchmark|LeafFlowBenchmark|IncrementalPhaseBenchmark|StylePhaseBenchmark|InternalPhaseBenchmark).*') as String]
+    excludes = []
+    warmupIterations = (project.findProperty('jmhPhaseWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhPhaseIterations') ?: 1) as int
+    fork = (project.findProperty('jmhPhaseFork') ?: 1) as int
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results-phase.json")
+    humanOutputFile = project.file("${project.buildDir}/reports/jmh/output-phase.txt")
+    jvmArgs = ['-Xss16m']
+}
+
+// LDLib2-shaped UI scenarios (src/jmh/java/dev/vfyjxf/taffy/benchmark/Ldlib2UiBenchmark.java).
+// The default "jmh" task also picks the class up through the .*Benchmark.* include; this task
+// keeps a run to that one class and its own result files:
+//   ./gradlew jmhLdlib
+//   ./gradlew jmhLdlib -PjmhLdlibIncludes='.*form.*'
+//   ./gradlew jmhLdlib -PjmhLdlibWarmupIterations=2 -PjmhLdlibIterations=3 -PjmhLdlibFork=2
+tasks.register('jmhLdlib', me.champeau.jmh.JMHTask) {
+    group = 'jmh'
+    description = 'Runs the LDLib2 UI scenario benchmarks (Ldlib2UiBenchmark).'
+
+    jmhClasspath.from(configurations.jmh)
+    testRuntimeClasspath.from(configurations.jmhRuntimeClasspath)
+    jarArchive.set(tasks.named('jmhJar').flatMap { it.archiveFile })
+
+    includes = [(project.findProperty('jmhLdlibIncludes') ?: '.*Ldlib2UiBenchmark.*') as String]
+    excludes = []
+    warmupIterations = (project.findProperty('jmhLdlibWarmupIterations') ?: 1) as int
+    iterations = (project.findProperty('jmhLdlibIterations') ?: 1) as int
+    fork = (project.findProperty('jmhLdlibFork') ?: 1) as int
+    // Pin individual @Param values for a single-point profile run, e.g.:
+    //   ./gradlew jmhLdlib -PjmhLdlibIncludes='.*formColdLayout' -PjmhLdlibParams='targetNodes=20000'
+    if (project.hasProperty('jmhLdlibParams')) {
+        def parameters = new LinkedHashMap<String, org.gradle.api.provider.ListProperty<String>>()
+        project.property('jmhLdlibParams').split(',').each { entry ->
+            def pair = entry.split('=', 2)
+            def values = project.objects.listProperty(String)
+            values.add(pair[1].trim())
+            parameters.put(pair[0].trim(), values)
+        }
+        benchmarkParameters.set(parameters)
+    }
+    resultFormat = 'JSON'
+    resultsFile = project.file("${project.buildDir}/reports/jmh/results-ldlib.json")
+    humanOutputFile = project.file("${project.buildDir}/reports/jmh/output-ldlib.txt")
+    jvmArgs = ['-Xss16m']
+}
+
+// Plain-java smoke for the same scenarios: builds every tree, performs one invocation of every
+// benchmark method and checks the structural invariants. It does not start JMH and measures
+// nothing:
+//   ./gradlew jmhSmokeLdlib
+tasks.register('jmhSmokeLdlib', JavaExec) {
+    group = 'jmh'
+    description = 'Runs Ldlib2UiSmoke (one invocation per scenario, no JMH measurement).'
+
+    dependsOn tasks.named('jmhClasses')
+    classpath = sourceSets.jmh.runtimeClasspath + configurations.jmh
+    mainClass = 'dev.vfyjxf.taffy.benchmark.Ldlib2UiSmoke'
+    jvmArgs = ['-Xss16m']
+}
+
+// Plain-java true-cold layout probe (src/jmh/java/.../ColdLayoutProbe.java).
+// It answers a question the JMH suite cannot: the suite builds the tree once and calls
+// clearCache per invocation, but clearCache does not clear the p20 flex item list or the p22 grid
+// item list, so every invocation after the first reuses metadata built by the first layout. The
+// probe rebuilds the tree outside the timer for every round ("true cold") and also reproduces the
+// JMH convention ("clear-cache") in the same process, so the two numbers share one JVM and one JIT.
+// The same compiled probe can be linked against the published local5 jar by replacing only the
+// main classes:
+//   ./gradlew coldLayoutProbe
+//   ./gradlew coldLayoutProbe -PcoldProbeRounds=20 -PcoldProbeRepeats=2
+//   ./gradlew coldLayoutProbe -PcoldProbeOnly=wideGrid-316 -PcoldProbeMode=true
+//   ./gradlew coldLayoutProbe \
+//     -PcoldProbeOldJar="$HOME/.m2/repository/dev/vfyjxf/taffy/1.2.0-local5/taffy-1.2.0-local5-all.jar" \
+//     -PcoldProbeLabel=local5
+// See the maintainer perf notes for the recorded run and its caveats.
+tasks.register('coldLayoutProbe', JavaExec) {
+    group = 'jmh'
+    description = 'Measures true-cold and clearCache-cold layout in a plain Java process (no JMH).'
+
+    dependsOn tasks.named('jmhClasses')
+    mainClass = 'dev.vfyjxf.taffy.benchmark.ColdLayoutProbe'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+    jvmArgs = ['-Xss16m', '-Xms2g', '-Xmx3g']
+
+    def oldJar = project.findProperty('coldProbeOldJar')
+    if (oldJar) {
+        // Replace only the main classes: the probe and the benchmark builders are the same
+        // compiled artifacts in both runs, and the old all-jar carries its own shaded fastutil.
+        def mainOutputs = sourceSets.main.output.files.collect { it.absolutePath } as Set
+        classpath = files(oldJar) + (sourceSets.jmh.runtimeClasspath.filter {
+            !mainOutputs.contains(it.absolutePath)
+        }) + configurations.jmh
+    } else {
+        classpath = sourceSets.jmh.runtimeClasspath + configurations.jmh
+    }
+
+    def probeArgs = []
+    ['coldProbeRounds': 'rounds', 'coldProbeLargeRounds': 'largeRounds',
+     'coldProbeWarmup': 'warmup', 'coldProbeWarmupMs': 'warmupMs',
+     'coldProbeRepeats': 'repeats', 'coldProbeOnly': 'only', 'coldProbeMode': 'mode',
+     'coldProbeGc': 'gc'].each { property, key ->
+        if (project.hasProperty(property)) {
+            probeArgs.add("${key}=${project.property(property)}")
+        }
+    }
+    if (project.hasProperty('coldProbeLabel')) {
+        probeArgs.add("label=${project.property('coldProbeLabel')}")
+    } else {
+        probeArgs.add(oldJar ? 'label=old' : 'label=current')
+    }
+    args probeArgs
+}
+
+// Heap-footprint probe for the benchmark tree shapes (src/jmh/java/.../MemoryFootprintMain.java).
+// This is not a benchmark: it starts no JMH, it builds flat/form/deep trees, forces full GCs and
+// prints used-heap deltas per node. The numbers and their limits are documented in
+// the maintainer perf notes.
+//   ./gradlew memoryFootprint
+//   ./gradlew memoryFootprint -PmemoryFootprintRounds=7 -PmemoryFootprintOnly=flat-flex-100k
+tasks.register('memoryFootprint', JavaExec) {
+    group = 'jmh'
+    description = 'Measures the retained heap of the benchmark tree shapes (plain java main, no JMH).'
+
+    dependsOn tasks.named('jmhClasses')
+    classpath = sourceSets.jmh.runtimeClasspath + configurations.jmh
+    mainClass = 'dev.vfyjxf.taffy.benchmark.MemoryFootprintMain'
+    // The deep shape is a 100k-node chain, i.e. ~50k recursive layout frames; the benchmark
+    // tasks use -Xss16m for depth 1024, so this needs a much larger stack.
+    jvmArgs = ['-Xss512m', '-Xmx4g']
+    if (project.hasProperty('memoryFootprintRounds')) {
+        args "rounds=${project.property('memoryFootprintRounds')}"
+    }
+    if (project.hasProperty('memoryFootprintOnly')) {
+        args "only=${project.property('memoryFootprintOnly')}"
+    }
+    if (project.hasProperty('memoryFootprintFill')) {
+        args "fill=${project.property('memoryFootprintFill')}"
+    }
+    if (project.hasProperty('memoryFootprintLabel')) {
+        args "label=${project.property('memoryFootprintLabel')}"
+    }
+}
+
 test {
     useJUnitPlatform()
+    // Forward the golden-update switch from the Gradle CLI (-D...) to the test JVM.
+    // Usage: ./gradlew test --tests 'dev.vfyjxf.taffy.compat.*' -Dtaffy.compat.updateGolden=true
+    systemProperty 'taffy.compat.updateGolden', System.getProperty('taffy.compat.updateGolden', 'false')
 }
 
 tasks.withType(JavaCompile).configureEach {

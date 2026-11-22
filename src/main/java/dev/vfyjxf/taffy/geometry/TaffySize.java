@@ -97,6 +97,19 @@ public final class TaffySize<T> {
     }
 
     /**
+     * Swap the width and height components.
+     *
+     * <p>Used by tree implementations that lay out a vertical writing mode: transpose the
+     * inputs, run the horizontal-top-to-bottom algorithm, then transpose the result back.
+     * The receiver is never modified.</p>
+     *
+     * @return a new size whose width is this height and whose height is this width
+     */
+    public TaffySize<T> transpose() {
+        return new TaffySize<>(height, width);
+    }
+
+    /**
      * Get either the width or height depending on the axis
      */
     public T get(AbsoluteAxis axis) {

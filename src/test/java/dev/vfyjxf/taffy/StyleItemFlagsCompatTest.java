@@ -162,13 +162,15 @@ public class StyleItemFlagsCompatTest {
 
         tree.computeLayout(grid, TaffySize.minContent());
 
-        // Non-replaced items should not use the compressible replaced capping rule.
-        // With an indefinite container width, the percent max-size is unresolvable and should not affect track sizing,
-        // so the grid will still size itself based on content contributions.
+        // Non-replaced items must not use the compressible replaced capping rule: the max-content
+        // contribution still sizes the auto track to 100 + padding. The item itself is then clamped
+        // by its max-width: 50%, which under GR-06 (upstream #960/#1271) resolves against the grid
+        // area (110 -> 55) even though the grid container's width is content-sized; percentages of
+        // grid items resolve against the grid area, not the grid container. Old expectation: 110.
         Layout gridLayout = tree.getLayout(grid);
         assertEquals(110.0f, gridLayout.size().width, EPSILON);
 
         Layout itemLayout = tree.getLayout(item);
-        assertEquals(110.0f, itemLayout.size().width, EPSILON);
+        assertEquals(55.0f, itemLayout.size().width, EPSILON);
     }
 }

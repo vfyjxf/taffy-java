@@ -42,3 +42,8 @@ wpt-mini/
 ### Mac OS ###
 .DS_Store# Add worktrees dir
 .worktrees/
+
+# JMH JFR profiles
+dev.vfyjxf.taffy.benchmark.*/
+
+.DS_Store

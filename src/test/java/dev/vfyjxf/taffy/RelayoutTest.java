@@ -397,7 +397,12 @@ public class RelayoutTest {
             assertEquals(1080.0f, wrapperLayout.size().height, EPSILON);
             
             Layout innerLayout = tree.getLayout(inner);
-            assertEquals(-150.0f, innerLayout.location().x, EPSILON);
+            // BK-13 / upstream #1189: positions round in cumulative coordinates
+            // (round(abs) - round(parent), ties away from zero). The inner box is at
+            // 1.5 (outer left inset) - 150 (justify-content:end) = -148.5 absolute; round(-148.5)
+            // is -149 and round(1.5) is 2, so the parent-relative rounded x is -151 (was -150
+            // when the relative offset was rounded on its own).
+            assertEquals(-151.0f, innerLayout.location().x, EPSILON);
             assertEquals(0.0f, innerLayout.location().y, EPSILON);
             assertEquals(301.0f, innerLayout.size().width, EPSILON);
             assertEquals(1080.0f, innerLayout.size().height, EPSILON);
