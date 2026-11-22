@@ -223,6 +223,18 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
 
 ### Fixed
 
+- **P30 grid measure pass** — A grid container with no in-flow items (only
+  absolutely positioned and/or `display: none` children) ran the whole
+  out-of-flow pass inside its `COMPUTE_SIZE` measurement: `layoutAbsoluteChildren`
+  laid every abspos child out at the probe's container size and committed the
+  result with `setUnroundedLayout`. When a later final pass was served from the
+  cache, those probe layouts stayed in the tree, so the same tree reported
+  different sizes for the same node after `clearCache(root)` / `markDirty(root)`
+  / a no-op `setStyle(root)` (fuzz seed 28: a `height: 50%` abspos grid child was
+  32.5 instead of 2.5). The container-size branch now returns the size before the
+  out-of-flow and hidden-child passes, matching upstream `grid/mod.rs`; a measure
+  pass writes no child layout. Pinned by the 30-seed P29 grid differential test
+  and a one-fixture P30 regression test.
 - **P27 display:none order** — A `display: none` child's `Layout.order` was
   zeroed by `computeHiddenLayout` on the first (uncached) pass but kept the
   parent-assigned index on a later cached pass, so the same tree reported

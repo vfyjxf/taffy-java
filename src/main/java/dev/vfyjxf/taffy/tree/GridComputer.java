@@ -1576,6 +1576,17 @@ public class GridComputer {
             tree.setDetailedGridInfo(node, buildDetailedGridInfo(namedLineResolver, colCounts, rowCounts,
                 columnLines, rowLines, items));
 
+            // Upstream returns the container size here for RunMode.ComputeSize (grid/mod.rs, "If
+            // only the container's size has been requested"), before the item-positioning,
+            // out-of-flow and hidden-child passes. Those passes write layouts into the tree:
+            // running them during a measure wrote the absolutely positioned children's layouts
+            // from the probe's container size, and a later final layout served from the cache left
+            // those probe layouts behind (P30: a height:50% abspos child of a grid with only
+            // absolutely positioned children reported 32.5 instead of 2.5 after clearCache(root)).
+            if (runMode == RunMode.COMPUTE_SIZE) {
+                return LayoutOutput.fromOuterSize(containerSize);
+            }
+
             // Layout absolutely positioned children even if no regular items. Their overflow is
             // accumulated in the container's padding-box frame and merged below (upstream oof.rs).
             FloatRect absoluteOverflowRect = layoutAbsoluteChildren(node, containerSize, border, scrollbarGutterX,
