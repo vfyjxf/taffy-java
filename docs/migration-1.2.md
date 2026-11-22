@@ -3,9 +3,7 @@
 > Status: **unreleased**. This guide covers the 1.2.0 upstream-alignment batch
 > (P0-a). The authoritative per-value record is
 > [`compat-golden/ALLOWLIST.md`](../compat-golden/ALLOWLIST.md); this page explains
-> how to use it. See also [CHANGELOG.md](../CHANGELOG.md),
-> [upstream-alignment.md](upstream-alignment.md) and the maintainer inventory
-> [alignment-api-changes.md](alignment-api-changes.md).
+> how to use it. See also [CHANGELOG.md](CHANGELOG.md).
 
 ## Who is affected
 

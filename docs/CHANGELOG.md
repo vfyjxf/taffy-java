@@ -405,6 +405,5 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   pins component order). Old constructors still produce `ZERO`/absent values,
   so old writers keep working; old readers should be updated.
 - `./gradlew checkApiCompatibility` stays green against the published `1.1.5`
-  baseline; see [docs/api-compatibility.md](docs/api-compatibility.md).
-- The maintainer-facing inventory of every source/binary/behavior break and
-  deprecation is [docs/alignment-api-changes.md](docs/alignment-api-changes.md).
+  baseline; see [api-compatibility.md](api-compatibility.md).
+

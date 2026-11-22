@@ -186,7 +186,7 @@ tasks.register('jmhSmokeLdlib', JavaExec) {
 //   ./gradlew coldLayoutProbe \
 //     -PcoldProbeOldJar="$HOME/.m2/repository/dev/vfyjxf/taffy/1.2.0-local5/taffy-1.2.0-local5-all.jar" \
 //     -PcoldProbeLabel=local5
-// See docs/perf-coldcheck.md for the recorded run and its caveats.
+// See the maintainer perf notes for the recorded run and its caveats.
 tasks.register('coldLayoutProbe', JavaExec) {
     group = 'jmh'
     description = 'Measures true-cold and clearCache-cold layout in a plain Java process (no JMH).'
@@ -230,7 +230,7 @@ tasks.register('coldLayoutProbe', JavaExec) {
 // Heap-footprint probe for the benchmark tree shapes (src/jmh/java/.../MemoryFootprintMain.java).
 // This is not a benchmark: it starts no JMH, it builds flat/form/deep trees, forces full GCs and
 // prints used-heap deltas per node. The numbers and their limits are documented in
-// docs/perf-memory.md.
+// the maintainer perf notes.
 //   ./gradlew memoryFootprint
 //   ./gradlew memoryFootprint -PmemoryFootprintRounds=7 -PmemoryFootprintOnly=flat-flex-100k
 tasks.register('memoryFootprint', JavaExec) {

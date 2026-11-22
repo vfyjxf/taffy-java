@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  * <p>This class is deliberately not a JMH benchmark: it never starts JMH. It builds one tree at a
  * time, forces a full GC and reads
  * {@code ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed()} at five points of a
- * tree's life, so that {@code docs/perf-memory.md} has a reproducible command and numbers:</p>
+ * tree's life, so that the maintainer perf notes has a reproducible command and numbers:</p>
  *
  * <ol>
  *   <li><b>baseline</b>: after three {@code System.gc()} calls, before the tree exists;</li>
@@ -53,7 +53,7 @@ import java.util.stream.Collectors;
  * roughly 1 MiB per 100k nodes is noise. Use {@code jcmd <pid> GC.class_histogram} or
  * {@code jmap -histo:live} when exact object sizes are required.</p>
  *
- * <p>Run it through Gradle (see {@code build.gradle} and {@code docs/perf-memory.md}):</p>
+ * <p>Run it through Gradle (see {@code build.gradle} and the maintainer perf notes):</p>
  * <pre>{@code
  * ./gradlew memoryFootprint
  * ./gradlew memoryFootprint -PmemoryFootprintRounds=7 -PmemoryFootprintOnly=flat-flex-100k
