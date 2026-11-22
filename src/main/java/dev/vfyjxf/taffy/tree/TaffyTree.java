@@ -1315,6 +1315,26 @@ public class TaffyTree {
     }
 
     /**
+     * Gets the cache entry for a node, requiring the given resolved direction.
+     *
+     * <p>Package-private counterpart of {@link #getCacheEntry(NodeId, LayoutInput)} used by the
+     * layout algorithms: {@code direction: inherit} is resolved from the ancestors and is not a
+     * component of the {@link LayoutInput} key, so a direction-aware lookup is what keeps an
+     * ancestor's direction change from reusing a mirrored layout. The public lookup stays
+     * direction-agnostic for compatibility (see {@link LayoutCache#get(LayoutInput)}).</p>
+     *
+     * @param node      the node
+     * @param inputs    the inputs of the layout pass
+     * @param direction the direction the node currently resolves to
+     * @return the cached output, or {@code null} if there is no usable entry
+     */
+    LayoutOutput getCacheEntry(NodeId node, LayoutInput inputs, TaffyDirection direction) {
+        NodeData data = nodeAt(node.getId());
+        if (data == null) return null;
+        return data.getCache().get(inputs, direction);
+    }
+
+    /**
      * Stores a cache entry for a node for the given layout inputs (BL-04).
      *
      * @param node   the node
@@ -1327,6 +1347,30 @@ public class TaffyTree {
             data.getCache().store(inputs, output);
             // An injected entry is not a dirty-flag mutation, so the request signature recorded by
             // the last pass can no longer be trusted to describe the stored layouts.
+            invalidateLayoutReuse();
+        }
+    }
+
+    /**
+     * Stores a cache entry for a node together with the resolved direction it was computed with.
+     *
+     * <p>Package-private counterpart of {@link #storeCacheEntry(NodeId, LayoutInput,
+     * LayoutOutput)}. A result computed with a different direction than the one already stored in
+     * the node's cache drops that cache first, which is what makes an inherited direction change
+     * observable on the next pass (see {@link LayoutCache#store(LayoutInput, LayoutOutput,
+     * TaffyDirection)}). No dirty flag or content version is touched: only the cache validity of
+     * the node itself changes.</p>
+     *
+     * @param node      the node
+     * @param inputs    the inputs of the layout pass
+     * @param output    the computed result
+     * @param direction the direction the node resolved to during this layout
+     */
+    void storeCacheEntry(NodeId node, LayoutInput inputs, LayoutOutput output, TaffyDirection direction) {
+        NodeData data = nodeAt(node.getId());
+        if (data != null) {
+            data.getCache().store(inputs, output, direction);
+            // See the direction-less overload: an injected entry bypasses the dirty flags.
             invalidateLayoutReuse();
         }
     }

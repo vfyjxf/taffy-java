@@ -21,6 +21,15 @@ import dev.vfyjxf.taffy.style.TaffyDirection;
  * drops the margin-collapse metadata, so measure results that carry such metadata (or that were
  * computed while vertical margins were collapsible) are not cached (CR-02).
  *
+ * <p>The resolved text direction is a further cache-wide part of the key. {@code direction:
+ * inherit} is resolved from the ancestors, so it is not a component of the {@link LayoutInput}
+ * and an ancestor's direction change cannot dirty this node. The direction-aware lookup and store
+ * therefore carry the node's resolved direction, and a store under a different direction drops
+ * every existing entry before storing the new one - the same effect as if the direction were
+ * part of every key. A lookup without a direction (the public, direction-less API) accepts
+ * entries of any direction, and a cache whose entries were all stored without a direction stays
+ * usable from every direction (its direction is "unknown").
+ *
  * <p>Implementation note: an entry stores an exact packed key of the {@link LayoutInput}'s
  * values, so a lookup compares three {@code long}s in place, allocates no probe object and needs
  * no field-by-field re-validation. The packed key keeps every relevant bit: a known axis stores
@@ -116,6 +125,22 @@ public final class LayoutCache {
      * storing a result computed with a different mode drops the existing entries.
      */
     private int mode = CacheMode.INITIAL;
+
+    /**
+     * The resolved text direction every valid entry was computed with, or {@code null} when the
+     * entries are direction-agnostic (all of them were stored through the public, direction-less
+     * API, which cannot know the direction).
+     *
+     * <p>{@code direction: inherit} is resolved from the ancestors and is not part of the
+     * {@link LayoutInput} key, so one set of inputs can produce a mirrored layout on either side
+     * of an ancestor's direction change. Storing under a different direction therefore drops the
+     * existing entries (see {@link #store(LayoutInput, LayoutOutput, TaffyDirection)}), and a
+     * direction-aware lookup misses when the stored direction differs. A {@code null} stored
+     * direction is a wildcard so that the public, direction-less API keeps its historical
+     * behaviour: entries it stored are returned by every direction-aware lookup, and its lookups
+     * return entries of any direction.</p>
+     */
+    private TaffyDirection cacheDirection = null;
 
     /**
      * The layout inputs that affect a node's layout but are not part of the cache key,
@@ -226,7 +251,31 @@ public final class LayoutCache {
      * @return the cached output, or {@code null} if there is no usable entry
      */
     public LayoutOutput get(LayoutInput inputs) {
+        // The public, direction-less lookup accepts entries of every direction: its callers
+        // (and the cache-injection API built on it) have no way to name the resolved direction.
+        return get(inputs, null);
+    }
+
+    /**
+     * Try to retrieve a cached result for the given layout inputs and resolved direction.
+     *
+     * <p>Behaves like {@link #get(LayoutInput)} but additionally requires the entry to have been
+     * computed with the same resolved direction, unless either side is unknown ({@code null}).
+     * {@code direction: inherit} is resolved from the ancestors and is not part of the
+     * {@link LayoutInput} key, so this is the lookup that keeps an ancestor's direction change
+     * from reusing a mirrored layout. Package-private: the public API has no direction slot.</p>
+     *
+     * @param inputs            the inputs of the layout pass
+     * @param resolvedDirection the direction the node currently resolves to, or {@code null} to
+     *                          accept any stored direction
+     * @return the cached output, or {@code null} if there is no usable entry
+     */
+    LayoutOutput get(LayoutInput inputs, TaffyDirection resolvedDirection) {
         if (isEmpty) return null;
+
+        if (!directionMatches(resolvedDirection)) {
+            return null;
+        }
 
         if (mode != CacheMode.from(inputs)) {
             return null;
@@ -264,6 +313,9 @@ public final class LayoutCache {
         if (isEmpty || !finalEntryContextFree || finalEntryDirection != direction.ordinal()) {
             return null;
         }
+        if (!directionMatches(direction)) {
+            return null;
+        }
         if (inputs.runMode() != RunMode.PERFORM_LAYOUT) {
             return null;
         }
@@ -271,6 +323,18 @@ public final class LayoutCache {
             return null;
         }
         return getFinalLayoutEntry(inputs);
+    }
+
+    /**
+     * Whether entries stored under {@link #cacheDirection} may answer a lookup for the given
+     * direction.
+     *
+     * <p>A {@code null} on either side is unknown and therefore compatible: the public API has no
+     * direction parameter, so the direction-less store cannot declare one and the direction-less
+     * lookup cannot require one. Two concrete directions must be equal.</p>
+     */
+    private boolean directionMatches(TaffyDirection resolvedDirection) {
+        return resolvedDirection == null || cacheDirection == null || cacheDirection == resolvedDirection;
     }
 
     private LayoutOutput getFinalLayoutEntry(LayoutInput inputs) {
@@ -342,14 +406,45 @@ public final class LayoutCache {
      * @param layoutOutput the computed result
      */
     public void store(LayoutInput inputs, LayoutOutput layoutOutput) {
+        // The public store cannot name the direction; see store(LayoutInput, LayoutOutput,
+        // TaffyDirection): it keeps the direction the cache already carries.
+        store(inputs, layoutOutput, null);
+    }
+
+    /**
+     * Store a computed result in the cache, tagged with the resolved direction it was computed
+     * with.
+     *
+     * <p>Storing a result computed with a different direction first drops the existing entries:
+     * the entries are only valid for one direction because {@code direction: inherit} is not part
+     * of the {@link LayoutInput} key. This is the same rejection a direction component in every
+     * key would produce, without enlarging the packed key. A {@code null} direction (the public
+     * API path) keeps the direction the cache already carries, or leaves it unknown on an empty
+     * cache.</p>
+     *
+     * <p>The rest of the contract is documented on {@link #store(LayoutInput, LayoutOutput)}:
+     * a different cache-wide mode drops the entries too, and measure results carrying
+     * margin-collapse metadata are never stored.</p>
+     *
+     * @param inputs            the inputs of the layout pass
+     * @param layoutOutput      the computed result
+     * @param resolvedDirection the direction the node resolved to during this layout, or
+     *                          {@code null} to keep the current cache direction
+     */
+    void store(LayoutInput inputs, LayoutOutput layoutOutput, TaffyDirection resolvedDirection) {
         if (inputs.runMode() == RunMode.PERFORM_HIDDEN_LAYOUT) {
             return;
         }
 
+        // A direction-less store is the public compatibility path: it cannot declare a direction,
+        // so it keeps the one the cache already carries (unknown for a fresh cache). A
+        // direction-aware store whose direction differs invalidates every entry.
+        TaffyDirection inputDirection = resolvedDirection != null ? resolvedDirection : cacheDirection;
         int inputMode = CacheMode.from(inputs);
-        if (mode != inputMode) {
+        if (mode != inputMode || cacheDirection != inputDirection) {
             clearEntries();
             mode = inputMode;
+            cacheDirection = inputDirection;
         }
 
         FloatSize known = inputs.knownDimensions();
@@ -445,7 +540,9 @@ public final class LayoutCache {
         if (inputs.runMode() != RunMode.PERFORM_LAYOUT) {
             throw new IllegalArgumentException("context-free reuse is only defined for final layout");
         }
-        store(inputs, layoutOutput);
+        // The context-free entry is a normal cache entry for the cache-wide direction as well;
+        // the dedicated mark below adds the float-context permission on top of it.
+        store(inputs, layoutOutput, direction);
         finalEntryContextFree = true;
         finalEntryDirection = direction.ordinal();
     }
@@ -619,6 +716,7 @@ public final class LayoutCache {
         }
         finalEntryContextFree = false;
         finalEntryDirection = -1;
+        cacheDirection = null;
         for (int i = 0; i < CACHE_SIZE; i++) {
             CacheEntry<FloatSize> entry = measureEntries[i];
             if (entry != null) {
