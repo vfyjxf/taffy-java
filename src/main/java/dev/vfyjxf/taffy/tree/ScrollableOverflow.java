@@ -42,6 +42,19 @@ public record ScrollableOverflow(FloatRect rect, boolean reversedX, boolean reve
     public static final ScrollableOverflow ZERO = new ScrollableOverflow(FloatRect.zero(), false, false);
 
     /**
+     * The shared value of a <em>computed</em>, empty scrollable-overflow rectangle.
+     *
+     * <p>This is not {@link #ZERO}: {@link Layout} treats {@code ZERO} as the 1.x "no overflow
+     * data" placeholder and only {@code ZERO} is excluded by its identity check, so a real
+     * algorithm result must be a different instance. Algorithms that produce the empty rectangle
+     * on most nodes can return this interned value instead of allocating a fresh record, a
+     * rectangle copy and a client-size pair per node. Instances are immutable value objects (the
+     * constructor and {@link #rect()} defensively copy), so sharing it is invisible except for
+     * identity, which never distinguishes computed rectangles from each other.</p>
+     */
+    static final ScrollableOverflow EMPTY_COMPUTED = new ScrollableOverflow(FloatRect.zero(), false, false);
+
+    /**
      * Creates a defensive {@code ScrollableOverflow}.
      *
      * @param rect      the physical overflow rectangle; copied, {@code null} becomes a zero rectangle
@@ -63,6 +76,24 @@ public record ScrollableOverflow(FloatRect rect, boolean reversedX, boolean reve
     @Override
     public FloatRect rect() {
         return rect.copy();
+    }
+
+    /**
+     * Copies the internal rectangle into a caller-owned scratch rectangle.
+     *
+     * <p>Layout algorithms that read the overflow of every child allocate a defensive copy through
+     * {@link #rect()} just to read four floats, and throw it away immediately. This package-private
+     * back door lets them copy into one scratch rectangle per container instead. It is not part of
+     * the public API: the caller must not let {@code target} escape and must treat it as
+     * overwritten.</p>
+     *
+     * @param target the caller-owned rectangle to overwrite
+     */
+    void copyRectInto(FloatRect target) {
+        target.left = rect.left;
+        target.right = rect.right;
+        target.top = rect.top;
+        target.bottom = rect.bottom;
     }
 
     /**

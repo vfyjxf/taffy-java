@@ -1149,7 +1149,10 @@ public class FlexboxComputer {
      */
     private FloatSize computeContentSizeFromChildren(NodeId node, FloatRect containerBorder) {
         TaffyTree tree = layoutComputer.getTree();
-        FloatSize contentSize = FloatSize.zero();
+        float contentWidth = 0f;
+        float contentHeight = 0f;
+        // Scratch location reused for every child: computeContentSizeContribution only reads x/y.
+        FloatPoint contributionLocation = new FloatPoint(0f, 0f);
 
         for (NodeId childId : tree.getChildren(node)) {
             TaffyStyle childStyle = tree.getStyle(childId);
@@ -1160,19 +1163,21 @@ public class FlexboxComputer {
 
             FloatPoint childLocation = childLayout.location();
             FloatSize childContentSize = childLayout.contentSize() != null ? childLayout.contentSize() : childLayout.size();
+            contributionLocation.x = childLocation.x - containerBorder.left;
+            contributionLocation.y = childLocation.y - containerBorder.top;
             FloatSize contribution = ContentSizeUtil.computeContentSizeContribution(
-                new FloatPoint(
-                    childLocation.x - containerBorder.left,
-                    childLocation.y - containerBorder.top
-                ),
+                contributionLocation,
                 childLayout.size(),
                 childContentSize,
                 childStyle.getOverflow()
             );
-            contentSize = ContentSizeUtil.max(contentSize, contribution);
+            // The contribution is sanitized by computeContentSizeContribution (no NaN), so the
+            // scalar max is exactly ContentSizeUtil.max starting from a zero content size.
+            contentWidth = Math.max(contentWidth, contribution.width);
+            contentHeight = Math.max(contentHeight, contribution.height);
         }
 
-        return contentSize;
+        return new FloatSize(contentWidth, contentHeight);
     }
 
     private List<FlexItem> generateFlexItems(NodeId node, TaffyStyle containerStyle, FloatSize nodeInnerSize,
@@ -3581,6 +3586,12 @@ public class FlexboxComputer {
         // Union of the children's contributions, in this container's padding-box frame.
         FloatRect overflowRect = FloatRect.zero();
 
+        // Per-container scratch objects for the per-item overflow accounting. Both are overwritten
+        // before each use and never escape: they only spare one FloatPoint and one FloatRect
+        // allocation per child in this loop.
+        FloatPoint contributionLocation = new FloatPoint(0f, 0f);
+        FloatRect childOverflowRect = new FloatRect(0f, 0f, 0f, 0f);
+
         // Content box offset
         // For RTL column layouts, cross axis starts from the right edge
         float contentBoxCrossOffset = isRow ? contentBoxInset.top : contentBoxInset.left;
@@ -3789,16 +3800,23 @@ public class FlexboxComputer {
                 // resolved margin is passed: auto margins have already been assigned by the
                 // free-space distribution and only the end side extends a scroll container's
                 // padding, which the shared helper clamps at zero.
+                contributionLocation.x = x - paddingBoxInset.left;
+                contributionLocation.y = y - paddingBoxInset.top;
+                childOverflow.copyRectInto(childOverflowRect);
                 FloatRect contribution = ScrollableOverflowUtil.computeContribution(
-                    new FloatPoint(x - paddingBoxInset.left, y - paddingBoxInset.top),
+                    contributionLocation,
                     actualSize,
-                    childOverflow.rect(),
+                    childOverflowRect,
                     item.border,
                     item.overflow,
                     overflowContainer,
                     item.margin
                 );
-                overflowRect = ScrollableOverflowUtil.union(overflowRect, contribution);
+                // Union in place: overflowRect is this container's private accumulator.
+                overflowRect.left = Math.min(overflowRect.left, contribution.left);
+                overflowRect.right = Math.max(overflowRect.right, contribution.right);
+                overflowRect.top = Math.min(overflowRect.top, contribution.top);
+                overflowRect.bottom = Math.max(overflowRect.bottom, contribution.bottom);
 
                 float marginMain = isRow
                     ? item.margin.left + item.margin.right
