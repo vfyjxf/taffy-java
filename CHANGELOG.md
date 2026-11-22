@@ -241,7 +241,10 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   The measure now returns immediately after the container size, and the in-flow
   content-based width/height and track min-content probes use `measureChildSize`
   instead of `performChildLayout`; final layout, abspos and hidden passes keep
-  running only in the final pass.
+  running only in the final pass. The baseline-resolution probe still uses a
+  perform-layout child pass because it needs the baselines that a
+  `COMPUTE_SIZE` output does not carry (upstream track sizing does the same); it is
+  the remaining known measure-time layout write.
 - **P27 display:none order** — A `display: none` child's `Layout.order` was
   zeroed by `computeHiddenLayout` on the first (uncached) pass but kept the
   parent-assigned index on a later cached pass, so the same tree reported
