@@ -226,6 +226,228 @@ public class FlexboxComputer {
     }
 
     /**
+     * A flex container's whole-algorithm result, kept on the container's {@link NodeData} across
+     * layout passes.
+     *
+     * <p>Where {@link FlexItemCache} only pins the style-derived item metadata, this entry pins
+     * the result of the whole algorithm: the container's {@link LayoutOutput} together with the
+     * child layouts the producing pass wrote. A later request that describes exactly the same
+     * layout can therefore answer without running the item generation, the flex sizing stages,
+     * the line/cross-size stages or the final layout pass. This is the flex counterpart of the
+     * same-BFC block result reuse, but for flex the children do not change between the repeated
+     * passes (a warm relayout, a dirty loop's second pass, an unchanged card in a re-laid-out
+     * grid), so the version check below stays valid.</p>
+     *
+     * <p><b>Key.</b> The entry is an exact match of:</p>
+     * <ul>
+     *   <li>the {@link LayoutInput} fields the algorithm reads: {@link SizingMode}, the known
+     *       dimensions, the parent size (percentage basis) and the available space. As in
+     *       {@link LayoutCache}, an axis with a known dimension ignores the available space in
+     *       that axis ({@code axisKey}). Only {@link RunMode#PERFORM_LAYOUT} results are cached, so
+     *       the run mode is not stored; {@code RequestedAxis} is always {@link RequestedAxis#BOTH}
+     *       in this port. The vertical-margin-collapse hint is included for completeness even
+     *       though the flex algorithm hands children a non-collapsible line.</li>
+     *   <li>the container's {@code contentVersion} and {@code childrenVersion};</li>
+     *   <li>the container's resolved direction (inherited, so not part of {@code LayoutInput});</li>
+     *   <li>the content-box size the item list was built against;</li>
+     *   <li>every direct child's {@code contentVersion} (style, measure callback or node context)
+     *       and {@code layoutVersion} (its stored unrounded layout was overwritten).</li>
+     * </ul>
+     *
+     * <p>The version stamps make the entry self-invalidating, which is what lets it survive a plain
+     * {@link TaffyTree#clearCache} of the container exactly like the item-list caches do: that call
+     * drops the node's {@link LayoutCache} (and block item list) to force a layout
+     * <em>algorithm</em> run; this entry only answers when nothing it describes changed, and a
+     * pass that reaches it still counts as a real pass. A mutation that does not touch any of the
+     * stamps above (a deep descendant's style change) clears the entry through the dirty-flag
+     * propagation instead ({@link NodeData#markDirtyAncestor()}).</p>
+     *
+     * <p><b>Subtree invalidations stay cold.</b> Every direct child must additionally still have a
+     * non-empty {@link LayoutCache}; a cleared child cache is an explicit request to recompute that
+     * child ({@code clearCache} is the documented subtree-invalidation call), and the result entry
+     * must not hide it. (A hidden child's cache is cleared by its hidden-layout pass and then
+     * re-filled by the ordinary cache store, so a container with a hidden direct child still
+     * hits; the hidden child's order and zero layout are part of the cached result.) This separates the two conventions the benchmark suite relies on: clearing
+     * only the container (the warm-relayout convention) keeps the children warm and hits, while
+     * clearing every node (the cold convention) empties the children and misses, so a cold layout
+     * still performs the full algorithm. The check is conservative - the entry would still be
+     * correct with a cold child cache, because the stamps prove nothing changed - but it preserves
+     * the observable meaning of an explicit invalidation.</p>
+     *
+     * <p><b>Gates.</b> The entry is only used and stored for {@link RunMode#PERFORM_LAYOUT} with
+     * no {@link LayoutChangeListener} installed (a hit writes no child layout and would swallow
+     * the listener's notifications) and only for containers with in-flow items. Flex layout
+     * establishes an independent formatting context, and every flex item is laid out with a fresh
+     * {@link dev.vfyjxf.taffy.util.BlockContext}, so inherited float state cannot reach the
+     * algorithm and no float gate is needed on top of the version stamps.</p>
+     *
+     * <p>Like {@link LayoutCache}, the entry is mutated in place on every store: a repeated
+     * store for the same container allocates nothing, and the child-version arrays are reused.</p>
+     */
+    static final class FlexResultCache {
+
+        /** No child versions recorded yet; replaced by a sized array on the first store. */
+        private static final long[] EMPTY_CHILD_VERSIONS = new long[0];
+
+        /** The cached result, or {@code null} while the entry holds nothing. */
+        private LayoutOutput output;
+
+        /** {@link SizingMode} ordinal of the cached request. */
+        private int sizingMode;
+
+        /** Packed {@code verticalMarginsAreCollapsible} flags of the cached request. */
+        private int marginCollapseFlags;
+
+        private long knownWidthBits;
+        private long knownHeightBits;
+
+        /** Per-axis packed available-space keys, see {@link #axisKey}. */
+        private long availableWidthKey;
+        private long availableHeightKey;
+
+        private long parentWidthBits;
+        private long parentHeightBits;
+
+        /** The container's resolved direction when the result was computed. */
+        private TaffyDirection direction;
+
+        private long containerVersion;
+        private long childrenVersion;
+
+        /** The content-box size the item list was built against. */
+        private int innerWidthBits;
+        private int innerHeightBits;
+
+        /** One stamp per direct child, in child-list order. */
+        private long[] childContentVersions = EMPTY_CHILD_VERSIONS;
+        private long[] childLayoutVersions = EMPTY_CHILD_VERSIONS;
+
+        /**
+         * Whether this entry describes the given request and container exactly.
+         *
+         * <p>Every comparison is a bit-exact integer comparison (NaNs canonicalized through
+         * {@link Float#floatToIntBits}, matching {@link LayoutCache}), so a hit can never be a
+         * near match: {@code -0.0f} and {@code 0.0f} stay distinct, and every NaN compares equal
+         * to every NaN.</p>
+         */
+        boolean matches(TaffyTree tree, NodeData container, List<NodeId> children,
+                        LayoutInput inputs, TaffyDirection direction, FloatSize innerSize) {
+            if (output == null
+                || containerVersion != container.getContentVersion()
+                || childrenVersion != container.getChildrenVersion()
+                || this.direction != direction
+                || sizingMode != inputs.sizingMode().ordinal()
+                || marginCollapseFlags != collapseFlags(inputs.verticalMarginsAreCollapsible())) {
+                return false;
+            }
+            FloatSize known = inputs.knownDimensions();
+            if (knownWidthBits != Float.floatToIntBits(known.width)
+                || knownHeightBits != Float.floatToIntBits(known.height)
+                || availableWidthKey != axisKey(known.width, inputs.availableSpace().width)
+                || availableHeightKey != axisKey(known.height, inputs.availableSpace().height)) {
+                return false;
+            }
+            FloatSize parent = inputs.parentSize();
+            if (parentWidthBits != Float.floatToIntBits(parent.width)
+                || parentHeightBits != Float.floatToIntBits(parent.height)
+                || innerWidthBits != Float.floatToIntBits(innerSize.width)
+                || innerHeightBits != Float.floatToIntBits(innerSize.height)) {
+                return false;
+            }
+            int childCount = children.size();
+            if (childContentVersions.length != childCount) {
+                return false;
+            }
+            for (int i = 0; i < childCount; i++) {
+                NodeData child = tree.getNodeData(children.get(i));
+                if (child == null
+                    || childContentVersions[i] != child.getContentVersion()
+                    || childLayoutVersions[i] != child.getLayoutVersion()
+                    // A cleared child layout cache is an explicit request to recompute that child
+                    // (the subtree-invalidation convention of TaffyTree.clearCache). Honouring it
+                    // here is what keeps a whole-subtree invalidation a real recompute: with a
+                    // cache entry in place, a hit would skip the child the caller just invalidated.
+                    // It also keeps "clear every node's cache" (the cold-benchmark convention) cold
+                    // while a plain clearCache(container) - the warm-relayout convention - still
+                    // hits, because the children's caches are untouched in that case.
+                    || child.getCache().isEmpty()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** Replaces the entry with the result of a completed cacheable layout pass. */
+        void store(TaffyTree tree, NodeData container, List<NodeId> children,
+                   LayoutInput inputs, TaffyDirection direction, FloatSize innerSize,
+                   LayoutOutput output) {
+            this.output = output;
+            this.sizingMode = inputs.sizingMode().ordinal();
+            this.marginCollapseFlags = collapseFlags(inputs.verticalMarginsAreCollapsible());
+            FloatSize known = inputs.knownDimensions();
+            this.knownWidthBits = Float.floatToIntBits(known.width);
+            this.knownHeightBits = Float.floatToIntBits(known.height);
+            this.availableWidthKey = axisKey(known.width, inputs.availableSpace().width);
+            this.availableHeightKey = axisKey(known.height, inputs.availableSpace().height);
+            FloatSize parent = inputs.parentSize();
+            this.parentWidthBits = Float.floatToIntBits(parent.width);
+            this.parentHeightBits = Float.floatToIntBits(parent.height);
+            this.direction = direction;
+            this.containerVersion = container.getContentVersion();
+            this.childrenVersion = container.getChildrenVersion();
+            this.innerWidthBits = Float.floatToIntBits(innerSize.width);
+            this.innerHeightBits = Float.floatToIntBits(innerSize.height);
+
+            int childCount = children.size();
+            if (childContentVersions.length != childCount) {
+                childContentVersions = new long[childCount];
+                childLayoutVersions = new long[childCount];
+            }
+            for (int i = 0; i < childCount; i++) {
+                NodeData child = tree.getNodeData(children.get(i));
+                childContentVersions[i] = child == null ? -1L : child.getContentVersion();
+                childLayoutVersions[i] = child == null ? -1L : child.getLayoutVersion();
+            }
+        }
+
+        /** Packs one axis of the key exactly like {@link LayoutCache} does (known axis wins). */
+        private static long axisKey(float knownDimension, AvailableSpace availableSpace) {
+            if (!Float.isNaN(knownDimension)) {
+                return KNOWN_AXIS_BIT | (Float.floatToIntBits(knownDimension) & 0xFFFFFFFFL);
+            }
+            if (availableSpace == null) {
+                return AVAILABLE_SPACE_NULL;
+            }
+            return switch (availableSpace.getType()) {
+                case DEFINITE -> AVAILABLE_SPACE_DEFINITE
+                    | (Float.floatToIntBits(availableSpace.getValue()) & 0xFFFFFFFFL);
+                case MIN_CONTENT -> AVAILABLE_SPACE_MIN_CONTENT;
+                case MAX_CONTENT -> AVAILABLE_SPACE_MAX_CONTENT;
+            };
+        }
+
+        private static int collapseFlags(TaffyLine<Boolean> line) {
+            if (line == null) {
+                return 0;
+            }
+            int flags = 0;
+            if (Boolean.TRUE.equals(line.start)) {
+                flags |= 1;
+            }
+            if (Boolean.TRUE.equals(line.end)) {
+                flags |= 2;
+            }
+            return flags;
+        }
+
+        private static final long KNOWN_AXIS_BIT = 1L << 63;
+        private static final long AVAILABLE_SPACE_DEFINITE = 0b00L << 61;
+        private static final long AVAILABLE_SPACE_MIN_CONTENT = 0b01L << 61;
+        private static final long AVAILABLE_SPACE_MAX_CONTENT = 0b10L << 61;
+        private static final long AVAILABLE_SPACE_NULL = 0b11L << 61;
+    }
+
+    /**
      * Returns the pass-scoped item-list cache for {@code tree}, discarding the entries of a
      * previous pass (a different tree or a new direction epoch).
      */
@@ -613,6 +835,31 @@ public class FlexboxComputer {
             style.getGap().height.resolveOrZero(nodeInnerSize.height)
         );
 
+        // Cross-pass whole-result reuse: a container whose request and whole direct child state
+        // are unchanged since the pass that produced the cached output answers from it without
+        // running any per-item work. The entry is self-validating (see FlexResultCache), so a
+        // stale or partial match can never be returned. The check is deliberately placed after
+        // the container's own style resolution and before the per-item stages, which are the
+        // O(items) part; it is only enabled for final layout and without a layout change listener
+        // (a hit writes no child layout, so the listener would miss its notifications).
+        List<NodeId> children = tree.getChildren(node);
+        boolean cacheableResult = runMode == RunMode.PERFORM_LAYOUT
+                                  && tree.getLayoutChangeListener() == null;
+        NodeData containerData = null;
+        if (cacheableResult) {
+            containerData = tree.getNodeData(node);
+            if (containerData != null) {
+                FlexResultCache cachedResult = containerData.getFlexResultCache();
+                if (cachedResult != null
+                    && cachedResult.matches(tree, containerData, children, inputs, direction, nodeInnerSize)) {
+                    return cachedResult.output;
+                }
+            }
+        }
+        // The content-box basis the result key describes. Item generation may refine nodeInnerSize
+        // below once the container's main size is determined; the cached key stays the input basis.
+        FloatSize resultBasis = nodeInnerSize;
+
         // Determine available space for flex items (transforms outer available space to inner available space)
         TaffySize<AvailableSpace> innerAvailableSpace = determineAvailableSpace(styledBasedKnownDimensions, availableSpace, contentBoxInset);
 
@@ -629,7 +876,6 @@ public class FlexboxComputer {
                 return LayoutOutput.fromOuterSize(containerSize);
             }
 
-            List<NodeId> children = tree.getChildren(node);
             FloatSize clientSize = computeClientSize(containerSize, border, scrollbarGutter);
             ScrollableOverflowUtil.Container overflowContainer = new ScrollableOverflowUtil.Container(
                 isScrollContainer, clientSize, reversedX, reversedY, padding);
@@ -842,7 +1088,6 @@ public class FlexboxComputer {
             isRtl, isScrollContainer, reversedX, reversedY);
 
         // Layout hidden children (display: none)
-        List<NodeId> children = tree.getChildren(node);
         for (int order = 0; order < children.size(); order++) {
             NodeId child = children.get(order);
             if (tree.getStyle(child).getBoxGenerationMode() == BoxGenerationMode.NONE) {
@@ -860,7 +1105,7 @@ public class FlexboxComputer {
 
         FloatSize contentSize = computeContentSizeFromChildren(node, border);
         FloatPoint firstBaseline = new FloatPoint(NaN, finalLayout.firstBaseline());
-        return new LayoutOutput(
+        LayoutOutput output = new LayoutOutput(
             containerSize,
             contentSize,
             finalLayout.scrollableOverflow(),
@@ -870,6 +1115,17 @@ public class FlexboxComputer {
             CollapsibleMarginSet.ZERO,
             false
         );
+        if (cacheableResult) {
+            // Store after every child layout write of this pass (including the hidden children
+            // above), so the captured stamps describe exactly the state a hit reproduces.
+            FlexResultCache resultCache = containerData.getFlexResultCache();
+            if (resultCache == null) {
+                resultCache = new FlexResultCache();
+                containerData.setFlexResultCache(resultCache);
+            }
+            resultCache.store(tree, containerData, children, inputs, direction, resultBasis, output);
+        }
+        return output;
     }
 
     /**

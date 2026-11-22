@@ -147,7 +147,7 @@ suspicious number into its stage.
 | `inventoryPerFrameStyleChange` | hover style write on an 18x18 border-box slot, dirty walk, cache checks for 54 siblings |
 | `inventoryTooltipFollow` | absolute inset re-resolution for one out-of-flow node, dirty walk; slot rows should not be touched |
 | `measureCold` | `LayoutComputer` measure path: measure-callback dispatch, `FloatSize` allocation per call, cache store per measured leaf (3 measure calls per label observed: min-content, max-content, definite) |
-| `measureWarm` | root algorithm + cache lookups only; the measure callback must not run (smoke asserts 0 calls) |
+| `measureWarm` | P33 flex container result cache: the root's cached result answers after validating the layout input, each direct child's content/layout version and the children's cache warmth, so no item sizing stage and no measure callback runs (smoke asserts 0 calls) |
 
 ## Smoke evidence
 

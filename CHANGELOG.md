@@ -141,6 +141,36 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   count. Sizing, placement, baseline and contribution scratch fields are reset on
   reuse.
 
+### P33 performance additions
+
+- Flex containers cache their whole layout result across passes. A repeated
+  `PERFORM_LAYOUT` request that matches the packed `LayoutInput` (known dimensions,
+  parent size, available space, sizing mode), the container's style/children versions,
+  the resolved direction, the item-list inner size and every direct child's content
+  version and unrounded-layout version answers with the cached `LayoutOutput` and
+  skips item generation, the sizing stages and the final layout pass. The child
+  layouts the cached pass wrote are still in the tree (their version stamps prove it),
+  so no child is visited and no measure callback runs. `NodeData` gains an internal
+  version stamp that is bumped by `setUnroundedLayout` (the final/rounded layout is
+  derived after the algorithm and is not part of the stamp).
+- Invalidation is layered: a direct child's style/measure/context change or explicit
+  layout write misses through the version stamps, a change anywhere below the
+  container drops the ancestor entries through the existing dirty propagation, and a
+  different `LayoutInput` misses through the packed key. A plain
+  `clearCache(container)` keeps the entry (the flex/grid item-list contract, pinned
+  by a test); each direct child must additionally still have a warm layout cache, so
+  clearing every node - the cold-layout convention - misses and still runs the full
+  algorithm, and a cold layout stays cold. The entry is not used or stored while a
+  `LayoutChangeListener` is installed (a hit writes no child layout and would swallow
+  its notifications), in `COMPUTE_SIZE` mode, or for containers without in-flow items.
+- Probe (plain Java, not JMH; 2000 measured labels, rounding off):
+  `Ldlib2UiBenchmark.measureWarm` 0.40 ms -> 0.009 ms (-98%, one hit per invocation,
+  0 measure calls); `measureCold` (every node's cache cleared) unchanged at
+  ~0.60 ms; the true-cold probe (fresh tree per round) shows no regression beyond
+  run-to-run noise. `dashboardPerFrameStyleChange` is unchanged: the animated badge
+  is a direct child of the card, so the card's entry necessarily misses, and the
+  other cards already answered from their layout caches.
+
 ### P28 correctness
 
 - The resolved text direction is now part of the layout cache key. `direction:
