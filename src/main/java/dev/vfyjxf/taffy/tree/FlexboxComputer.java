@@ -363,17 +363,17 @@ public class FlexboxComputer {
         TaffyRect<Boolean> marginIsAuto;
         FloatRect padding;
         FloatRect border;
-        /**
+        /*
          * P32: the axis-oriented, style-derived values the flex sizing stages used to re-resolve
          * from the child style on every layout pass.
          *
-         * <p>Every field below is a pure function of the child's own style, its box-sizing and the
+         * Every field below is a pure function of the child's own style, its box-sizing and the
          * container's flex direction, all of which are fixed for the life of an item: a style
          * replacement, a child-list change, an inherited direction change or (for a value that
          * resolves against the container's content box) a new inner-size basis rebuilds the list
-         * (see {@link FlexItemCache}). The stages therefore read a field instead of resolving the
-         * child style again - the same item list is walked by up to seven stages per pass, and
-         * every walk used to repeat those resolutions.</p>
+         * (see FlexItemCache). The stages therefore read a field instead of resolving the child
+         * style again - the same item list is walked by up to seven stages per pass, and every
+         * walk used to repeat those resolutions.
          */
         /** The main-axis padding + border sum. */
         float paddingBorderMain;
@@ -383,7 +383,7 @@ public class FlexboxComputer {
         float boxSizingAdjustmentMain;
         /**
          * The item's min/max size transferred through its aspect ratio, or the item's own
-         * min/max size when the ratio transfers nothing ({@link #maybeApplyAspectRatio} returns its
+         * min/max size when the ratio transfers nothing ({@code maybeApplyAspectRatio} returns its
          * argument in that case, so the common item shares the object and allocates nothing). The
          * raw min/max size is final once the item is built, so the transfer is a per-build
          * constant rather than two fresh {@link FloatSize}s per stage.
