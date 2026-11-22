@@ -235,6 +235,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   out-of-flow and hidden-child passes, matching upstream `grid/mod.rs`; a measure
   pass writes no child layout. Pinned by the 30-seed P29 grid differential test
   and a one-fixture P30 regression test.
+- **P31 grid measure pass** — Grid's `COMPUTE_SIZE` path ran item positioning,
+  detailed-grid recording and the out-of-flow/hidden passes before returning, so a
+  measure wrote child layouts (and could leave them behind on a later cache hit).
+  The measure now returns immediately after the container size, and the in-flow
+  content-based width/height and track min-content probes use `measureChildSize`
+  instead of `performChildLayout`; final layout, abspos and hidden passes keep
+  running only in the final pass.
 - **P27 display:none order** — A `display: none` child's `Layout.order` was
   zeroed by `computeHiddenLayout` on the first (uncached) pass but kept the
   parent-assigned index on a later cached pass, so the same tree reported

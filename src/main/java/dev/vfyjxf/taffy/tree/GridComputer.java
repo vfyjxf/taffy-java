@@ -1641,11 +1641,6 @@ public class GridComputer {
         GridAxisLines rowLines = new GridAxisLines(rowSizes, rowGeometry, alignment.gapY(),
             alignment.offsetY(), contentBoxInset.top, alignment.innerHeight(), false);
 
-        // Record the additive detailed grid view before the item positioning and out-of-flow
-        // passes (upstream #1131). It only reads the already resolved tracks and placements.
-        tree.setDetailedGridInfo(node, buildDetailedGridInfo(namedLineResolver, colCounts, rowCounts,
-            columnLines, rowLines, items));
-
         // Container size. Computed before the item positioning pass because the scrollable overflow
         // container description (client area) depends on the final container size.
         float containerWidth = !Float.isNaN(styledBasedKnownDimensions.width)
@@ -1684,13 +1679,20 @@ public class GridComputer {
         ScrollableOverflowUtil.Container inFlowOverflowContainer = new ScrollableOverflowUtil.Container(
             isScrollContainer, clientSize, isRtl, false, padding);
 
-        // Place items and calculate final positions, accumulating their overflow contributions
-        FloatRect itemOverflowRect = placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize,
-            style, colCounts, rowCounts, columnGeometry, rowGeometry, isRtl, paddingBoxOrigin, inFlowOverflowContainer);
-
+        // A measure only needs the container's size: positioning, detailed-grid recording and the
+        // out-of-flow/hidden passes write child layouts, so they must not run here (P31).
         if (runMode == RunMode.COMPUTE_SIZE) {
             return LayoutOutput.fromOuterSize(containerSize);
         }
+
+        // Record the additive detailed grid view before the item positioning and out-of-flow
+        // passes (upstream #1131). It only reads the already resolved tracks and placements.
+        tree.setDetailedGridInfo(node, buildDetailedGridInfo(namedLineResolver, colCounts, rowCounts,
+            columnLines, rowLines, items));
+
+        // Place items and calculate final positions, accumulating their overflow contributions
+        FloatRect itemOverflowRect = placeItems(items, columnSizes, rowSizes, gap, contentBoxInset, nodeInnerSize,
+            style, colCounts, rowCounts, columnGeometry, rowGeometry, isRtl, paddingBoxOrigin, inFlowOverflowContainer);
 
         // Perform final layout
         performFinalLayout(items);
@@ -6627,7 +6629,7 @@ public class GridComputer {
                 // Content-based size (START, CENTER, END, or has auto margin) - measure child. The
                 // containing block is passed as the child's parent size so that its own percentage
                 // styles resolve against the grid area rather than the grid container (#1271).
-                LayoutOutput output = layoutComputer.performChildLayout(
+                FloatSize output = layoutComputer.measureChildSize(
                     item.nodeId,
                     new FloatSize(NaN, NaN),
                     containingBlockSize,
@@ -6635,7 +6637,7 @@ public class GridComputer {
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(false, false)
                 );
-                width = output.size().width;
+                width = output.width;
             }
 
             // Apply min/max constraints (resolved against the grid area)
@@ -6679,7 +6681,7 @@ public class GridComputer {
                 height = availableHeight;
             } else {
                 // Content-based size (START, CENTER, END, or has auto margin) - measure child with known width
-                LayoutOutput output = layoutComputer.performChildLayout(
+                FloatSize output = layoutComputer.measureChildSize(
                     item.nodeId,
                     new FloatSize(width, NaN),
                     containingBlockSize,
@@ -6687,7 +6689,7 @@ public class GridComputer {
                     SizingMode.INHERENT_SIZE,
                     new TaffyLine<>(false, false)
                 );
-                height = output.size().height;
+                height = output.height;
             }
 
             height = TaffyMath.clamp(height, resolvedMinSize.height, resolvedMaxSize.height);
@@ -7706,7 +7708,7 @@ public class GridComputer {
                     itemMinWidth = item.size.width + marginAxisSums.width;
                 } else {
                     // Measure min-content
-                    LayoutOutput minOutput = layoutComputer.performChildLayout(
+                    FloatSize minOutput = layoutComputer.measureChildSize(
                         item.nodeId,
                         new FloatSize(NaN, NaN),
                         nodeInnerSize,
@@ -7714,7 +7716,7 @@ public class GridComputer {
                         SizingMode.INHERENT_SIZE,
                         new TaffyLine<>(false, false)
                     );
-                    itemMinWidth = minOutput.size().width + marginAxisSums.width;
+                    itemMinWidth = minOutput.width + marginAxisSums.width;
                 }
 
                 // Apply min-size constraint
