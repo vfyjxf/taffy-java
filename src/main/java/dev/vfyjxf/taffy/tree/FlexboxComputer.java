@@ -254,10 +254,12 @@ public class FlexboxComputer {
             FlexItem item = items.get(i);
             // Auto margins are assigned into margin during the pass; restore the resolved base.
             item.margin = item.baseMargin;
-            item.hypotheticalInnerSize = FloatSize.ZERO;
-            item.hypotheticalOuterSize = FloatSize.ZERO;
-            item.targetSize = FloatSize.ZERO;
-            item.outerTargetSize = FloatSize.ZERO;
+            // The sizing stages write these four in place (P32), so a reused item must own them:
+            // the shared FloatSize.ZERO must never become an item's working size.
+            item.hypotheticalInnerSize = ownedZero(item.hypotheticalInnerSize);
+            item.hypotheticalOuterSize = ownedZero(item.hypotheticalOuterSize);
+            item.targetSize = ownedZero(item.targetSize);
+            item.outerTargetSize = ownedZero(item.outerTargetSize);
             item.flexBasis = 0f;
             item.innerFlexBasis = 0f;
             item.resolvedMinimumMainSize = 0f;
@@ -268,6 +270,23 @@ public class FlexboxComputer {
             item.offsetMain = 0f;
             item.offsetCross = 0f;
         }
+    }
+
+    /**
+     * P32: returns a zeroed size instance the item owns.
+     *
+     * <p>The four per-pass size fields are written in place by the sizing stages, which is only
+     * safe when no other item (or the shared {@link FloatSize#ZERO}) holds the same instance. An
+     * item built by {@link #generateFlexItems}, or reset by an earlier call of this method, owns
+     * its instance; only a shared constant or an absent field forces a fresh one.</p>
+     */
+    private static FloatSize ownedZero(FloatSize size) {
+        if (size == null || size == FloatSize.ZERO) {
+            return new FloatSize(0f, 0f);
+        }
+        size.width = 0f;
+        size.height = 0f;
+        return size;
     }
 
     /**
@@ -401,6 +420,38 @@ public class FlexboxComputer {
         float baseline;
         float offsetMain;
         float offsetCross;
+        /**
+         * P32: the item's scrollbar size, a pure function of its overflow style and configured
+         * scrollbar width. It is written into every {@link Layout} the final pass stores, which -
+         * like the item's border, padding and margin - keeps the value by reference and never
+         * mutates it.
+         */
+        FloatSize scrollbarSize;
+
+        /**
+         * P32: writes the main-axis component of an item-owned size, keeping its other axis.
+         *
+         * <p>The four per-pass size fields ({@code hypotheticalInnerSize}, {@code
+         * hypotheticalOuterSize}, {@code targetSize}, {@code outerTargetSize}) are owned by their
+         * item and reset to zero before a reused item list is handed out, so the sizing stages can
+         * write them in place instead of replacing the object for every component they update.</p>
+         */
+        static void setMainAxis(FloatSize size, boolean isRow, float value) {
+            if (isRow) {
+                size.width = value;
+            } else {
+                size.height = value;
+            }
+        }
+
+        /** P32: writes the cross-axis component of an item-owned size, keeping its other axis. */
+        static void setCrossAxis(FloatSize size, boolean isRow, float value) {
+            if (isRow) {
+                size.height = value;
+            } else {
+                size.width = value;
+            }
+        }
     }
 
     /**
@@ -602,7 +653,7 @@ public class FlexboxComputer {
                         FloatSize.none(),
                         TaffySize.maxContent(),
                         SizingMode.INHERENT_SIZE,
-                        new TaffyLine<>(false, false)
+                        TaffyLine.FALSE
                     );
                 }
             }
@@ -802,7 +853,7 @@ public class FlexboxComputer {
                     FloatSize.none(),
                     TaffySize.maxContent(),
                     SizingMode.INHERENT_SIZE,
-                    new TaffyLine<>(false, false)
+                    TaffyLine.FALSE
                 );
             }
         }
@@ -959,6 +1010,12 @@ public class FlexboxComputer {
 
             item.overflow = childStyle.getOverflow();
             item.scrollbarWidth = childStyle.getScrollbarWidth();
+            // A scrollbar gutter is a pure function of the overflow style: resolve it once instead
+            // of allocating one FloatSize per item per final pass.
+            item.scrollbarSize = new FloatSize(
+                item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
+                item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
+            );
 
             // ST-01/FL-17: a main-axis 'stretch' is resolved to an exact flex base size in
             // determineFlexBaseSize, so it must not also be mapped to flex-grow: 1 here
@@ -1369,7 +1426,7 @@ public class FlexboxComputer {
                     // Flex base size must NOT incorporate explicit min-size (min-size is applied later when clamping the
                     // hypothetical size). We keep CONTENT_SIZE here and apply max-size/aspect-ratio behavior in leaf sizing.
                     SizingMode.CONTENT_SIZE,
-                    new TaffyLine<>(false, false)
+                    TaffyLine.FALSE
                 );
 
                 basis = isRow ? measuredSize.width : measuredSize.height;
@@ -1417,7 +1474,7 @@ public class FlexboxComputer {
                     childParentSize,
                     minContentAvailSpace,
                     SizingMode.CONTENT_SIZE,
-                    new TaffyLine<>(false, false)
+                    TaffyLine.FALSE
                 );
 
                 // 4.5: clamp min-content size by specified size and max-size
@@ -1459,11 +1516,15 @@ public class FlexboxComputer {
             float hypotheticalOuterMain = hypotheticalInnerMain + marginMain;
 
             if (isRow) {
-                item.hypotheticalInnerSize = new FloatSize(hypotheticalInnerMain, 0f);
-                item.hypotheticalOuterSize = new FloatSize(hypotheticalOuterMain, 0f);
+                item.hypotheticalInnerSize.width = hypotheticalInnerMain;
+                item.hypotheticalInnerSize.height = 0f;
+                item.hypotheticalOuterSize.width = hypotheticalOuterMain;
+                item.hypotheticalOuterSize.height = 0f;
             } else {
-                item.hypotheticalInnerSize = new FloatSize(0f, hypotheticalInnerMain);
-                item.hypotheticalOuterSize = new FloatSize(0f, hypotheticalOuterMain);
+                item.hypotheticalInnerSize.width = 0f;
+                item.hypotheticalInnerSize.height = hypotheticalInnerMain;
+                item.hypotheticalOuterSize.width = 0f;
+                item.hypotheticalOuterSize.height = hypotheticalOuterMain;
             }
         }
     }
@@ -1754,7 +1815,7 @@ public class FlexboxComputer {
                             nodeInnerSize,
                             childAvailSpace,
                             SizingMode.CONTENT_SIZE,
-                            new TaffyLine<>(false, false)
+                            TaffyLine.FALSE
                         );
 
                         float measuredMain = isRow ? measured.width : measured.height;
@@ -2084,11 +2145,7 @@ public class FlexboxComputer {
             FlexItem item = line.items.get(itemIdx);
             float innerTargetSize = isRow ? item.hypotheticalInnerSize.width : item.hypotheticalInnerSize.height;
 
-            if (isRow) {
-                item.targetSize = new FloatSize(innerTargetSize, item.targetSize.height);
-            } else {
-                item.targetSize = new FloatSize(item.targetSize.width, innerTargetSize);
-            }
+            FlexItem.setMainAxis(item.targetSize, isRow, innerTargetSize);
 
             // Freeze if: exactly sized, no flex, or flex basis violates hypothetical size
             if (exactlySized
@@ -2100,11 +2157,7 @@ public class FlexboxComputer {
                 float marginMain = isRow ? item.margin.left + item.margin.right : item.margin.top + item.margin.bottom;
                 float outerTargetSize = innerTargetSize + marginMain;
 
-                if (isRow) {
-                    item.outerTargetSize = new FloatSize(outerTargetSize, item.outerTargetSize.height);
-                } else {
-                    item.outerTargetSize = new FloatSize(item.outerTargetSize.width, outerTargetSize);
-                }
+                FlexItem.setMainAxis(item.outerTargetSize, isRow, outerTargetSize);
             }
         }
 
@@ -2182,11 +2235,7 @@ public class FlexboxComputer {
                         FlexItem item = line.items.get(itemIdx);
                         if (!item.frozen) {
                             float newMain = item.flexBasis + freeSpace * (item.flexGrow / sumFlexGrow);
-                            if (isRow) {
-                                item.targetSize = new FloatSize(newMain, item.targetSize.height);
-                            } else {
-                                item.targetSize = new FloatSize(item.targetSize.width, newMain);
-                            }
+                            FlexItem.setMainAxis(item.targetSize, isRow, newMain);
                         }
                     }
                 } else if (shrinking && sumFlexShrink > 0) {
@@ -2205,11 +2254,7 @@ public class FlexboxComputer {
                             if (!item.frozen) {
                                 float scaledShrinkFactor = item.innerFlexBasis * item.flexShrink;
                                 float newMain = item.flexBasis + freeSpace * (scaledShrinkFactor / sumScaledShrinkFactor);
-                                if (isRow) {
-                                    item.targetSize = new FloatSize(newMain, item.targetSize.height);
-                                } else {
-                                    item.targetSize = new FloatSize(item.targetSize.width, newMain);
-                                }
+                                FlexItem.setMainAxis(item.targetSize, isRow, newMain);
                             }
                         }
                     }
@@ -2246,13 +2291,10 @@ public class FlexboxComputer {
 
                     item.violation = clamped - targetMain;
 
-                    if (isRow) {
-                        item.targetSize = new FloatSize(clamped, item.targetSize.height);
-                        item.outerTargetSize = new FloatSize(clamped + item.margin.left + item.margin.right, item.outerTargetSize.height);
-                    } else {
-                        item.targetSize = new FloatSize(item.targetSize.width, clamped);
-                        item.outerTargetSize = new FloatSize(item.outerTargetSize.width, clamped + item.margin.top + item.margin.bottom);
-                    }
+                    FlexItem.setMainAxis(item.targetSize, isRow, clamped);
+                    FlexItem.setMainAxis(item.outerTargetSize, isRow,
+                        isRow ? clamped + item.margin.left + item.margin.right
+                              : clamped + item.margin.top + item.margin.bottom);
 
                     totalViolation += item.violation;
                 }
@@ -2384,7 +2426,7 @@ public class FlexboxComputer {
                     nodeInnerSize,
                     childAvailSpace,
                     SizingMode.CONTENT_SIZE,
-                    new TaffyLine<>(false, false)
+                    TaffyLine.FALSE
                 );
 
                 float measuredCross = isRow ? measuredSize.height : measuredSize.width;
@@ -2395,13 +2437,8 @@ public class FlexboxComputer {
             float childOuterCross = childInnerCross + marginCross;
 
             // Update hypothetical sizes
-            if (isRow) {
-                item.hypotheticalInnerSize = new FloatSize(item.hypotheticalInnerSize.width, childInnerCross);
-                item.hypotheticalOuterSize = new FloatSize(item.hypotheticalOuterSize.width, childOuterCross);
-            } else {
-                item.hypotheticalInnerSize = new FloatSize(childInnerCross, item.hypotheticalInnerSize.height);
-                item.hypotheticalOuterSize = new FloatSize(childOuterCross, item.hypotheticalOuterSize.height);
-            }
+            FlexItem.setCrossAxis(item.hypotheticalInnerSize, isRow, childInnerCross);
+            FlexItem.setCrossAxis(item.hypotheticalOuterSize, isRow, childOuterCross);
         }
     }
 
@@ -2486,7 +2523,7 @@ public class FlexboxComputer {
                     nodeInnerSize,
                     childAvailableSpace,
                     SizingMode.CONTENT_SIZE,
-                    new TaffyLine<>(false, false)
+                    TaffyLine.FALSE
                 );
 
                 // A scroll-container item's baseline is clamped to its border box, and a scroll
@@ -2585,7 +2622,7 @@ public class FlexboxComputer {
                         nodeInnerSize,
                         availSpace,
                         SizingMode.CONTENT_SIZE,
-                        new TaffyLine<>(false, false)
+                        TaffyLine.FALSE
                     );
 
                     crossSize = isRow ? measuredSize.height : measuredSize.width;
@@ -2593,13 +2630,8 @@ public class FlexboxComputer {
                 }
                 crossSize = Math.max(crossSize, paddingBorderCross);
 
-                if (isRow) {
-                    item.targetSize = new FloatSize(item.targetSize.width, crossSize);
-                    item.outerTargetSize = new FloatSize(item.outerTargetSize.width, crossSize + marginCross);
-                } else {
-                    item.targetSize = new FloatSize(crossSize, item.targetSize.height);
-                    item.outerTargetSize = new FloatSize(crossSize + marginCross, item.outerTargetSize.height);
-                }
+                FlexItem.setCrossAxis(item.targetSize, isRow, crossSize);
+                FlexItem.setCrossAxis(item.outerTargetSize, isRow, crossSize + marginCross);
             }
             return;
         }
@@ -2634,13 +2666,8 @@ public class FlexboxComputer {
                                     ? item.margin.top + item.margin.bottom
                                     : item.margin.left + item.margin.right;
 
-                if (isRow) {
-                    item.targetSize = new FloatSize(item.targetSize.width, crossSize);
-                    item.outerTargetSize = new FloatSize(item.outerTargetSize.width, crossSize + marginCross);
-                } else {
-                    item.targetSize = new FloatSize(crossSize, item.targetSize.height);
-                    item.outerTargetSize = new FloatSize(crossSize + marginCross, item.outerTargetSize.height);
-                }
+                FlexItem.setCrossAxis(item.targetSize, isRow, crossSize);
+                FlexItem.setCrossAxis(item.outerTargetSize, isRow, crossSize + marginCross);
 
                 // Use hypothetical outer size from step 7 for line cross calculation (don't overwrite)
                 maxCross = Math.max(maxCross, crossSize + marginCross);
@@ -2763,23 +2790,23 @@ public class FlexboxComputer {
                         // Update offsetMain for left auto margin
                         if (item.marginIsAuto.left) {
                             item.margin = new FloatRect(autoMarginSize, item.margin.right, item.margin.top, item.margin.bottom);
-                            item.outerTargetSize = new FloatSize(item.outerTargetSize.width + autoMarginSize, item.outerTargetSize.height);
+                            item.outerTargetSize.width += autoMarginSize;
                         }
                         // Update outerTargetSize for right auto margin (affects next item's position)
                         if (item.marginIsAuto.right) {
                             item.margin = new FloatRect(item.margin.left, autoMarginSize, item.margin.top, item.margin.bottom);
-                            item.outerTargetSize = new FloatSize(item.outerTargetSize.width + autoMarginSize, item.outerTargetSize.height);
+                            item.outerTargetSize.width += autoMarginSize;
                         }
                     } else {
                         // Update offsetMain for top auto margin
                         if (item.marginIsAuto.top) {
                             item.margin = new FloatRect(item.margin.left, item.margin.right, autoMarginSize, item.margin.bottom);
-                            item.outerTargetSize = new FloatSize(item.outerTargetSize.width, item.outerTargetSize.height + autoMarginSize);
+                            item.outerTargetSize.height += autoMarginSize;
                         }
                         // Update outerTargetSize for bottom auto margin (affects next item's position)
                         if (item.marginIsAuto.bottom) {
                             item.margin = new FloatRect(item.margin.left, item.margin.right, item.margin.top, autoMarginSize);
-                            item.outerTargetSize = new FloatSize(item.outerTargetSize.width, item.outerTargetSize.height + autoMarginSize);
+                            item.outerTargetSize.height += autoMarginSize;
                         }
                     }
                 }
@@ -3132,13 +3159,8 @@ public class FlexboxComputer {
                     stretchedCrossSize = TaffyMath.clamp(stretchedCrossSize, minCross, maxCross);
 
                     // Update target size
-                    if (isRow) {
-                        item.targetSize = new FloatSize(item.targetSize.width, stretchedCrossSize);
-                        item.outerTargetSize = new FloatSize(item.outerTargetSize.width, stretchedCrossSize + marginCross);
-                    } else {
-                        item.targetSize = new FloatSize(stretchedCrossSize, item.targetSize.height);
-                        item.outerTargetSize = new FloatSize(stretchedCrossSize + marginCross, item.outerTargetSize.height);
-                    }
+                    FlexItem.setCrossAxis(item.targetSize, isRow, stretchedCrossSize);
+                    FlexItem.setCrossAxis(item.outerTargetSize, isRow, stretchedCrossSize + marginCross);
 
                     // If the item has an aspect ratio and its main-axis size was auto in the style,
                     // derive the main-axis size from the stretched cross size via aspect ratio.
@@ -3165,13 +3187,8 @@ public class FlexboxComputer {
                                     ? item.margin.left + item.margin.right
                                     : item.margin.top + item.margin.bottom;
 
-                                if (isRow) {
-                                    item.targetSize = new FloatSize(derivedMain, item.targetSize.height);
-                                    item.outerTargetSize = new FloatSize(derivedMain + marginMain, item.outerTargetSize.height);
-                                } else {
-                                    item.targetSize = new FloatSize(item.targetSize.width, derivedMain);
-                                    item.outerTargetSize = new FloatSize(item.outerTargetSize.width, derivedMain + marginMain);
-                                }
+                                FlexItem.setMainAxis(item.targetSize, isRow, derivedMain);
+                                FlexItem.setMainAxis(item.outerTargetSize, isRow, derivedMain + marginMain);
                             }
                         }
                     }
@@ -3432,7 +3449,7 @@ public class FlexboxComputer {
                     nodeInnerSize,
                     childAvailableSpace,
                     SizingMode.CONTENT_SIZE,
-                    new TaffyLine<>(false, false)
+                    TaffyLine.FALSE
                 );
 
                 // Apply offsets
@@ -3467,10 +3484,8 @@ public class FlexboxComputer {
                 if (!isNaN(item.inset.top)) y += item.inset.top;
                 else if (!isNaN(item.inset.bottom)) y -= item.inset.bottom;
 
-                FloatSize scrollbarSize = new FloatSize(
-                    item.overflow.y == Overflow.SCROLL ? item.scrollbarWidth : 0f,
-                    item.overflow.x == Overflow.SCROLL ? item.scrollbarWidth : 0f
-                );
+                // The item's scrollbar gutter is fixed by its style (see FlexItem#scrollbarSize).
+                FloatSize scrollbarSize = item.scrollbarSize;
 
                 // Use the actual output size from child layout
                 FloatSize actualSize = output.size();
@@ -3683,7 +3698,7 @@ public class FlexboxComputer {
                 // Absolute positioned nodes need inherent sizing so that min/max constraints and aspect-ratio
                 // resolution are applied by leaf/layout algorithms.
                 SizingMode.INHERENT_SIZE,
-                new TaffyLine<>(false, false)
+                TaffyLine.FALSE
             );
 
             FloatSize finalSize = maybeClamp(
