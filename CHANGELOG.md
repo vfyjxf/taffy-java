@@ -265,6 +265,13 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   out-of-flow and hidden-child passes, matching upstream `grid/mod.rs`; a measure
   pass writes no child layout. Pinned by the 30-seed P29 grid differential test
   and a one-fixture P30 regression test.
+- **P34 cold-layout allocation** — `AvailableSpace.definite` interns definite
+  values in a bounded per-thread direct-mapped cache (bit-exact, including
+  `-0.0`/`NaN`/infinity), and the leaf/flex paths no longer allocate
+  throw-away `FloatSize`/`FloatRect`/empty-overflow objects (scratch rectangles are
+  filled in place; shared read-only zero/empty values are never mutated). Flat flex
+  100k cold allocation fell from 96.4 MB to 52.4 MB (−45.6%) and the same JMH tuple
+  ran ~19% faster.
 - **P32 flex per-item hot path** — Flex item/line hot loops walk their
   `ArrayList`s by index, and `FlexItem` caches the style-derived values that do not
   depend on the pass (padding/border, margin sums, scroll-container flags, size and
