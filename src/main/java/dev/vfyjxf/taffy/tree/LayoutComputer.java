@@ -896,8 +896,14 @@ public class LayoutComputer {
             return computeHiddenLayout(node);
         }
 
+        // The resolved direction is the one layout input the key cannot describe: it is inherited
+        // from the ancestors, so an ancestor's direction change does not dirty this node. Both the
+        // lookup and the store are direction-aware, so a mirrored layout is never reused and the
+        // node is recomputed (with its whole subtree) after a direction change.
+        TaffyDirection direction = resolveDirection(node);
+
         // Try cache first
-        LayoutOutput cached = tree.getCacheEntry(node, inputs);
+        LayoutOutput cached = tree.getCacheEntry(node, inputs, direction);
         if (cached != null) {
             return cached;
         }
@@ -906,7 +912,7 @@ public class LayoutComputer {
         LayoutOutput output = computeLayoutUncached(node, inputs);
 
         // Store in cache
-        tree.storeCacheEntry(node, inputs, output);
+        tree.storeCacheEntry(node, inputs, output, direction);
 
         return output;
     }
@@ -948,7 +954,10 @@ public class LayoutComputer {
             if (hadFloats || blockContext.hasFloats()) {
                 storeStaleMarker(node, inputs, output);
             } else {
-                tree.storeCacheEntry(node, inputs, output);
+                // Not eligible for context-free reuse, but its result is still a pure function of
+                // the inputs and the resolved direction, so it goes through the ordinary
+                // direction-aware cache entry.
+                tree.storeCacheEntry(node, inputs, output, resolveDirection(node));
             }
             return output;
         }
@@ -1052,7 +1061,9 @@ public class LayoutComputer {
             inputs.availableSpace(),
             inputs.verticalMarginsAreCollapsible()
         );
-        tree.storeCacheEntry(node, staleMarker, output);
+        // The marker key never matches a lookup; the direction still tags the cache so a later
+        // direction change drops the float-dependent result like any other entry.
+        tree.storeCacheEntry(node, staleMarker, output, resolveDirection(node));
     }
 
     /**

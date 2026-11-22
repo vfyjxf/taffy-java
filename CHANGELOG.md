@@ -141,9 +141,20 @@ the upgrade guide is [docs/migration-1.2.md](docs/migration-1.2.md).
   count. Sizing, placement, baseline and contribution scratch fields are reset on
   reuse.
 
+### P28 correctness
 
-
-
+- The resolved text direction is now part of the layout cache key. `direction:
+  inherit` is resolved from the ancestors and has no slot in `LayoutInput`, so
+  before this change an LTR pass followed by a `setStyle` to RTL reused the warm
+  LTR entries of descendants: a cached container short-circuited its subtree and
+  percent children kept the LTR `location`/`scrollableOverflow`. `LayoutCache`
+  now carries the direction its entries were computed with; a lookup for another
+  direction misses and a store for another direction drops the entries, exactly as
+  if the direction were part of every key. Both the ordinary and the same-BFC
+  context-free paths validate it, and the public direction-less `get`/`store`
+  stay compatible (their entries are direction-unknown). No dirty flag or
+  `contentVersion` is bumped: the cache self-invalidates when a node resolves to a
+  different direction, without walking or dirtying the subtree.
 
 ### P7 additions (float, grid details, contain)
 

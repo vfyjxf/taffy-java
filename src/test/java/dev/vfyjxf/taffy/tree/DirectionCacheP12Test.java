@@ -75,11 +75,12 @@ public class DirectionCacheP12Test {
     /**
      * Marks every layout cache in the subtree dirty, i.e. forces a cold relayout of it.
      *
-     * <p>The layout cache is not keyed on the resolved direction, so a direction change that does
-     * not dirty a descendant (an in-place style mutation, a re-parent) leaves that descendant's
-     * inner layout warm. Tests that assert the resulting geometry therefore force a cold relayout,
-     * exactly like the cold-layout benchmarks do; the direction cache itself is invalidated by the
-     * epoch bump alone.</p>
+     * <p>A direction change that does not dirty a descendant (an in-place style mutation, a
+     * re-parent) leaves that descendant's inner layout warm; since P28 the layout cache validates
+     * the resolved direction at lookup time, so the geometry is still correct. The tests keep
+     * forcing a cold relayout so their assertions do not depend on which entries happen to be
+     * warm, exactly like the cold-layout benchmarks do; the direction memo itself is invalidated
+     * by the epoch bump alone.</p>
      */
     private static void markSubtreeDirty(TaffyTree tree, NodeId root) {
         NodeData data = tree.getNodeData(root);
