@@ -45,3 +45,5 @@ wpt-mini/
 
 # JMH JFR profiles
 dev.vfyjxf.taffy.benchmark.*/
+
+.DS_Store
