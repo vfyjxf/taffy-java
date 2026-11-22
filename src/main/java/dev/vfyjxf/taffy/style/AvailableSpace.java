@@ -24,16 +24,73 @@ public final class AvailableSpace {
     private final Type type;
     private final float value;
 
+    /**
+     * Number of slots in the per-thread direct-mapped cache of definite available spaces.
+     *
+     * <p>Layout hands the same handful of definite values (0, container extents, child sizes)
+     * down through hundreds of thousands of nodes, so allocating a fresh instance for every
+     * constraint made {@link #definite(float)} a top allocation site. The cache is deliberately
+     * tiny and bounded: it is a fixed-size array pair per thread, never grows, and cannot retain
+     * anything beyond the last {@value #DEFINITE_CACHE_SIZE} distinct values that happened to
+     * land in each slot.</p>
+     */
+    static final int DEFINITE_CACHE_SIZE = 256;
+
+    private static final int DEFINITE_CACHE_MASK = DEFINITE_CACHE_SIZE - 1;
+
+    /**
+     * Per-thread, bounded direct-mapped cache for {@link #definite(float)}.
+     *
+     * <p>Values are keyed by {@link Float#floatToIntBits(float)}: {@code -0.0} and {@code 0.0}
+     * keep distinct keys and all NaN payloads collapse to the canonical NaN. A hit returns the
+     * cached immutable instance; a miss allocates one new instance and replaces the slot's
+     * previous entry. {@link AvailableSpace} is immutable and has no identity-based behaviour, so
+     * sharing instances does not change the public contract.</p>
+     */
+    private static final ThreadLocal<DefiniteCache> DEFINITE_CACHE =
+        ThreadLocal.withInitial(DefiniteCache::new);
+
+    private static final class DefiniteCache {
+        private final int[] keys = new int[DEFINITE_CACHE_SIZE];
+        private final AvailableSpace[] values = new AvailableSpace[DEFINITE_CACHE_SIZE];
+
+        private AvailableSpace get(float value) {
+            int bits = Float.floatToIntBits(value);
+            // Full 32-bit avalanche (murmur3 fmix32): `bits * constant` alone leaves the slot
+            // index dependent only on the low mantissa bits, so plain layout values such as
+            // 0.0/-0.0 or 10.0/2000.0 would collide in one slot and throw each other out.
+            int hash = bits;
+            hash ^= hash >>> 16;
+            hash *= 0x85EBCA6B;
+            hash ^= hash >>> 13;
+            hash *= 0xC2B2AE35;
+            hash ^= hash >>> 16;
+            int index = hash & DEFINITE_CACHE_MASK;
+            AvailableSpace cached = values[index];
+            if (cached != null && keys[index] == bits) {
+                return cached;
+            }
+            AvailableSpace created = new AvailableSpace(Type.DEFINITE, value);
+            keys[index] = bits;
+            values[index] = created;
+            return created;
+        }
+    }
+
     private AvailableSpace(Type type, float value) {
         this.type = type;
         this.value = value;
     }
 
     /**
-     * Creates a definite available space with the given value
+     * Creates a definite available space with the given value.
+     *
+     * <p>Definite available spaces are immutable, so this method may return a cached instance
+     * for a value that was handed out before on the same thread (see {@link #DEFINITE_CACHE}).
+     * Callers must not rely on object identity between two results.</p>
      */
     public static AvailableSpace definite(float value) {
-        return new AvailableSpace(Type.DEFINITE, value);
+        return DEFINITE_CACHE.get().get(value);
     }
 
     /**
