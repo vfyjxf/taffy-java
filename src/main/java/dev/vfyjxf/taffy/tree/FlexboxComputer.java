@@ -363,17 +363,17 @@ public class FlexboxComputer {
         TaffyRect<Boolean> marginIsAuto;
         FloatRect padding;
         FloatRect border;
-        /**
+        /*
          * P32: the axis-oriented, style-derived values the flex sizing stages used to re-resolve
          * from the child style on every layout pass.
          *
-         * <p>Every field below is a pure function of the child's own style, its box-sizing and the
+         * Every field below is a pure function of the child's own style, its box-sizing and the
          * container's flex direction, all of which are fixed for the life of an item: a style
          * replacement, a child-list change, an inherited direction change or (for a value that
          * resolves against the container's content box) a new inner-size basis rebuilds the list
-         * (see {@link FlexItemCache}). The stages therefore read a field instead of resolving the
-         * child style again - the same item list is walked by up to seven stages per pass, and
-         * every walk used to repeat those resolutions.</p>
+         * (see FlexItemCache). The stages therefore read a field instead of resolving the child
+         * style again - the same item list is walked by up to seven stages per pass, and every
+         * walk used to repeat those resolutions.
          */
         /** The main-axis padding + border sum. */
         float paddingBorderMain;
@@ -382,14 +382,14 @@ public class FlexboxComputer {
         /** The main-axis box-sizing adjustment: the padding+border sum for content-box, else 0. */
         float boxSizingAdjustmentMain;
         /**
-         * The item's min/max size transferred through its aspect ratio, axis-oriented
-         * ({@link Float#NaN} when absent). The raw min/max size is final once the item is built, so
-         * the transfer is a per-build constant rather than two fresh {@link FloatSize}s per stage.
+         * The item's min/max size transferred through its aspect ratio, or the item's own
+         * min/max size when the ratio transfers nothing ({@code maybeApplyAspectRatio} returns its
+         * argument in that case, so the common item shares the object and allocates nothing). The
+         * raw min/max size is final once the item is built, so the transfer is a per-build
+         * constant rather than two fresh {@link FloatSize}s per stage.
          */
-        float transferredMinMain;
-        float transferredMaxMain;
-        float transferredMinCross;
-        float transferredMaxCross;
+        FloatSize transferredMinSize;
+        FloatSize transferredMaxSize;
         /**
          * The specified-size suggestion of CSS Flexbox §4.5: the raw style main size resolved
          * against the container's content box, or {@link Float#NaN} when the main size is
@@ -1129,12 +1129,8 @@ public class FlexboxComputer {
             item.boxSizingAdjustmentMain = childStyle.getBoxSizing() == BoxSizing.CONTENT_BOX
                                            ? item.paddingBorderMain
                                            : 0f;
-            FloatSize transferredMinSize = maybeApplyAspectRatio(item.minSize, aspectRatio);
-            FloatSize transferredMaxSize = maybeApplyAspectRatio(item.maxSize, aspectRatio);
-            item.transferredMinMain = isRow ? transferredMinSize.width : transferredMinSize.height;
-            item.transferredMaxMain = isRow ? transferredMaxSize.width : transferredMaxSize.height;
-            item.transferredMinCross = isRow ? transferredMinSize.height : transferredMinSize.width;
-            item.transferredMaxCross = isRow ? transferredMaxSize.height : transferredMaxSize.width;
+            item.transferredMinSize = maybeApplyAspectRatio(item.minSize, aspectRatio);
+            item.transferredMaxSize = maybeApplyAspectRatio(item.maxSize, aspectRatio);
 
             TaffySize<TaffyDimension> sizeStyle = childStyle.getSize();
             item.mainSizeDim = isRow ? sizeStyle.width : sizeStyle.height;
@@ -1244,8 +1240,8 @@ public class FlexboxComputer {
             // FL-19 (#989): sizes transferred through the aspect ratio clamp the cross axis
             // min/max used by the flex base size calculation (https://github.com/w3c/csswg-drafts/issues/10997).
             // P32: the transfer is a per-build constant, so it is read instead of re-derived here.
-            float itemMinCross = item.transferredMinCross;
-            float itemMaxCross = item.transferredMaxCross;
+            float itemMinCross = isRow ? item.transferredMinSize.height : item.transferredMinSize.width;
+            float itemMaxCross = isRow ? item.transferredMaxSize.height : item.transferredMaxSize.width;
 
             // FL-10 (#1234): definite available space is the child's border-box space, so the
             // parent subtracts the child's margins (auto margins have already resolved to zero).
@@ -1440,8 +1436,8 @@ public class FlexboxComputer {
             float minMain = isRow ? item.minSize.width : item.minSize.height;
             // FL-19 (#989): the automatic minimum and the hypothetical main size are clamped by
             // the main size transferred through the aspect ratio, not by the raw max-size.
-            float transferredMinMain = item.transferredMinMain;
-            float transferredMaxMain = item.transferredMaxMain;
+            float transferredMinMain = isRow ? item.transferredMinSize.width : item.transferredMinSize.height;
+            float transferredMaxMain = isRow ? item.transferredMaxSize.width : item.transferredMaxSize.height;
             // For the "specified size suggestion" in §4.5, use the RAW style value (not AR-derived).
             // item.size may include aspect-ratio derivation from generateFlexItems, which would
             // incorrectly clamp the auto minimum. The specified size should only be from explicit style.
@@ -1773,10 +1769,10 @@ public class FlexboxComputer {
                         // under-reports its height.
                         if (isRow) {
                             knownHeight = TaffyMath.maybeClamp(
-                                knownHeight, item.transferredMinCross, item.transferredMaxCross);
+                                knownHeight, item.transferredMinSize.height, item.transferredMaxSize.height);
                         } else {
                             knownWidth = TaffyMath.maybeClamp(
-                                knownWidth, item.transferredMinCross, item.transferredMaxCross);
+                                knownWidth, item.transferredMinSize.width, item.transferredMaxSize.width);
                         }
 
                         // Stretch cross size if needed
@@ -2355,8 +2351,8 @@ public class FlexboxComputer {
             float itemCross = isRow ? item.size.height : item.size.width;
             // FL-19 (#989): sizes transferred through the aspect ratio clamp the hypothetical
             // cross size (https://github.com/w3c/csswg-drafts/issues/10997).
-            float itemMinCross = item.transferredMinCross;
-            float itemMaxCross = item.transferredMaxCross;
+            float itemMinCross = isRow ? item.transferredMinSize.height : item.transferredMinSize.width;
+            float itemMaxCross = isRow ? item.transferredMaxSize.height : item.transferredMaxSize.width;
 
             // Clamp cross size
             if (!Float.isNaN(itemCross)) {
@@ -2576,8 +2572,8 @@ public class FlexboxComputer {
             for (int itemIdx = 0, itemTotal = first.items.size(); itemIdx < itemTotal; itemIdx++) {
                 FlexItem item = first.items.get(itemIdx);
                 float itemCrossSize = isRow ? item.size.height : item.size.width;
-                float itemMinCross = item.transferredMinCross;
-                float itemMaxCross = item.transferredMaxCross;
+                float itemMinCross = isRow ? item.transferredMinSize.height : item.transferredMinSize.width;
+                float itemMaxCross = isRow ? item.transferredMaxSize.height : item.transferredMaxSize.width;
 
                 float paddingBorderCross = item.paddingBorderCross;
 
@@ -2645,8 +2641,8 @@ public class FlexboxComputer {
                 // Get item's cross size from resolved style size. FL-19 (#989): clamp by the
                 // transferred min/max sizes (aspect ratio applied on demand).
                 float itemCrossSize = isRow ? item.size.height : item.size.width;
-                float itemMinCross = item.transferredMinCross;
-                float itemMaxCross = item.transferredMaxCross;
+                float itemMinCross = isRow ? item.transferredMinSize.height : item.transferredMinSize.width;
+                float itemMaxCross = isRow ? item.transferredMaxSize.height : item.transferredMaxSize.width;
 
                 // Apply min/max constraints
                 float paddingBorderCross = item.paddingBorderCross;
