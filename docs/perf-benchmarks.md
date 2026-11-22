@@ -57,8 +57,10 @@ cache invalidation and a word-wrapping measure function.
   `TaffyLayoutTree::mark_all_dirty`. Invocation setup is not included in the measurement.
 * **Incremental benchmarks keep caches valid.** `styleChangeRelayout` only changes one leaf via
   `setStyle` (which dirties the leaf and its ancestors); sibling caches remain valid.
-  `measureWarmChildren` clears only the root cache, so the root re-runs while measured children
-  are answered from their caches.
+  `measureWarmChildren` clears only the root cache. Both current shapes use a flex-column root,
+  so the root's whole-result cache answers the pass after validating the packed layout input,
+  the direct children's content/layout versions and their cache warmth (P33); no measured child is
+  visited. On a non-flex root the root re-runs while measured children answer from their caches.
 * **Rounding is disabled for incremental benchmarks**, mirroring upstream `relayout.rs`: the
   rounding pass visits every node on every layout and would otherwise hide the cache effects.
 * **Determinism.** Trees use fixed shapes and a fixed seed (`12345`) where random styles are
@@ -208,7 +210,9 @@ the single benchmark with the raw jar (`-p` to pin the parameter) to confirm.
 * `geometryUnchanged` intentionally measures a single root-cache hit (sub-microsecond). It is a
   sentinel for cache correctness/overhead, not a layout throughput number.
 * `measureCold` and `measureWarmChildren` differ only in which caches are cleared; comparing the
-  two isolates the measure-callback path from the layout cache.
+  two isolates the measure-callback path from the layout cache. For the flex-column shapes the
+  warm variant is a container result-cache hit (P33), so the comparison now also prices the
+  per-child version validation against a full measure pass.
 * `styleChangeRelayout` uses upstream's wide (100x2), balanced (10x4) and deep (2x12) shapes,
   cycling flex/block/grid containers by depth; rounding is disabled.
 * The float/`flow-root`/`contain: layout` benchmarks exercise the float/BFC code path. On
