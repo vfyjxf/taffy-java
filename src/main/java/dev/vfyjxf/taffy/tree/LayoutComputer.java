@@ -69,6 +69,27 @@ public class LayoutComputer {
     }
 
     /**
+     * A read-only zero inset/adjustment shared by the leaf path.
+     *
+     * <p>The leaf algorithm passes this instance to its pure arithmetic helpers, which never
+     * store or mutate their arguments; it does not escape into a {@link LayoutOutput} or a
+     * {@link Layout}. Do not return it to callers that may mutate a {@link FloatSize}.</p>
+     */
+    private static final FloatSize NO_INSET = new FloatSize(0f, 0f);
+
+    /**
+     * A read-only "no limit" size ({@code NaN}, {@code NaN}) shared by the leaf path.
+     *
+     * <p>Same contract as {@link #NO_INSET}: only read by the leaf sizing arithmetic.</p>
+     */
+    private static final FloatSize NO_LIMIT = new FloatSize(Float.NaN, Float.NaN);
+
+    /**
+     * A read-only zero size used where the value is only read, never handed out.
+     */
+    private static final FloatSize ZERO_READ_ONLY = new FloatSize(0f, 0f);
+
+    /**
      * Computes layout starting from the root node.
      *
      * <p>The root's containing block is the <em>initial containing block</em> (ICB): a rectangle
@@ -1188,7 +1209,7 @@ public class LayoutComputer {
         // Scrollbar gutter affects content_box_inset (internal space) but not the external size adjustment
         FloatSize boxSizingAdjustment = style.getBoxSizing() == BoxSizing.CONTENT_BOX
                                         ? paddingBorderSize
-                                        : new FloatSize(0f, 0f);
+                                        : NO_INSET;
         // For ContentSize mode, we ignore min-size and explicit size; max-size still clamps content contributions.
         // These should only be applied when computing inherent size (except max-size clamping).
         SizingMode sizingMode = inputs.sizingMode();
@@ -1207,13 +1228,13 @@ public class LayoutComputer {
         if (sizingMode == SizingMode.CONTENT_SIZE) {
             // In ContentSize mode, we ignore min-size and explicit size; callers provide knownDimensions when needed.
             // Max-size still clamps intrinsic contributions to avoid over-inflation.
-            minSize = new FloatSize(Float.NaN, Float.NaN);
+            minSize = NO_LIMIT;
             maxSize = maybeAdd(resolvedMaxSizeRaw, boxSizingAdjustment);
 
             // Ignore style "size" here; callers using CONTENT_SIZE typically provide knownDimensions when needed.
             styledBasedKnownDimensions = knownDimensions;
             nodeSize = knownDimensions;
-            nodeMinSize = new FloatSize(Float.NaN, Float.NaN);
+            nodeMinSize = NO_LIMIT;
         } else {
             resolvedMinSizeRaw = Resolve.maybeResolveSize(style.getMinSize(), parentSize);
 
@@ -1305,109 +1326,118 @@ public class LayoutComputer {
             );
         }
 
-        // Compute the available space handed to the measure callback (upstream leaf.rs):
-        // 1. Start with available_space, which is already the space available to this node's
-        //    *border box*: the owner of that space (the parent algorithm, or the root pass) has
-        //    subtracted this node's margins, so the leaf must not subtract them again (X2/C17,
-        //    upstream #1234). Subtracting here would double-count a parent's deduction.
-        // 2. Override with known_dimensions or node_size if present
-        // 3. Subtract content_box_inset for definite values
-        TaffySize<AvailableSpace> contentAvailableSpace = new TaffySize<>(
-            computeLeafAvailableSpace(
-                availableSpace.width,
-                knownDimensions.width,
-                styledBasedKnownDimensions.width,
-                contentBoxInsetSize.width,
-                minSize.width,
-                maxSize.width
-            ),
-            computeLeafAvailableSpace(
-                availableSpace.height,
-                knownDimensions.height,
-                styledBasedKnownDimensions.height,
-                contentBoxInsetSize.height,
-                minSize.height,
-                maxSize.height
-            )
-        );
-
         // Use a measure callback if available. The output size is a content size (same semantics
         // as the legacy MeasureFunc FloatSize); the padding/border/scrollbar inset is added below.
-        // Subtract content box inset (incl. scrollbar) from known dimensions to get content area.
         //
-        // A scroll container is measured as if no size were known on a full layout pass (upstream
-        // leaf.rs `measure_function(match run_mode { RunMode::ComputeSize => known_dimensions, _ => Size::NONE }, ...)`):
-        // its scrollable overflow rectangle is derived from the intrinsic content extent at the
-        // available space, so echoing the already-known box size back to the callback would erase
-        // exactly the overflow the rectangle describes (a 45x45 overflow:scroll text box reported
-        // scrollWidth 0). Other leaves keep the S1 contract documented on {@link MeasureContext},
-        // where the callback receives the content-box known dimensions so it can echo them.
-        // SO-04.
-        boolean measureWithoutKnownSize =
-            inputs.runMode() == RunMode.PERFORM_LAYOUT
-            && ScrollableOverflowUtil.isScrollContainer(overflow);
-        FloatSize measureKnownDimensions = measureWithoutKnownSize
-            ? new FloatSize(Float.NaN, Float.NaN)
-            : new FloatSize(
-                TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
-                TaffyMath.maybeSub(styledBasedKnownDimensions.height, contentBoxInsetSize.height)
+        // The measure inputs are only materialised when a callback is registered. A plain leaf (no
+        // callback) makes measureLeaf return null immediately, so building the available space and
+        // the content-box known dimensions for it would be pure garbage on the hot path.
+        boolean hasMeasureCallback = hasMeasureCallback(node);
+        LayoutOutput measuredOutput = null;
+        if (hasMeasureCallback) {
+            // Compute the available space handed to the measure callback (upstream leaf.rs):
+            // 1. Start with available_space, which is already the space available to this node's
+            //    *border box*: the owner of that space (the parent algorithm, or the root pass) has
+            //    subtracted this node's margins, so the leaf must not subtract them again (X2/C17,
+            //    upstream #1234). Subtracting here would double-count a parent's deduction.
+            // 2. Override with known_dimensions or node_size if present
+            // 3. Subtract content_box_inset for definite values
+            TaffySize<AvailableSpace> contentAvailableSpace = new TaffySize<>(
+                computeLeafAvailableSpace(
+                    availableSpace.width,
+                    knownDimensions.width,
+                    styledBasedKnownDimensions.width,
+                    contentBoxInsetSize.width,
+                    minSize.width,
+                    maxSize.width
+                ),
+                computeLeafAvailableSpace(
+                    availableSpace.height,
+                    knownDimensions.height,
+                    styledBasedKnownDimensions.height,
+                    contentBoxInsetSize.height,
+                    minSize.height,
+                    maxSize.height
+                )
             );
-        LayoutOutput measuredOutput = measureLeaf(
-            node, inputs, style, measureKnownDimensions, contentAvailableSpace);
+            // Subtract content box inset (incl. scrollbar) from known dimensions to get content area.
+            //
+            // A scroll container is measured as if no size were known on a full layout pass (upstream
+            // leaf.rs `measure_function(match run_mode { RunMode::ComputeSize => known_dimensions, _ => Size::NONE }, ...)`):
+            // its scrollable overflow rectangle is derived from the intrinsic content extent at the
+            // available space, so echoing the already-known box size back to the callback would erase
+            // exactly the overflow the rectangle describes (a 45x45 overflow:scroll text box reported
+            // scrollWidth 0). Other leaves keep the S1 contract documented on {@link MeasureContext},
+            // where the callback receives the content-box known dimensions so it can echo them.
+            // SO-04.
+            boolean measureWithoutKnownSize =
+                inputs.runMode() == RunMode.PERFORM_LAYOUT
+                && ScrollableOverflowUtil.isScrollContainer(overflow);
+            FloatSize measureKnownDimensions = measureWithoutKnownSize
+                ? new FloatSize(Float.NaN, Float.NaN)
+                : new FloatSize(
+                    TaffyMath.maybeSub(styledBasedKnownDimensions.width, contentBoxInsetSize.width),
+                    TaffyMath.maybeSub(styledBasedKnownDimensions.height, contentBoxInsetSize.height)
+                );
+            measuredOutput = measureLeaf(
+                node, inputs, style, measureKnownDimensions, contentAvailableSpace);
+        }
         FloatSize measuredSize = measuredOutput != null
                                  ? measuredOutput.size()
-                                 : new FloatSize(0f, 0f);
-
-        // Compute final size
-        // For measured content, add contentBoxInsetSize (incl. scrollbar) to content size
-        // Follow Rust/Taffy logic: known_dimensions.or(node_size).unwrap_or(measured + inset).clamp(min, max)
-        float width = Float.isNaN(styledBasedKnownDimensions.width) ?
-                      (Float.isNaN(measuredSize.width) ? contentBoxInsetSize.width : measuredSize.width + contentBoxInsetSize.width) :
-                      styledBasedKnownDimensions.width;
-        float height = Float.isNaN(styledBasedKnownDimensions.height) ?
-                       (Float.isNaN(measuredSize.height) ? contentBoxInsetSize.height : measuredSize.height + contentBoxInsetSize.height) :
-                       styledBasedKnownDimensions.height;
-
-        // Apply min/max constraints (clamp)
-        width = TaffyMath.clamp(width, minSize.width, maxSize.width);
-        height = TaffyMath.clamp(height, minSize.height, maxSize.height);
-
-        // Apply aspect-ratio enforcement.
-        // When one dimension is known (from knownDimensions or style) and the other is auto/measured,
-        // derive the auto dimension from the known one via aspect ratio.
-        if (Resolve.isTransferableAspectRatio(aspectRatio == null ? Float.NaN : aspectRatio)) {
-            // Derive height from width (existing behavior)
-            float aspectHeight = width / aspectRatio;
-            height = Math.max(height, aspectHeight);
-
-            // Derive width from height when height is known but width was auto/measured
-            // This fixes aspect-ratio in flex row items where cross (height) is known
-            if (!Float.isNaN(styledBasedKnownDimensions.height) && Float.isNaN(styledBasedKnownDimensions.width)) {
-                float aspectWidth = height * aspectRatio;
-                width = Math.max(width, aspectWidth);
-            }
-        }
-
-        // Ensure size is at least padding + border (WITHOUT scrollbar)
-        // maxSize can constrain node to be smaller than scrollbar gutter
-        width = Math.max(width, paddingBorderSize.width);
-        height = Math.max(height, paddingBorderSize.height);
-
-        FloatSize size = new FloatSize(width, height);
+                                 : ZERO_READ_ONLY;
 
         // A leaf that reaches the main path with both dimensions already known (PerformLayout after
         // the gated early return, or ComputeSize without collapse-preventing styles) keeps those
         // dimensions verbatim: the caller resolved them against its own layout, and the generic
-        // clamp/aspect-ratio steps above can re-resolve them (e.g. a ContentSize flex target whose
+        // clamp/aspect-ratio steps below can re-resolve them (e.g. a ContentSize flex target whose
         // style min/max or aspect ratio must not be applied a second time). The measure callback is
         // still consulted for baselines, content size and the collapse-through probe.
-        // LEAF-BASELINE / CR-07.
+        // LEAF-BASELINE / CR-07. The generic size is only built in the other branch: allocating it
+        // first and replacing it with the verbatim size was a per-leaf throwaway allocation.
+        FloatSize size;
         if (!Float.isNaN(styledBasedKnownDimensions.width)
             && !Float.isNaN(styledBasedKnownDimensions.height)) {
             size = new FloatSize(
                 Math.max(styledBasedKnownDimensions.width, paddingBorderSize.width),
                 Math.max(styledBasedKnownDimensions.height, paddingBorderSize.height)
             );
+        } else {
+            // Compute final size
+            // For measured content, add contentBoxInsetSize (incl. scrollbar) to content size
+            // Follow Rust/Taffy logic: known_dimensions.or(node_size).unwrap_or(measured + inset).clamp(min, max)
+            float width = Float.isNaN(styledBasedKnownDimensions.width) ?
+                          (Float.isNaN(measuredSize.width) ? contentBoxInsetSize.width : measuredSize.width + contentBoxInsetSize.width) :
+                          styledBasedKnownDimensions.width;
+            float height = Float.isNaN(styledBasedKnownDimensions.height) ?
+                           (Float.isNaN(measuredSize.height) ? contentBoxInsetSize.height : measuredSize.height + contentBoxInsetSize.height) :
+                           styledBasedKnownDimensions.height;
+
+            // Apply min/max constraints (clamp)
+            width = TaffyMath.clamp(width, minSize.width, maxSize.width);
+            height = TaffyMath.clamp(height, minSize.height, maxSize.height);
+
+            // Apply aspect-ratio enforcement.
+            // When one dimension is known (from knownDimensions or style) and the other is auto/measured,
+            // derive the auto dimension from the known one via aspect ratio.
+            if (Resolve.isTransferableAspectRatio(aspectRatio == null ? Float.NaN : aspectRatio)) {
+                // Derive height from width (existing behavior)
+                float aspectHeight = width / aspectRatio;
+                height = Math.max(height, aspectHeight);
+
+                // Derive width from height when height is known but width was auto/measured
+                // This fixes aspect-ratio in flex row items where cross (height) is known
+                if (!Float.isNaN(styledBasedKnownDimensions.height) && Float.isNaN(styledBasedKnownDimensions.width)) {
+                    float aspectWidth = height * aspectRatio;
+                    width = Math.max(width, aspectWidth);
+                }
+            }
+
+            // Ensure size is at least padding + border (WITHOUT scrollbar)
+            // maxSize can constrain node to be smaller than scrollbar gutter
+            width = Math.max(width, paddingBorderSize.width);
+            height = Math.max(height, paddingBorderSize.height);
+
+            size = new FloatSize(width, height);
         }
 
         // Compute marginsCanCollapseThrough: true if no styles prevent it, height is 0, and measured height is 0
@@ -1417,7 +1447,8 @@ public class LayoutComputer {
         // unknown height, exactly like the old early-return path did, so margin collapsing stays
         // content-based. This branch is only reached now that the early return is limited to
         // ComputeSize + collapse-preventing styles. LEAF-BASELINE / CR-07.
-        if (!hasStylesPreventingBeingCollapsedThrough
+        if (hasMeasureCallback
+            && !hasStylesPreventingBeingCollapsedThrough
             && size.height == 0
             && !Float.isNaN(styledBasedKnownDimensions.width)
             && !Float.isNaN(styledBasedKnownDimensions.height)) {
@@ -1445,7 +1476,9 @@ public class LayoutComputer {
         float endPadding = isRtl ? padding.left : padding.right;
         float measuredContentWidth = Float.isNaN(measuredSize.width) ? 0f : measuredSize.width;
         float measuredContentHeight = Float.isNaN(measuredSize.height) ? 0f : measuredSize.height;
-        FloatSize measuredContentSize = new FloatSize(measuredContentWidth, measuredContentHeight);
+        FloatSize measuredContentSize = measuredOutput != null
+            ? new FloatSize(measuredContentWidth, measuredContentHeight)
+            : ZERO_READ_ONLY;
         FloatSize contentSize = new FloatSize(
             startPadding + measuredContentWidth + (scrollContainer ? endPadding : 0f),
             padding.top + measuredContentHeight + (scrollContainer ? padding.bottom : 0f)
@@ -1464,11 +1497,23 @@ public class LayoutComputer {
         // the computed leaf rectangle; an absent one is derived from the measured content size
         // (SO-01/SO-02 leaf rule: client-frame origin, start padding, end padding only for scroll
         // containers, RTL mirrored).
-        ScrollableOverflow scrollableOverflow =
-            reportedOverflow != null && !reportedOverflow.equals(ScrollableOverflow.ZERO)
-            ? reportedOverflow
-            : ScrollableOverflowUtil.leafScrollableOverflow(
+        boolean emptyComputedOverflow = measuredOutput == null
+            && !isRtl
+            && !scrollContainer
+            && padding.left == 0f
+            && padding.top == 0f;
+        ScrollableOverflow scrollableOverflow;
+        if (emptyComputedOverflow) {
+            // Zero measured content and no start padding/top padding produce exactly the origin
+            // rectangle with normal scroll origins. Return the interned computed-empty value
+            // instead of building a rectangle, its defensive copies and a client-size pair.
+            scrollableOverflow = ScrollableOverflow.EMPTY_COMPUTED;
+        } else if (reportedOverflow != null && !reportedOverflow.equals(ScrollableOverflow.ZERO)) {
+            scrollableOverflow = reportedOverflow;
+        } else {
+            scrollableOverflow = ScrollableOverflowUtil.leafScrollableOverflow(
                 size, border, padding, scrollbarWidth, overflow, measuredContentSize, isRtl);
+        }
 
         return new LayoutOutput(
             size,
@@ -1480,6 +1525,24 @@ public class LayoutComputer {
             CollapsibleMarginSet.ZERO,
             canCollapseThrough
         );
+    }
+
+    /**
+     * Whether any measure callback can apply to a leaf.
+     *
+     * <p>Mirrors the selection order of {@link #measureLeaf}: a per-node callback of either kind,
+     * or a computer-level default of either kind. Used to skip building the measure inputs for a
+     * leaf that has no callback, where {@link #measureLeaf} would return {@code null} without
+     * reading them.</p>
+     *
+     * @param node the leaf node to check
+     * @return whether {@link #measureLeaf} can find a callback for this node
+     */
+    private boolean hasMeasureCallback(NodeId node) {
+        return tree.getMeasureFunction(node) != null
+            || tree.getMeasureFunc(node) != null
+            || defaultMeasureFunction != null
+            || defaultMeasureFunc != null;
     }
 
     /**
